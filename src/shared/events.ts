@@ -3,11 +3,28 @@
  * Based on user-event library principles for better framework compatibility
  */
 
+const BAWEI_V2_STOP_ERROR_MESSAGE_EVENTS = '__BAWEI_V2_STOPPED__';
+
+function baweiV2IsStopRequestedEvents(): boolean {
+  try {
+    const fn = (globalThis as unknown as { __BAWEI_V2_IS_STOP_REQUESTED?: () => boolean }).__BAWEI_V2_IS_STOP_REQUESTED;
+    return typeof fn === 'function' ? !!fn() : false;
+  } catch {
+    return false;
+  }
+}
+
+function baweiV2ThrowIfStoppedEvents(): void {
+  if (baweiV2IsStopRequestedEvents()) throw new Error(BAWEI_V2_STOP_ERROR_MESSAGE_EVENTS);
+}
+
 /**
  * Simulates a realistic click event on an element
  * @param element The element to click
  */
 export function simulateClick(element: HTMLElement): void {
+  baweiV2ThrowIfStoppedEvents();
+
   // Dispatch sequence of events that frameworks expect
   const events = ['mousedown', 'mouseup', 'click'];
   
@@ -29,6 +46,8 @@ export function simulateClick(element: HTMLElement): void {
  * @param text The text to type
  */
 export function simulateType(input: HTMLInputElement | HTMLTextAreaElement, text: string): void {
+  baweiV2ThrowIfStoppedEvents();
+
   // Focus the input first
   input.focus();
   
@@ -37,6 +56,7 @@ export function simulateType(input: HTMLInputElement | HTMLTextAreaElement, text
   
   // Type character by character
   for (let i = 0; i < text.length; i++) {
+    baweiV2ThrowIfStoppedEvents();
     const char = text[i];
     input.value += char;
     
@@ -64,6 +84,7 @@ export function simulateType(input: HTMLInputElement | HTMLTextAreaElement, text
  * @param html The HTML content to paste
  */
 export async function simulatePaste(target: HTMLElement, html: string): Promise<boolean> {
+  baweiV2ThrowIfStoppedEvents();
   const initialLen = (target.textContent || '').length;
 
   // 保证获得焦点
@@ -71,20 +92,25 @@ export async function simulatePaste(target: HTMLElement, html: string): Promise<
 
   // ---------- 方法 0: 系统剪贴板 + 热键粘贴 ---------- //
   try {
+    baweiV2ThrowIfStoppedEvents();
     await writeToClipboard(html);
+    baweiV2ThrowIfStoppedEvents();
     const ok = await simulateHotkeyPaste(target);
     if (ok) {
       return true;
     }
   } catch (err) {
+    if (err instanceof Error && err.message === BAWEI_V2_STOP_ERROR_MESSAGE_EVENTS) throw err;
     console.warn('系统剪贴板路径失败，转入 ClipboardEvent 方案:', err);
   }
 
   // ---------- 方法 1: execCommand('insertHTML') ---------- //
   try {
+    baweiV2ThrowIfStoppedEvents();
     const success = document.execCommand('insertHTML', false, html);
     if (success) {
       await new Promise(r => requestAnimationFrame(r));
+      baweiV2ThrowIfStoppedEvents();
       const afterLen = (target.textContent || '').length;
       if (afterLen - initialLen > Math.min(100, html.length * 0.1)) {
         console.log('execCommand("insertHTML") 成功');
@@ -92,11 +118,13 @@ export async function simulatePaste(target: HTMLElement, html: string): Promise<
       }
     }
   } catch (err) {
+    if (err instanceof Error && err.message === BAWEI_V2_STOP_ERROR_MESSAGE_EVENTS) throw err;
     console.warn('execCommand insertHTML 失败:', err);
   }
 
   // ---------- 方法 3: 最终回退 innerHTML ---------- //
   try {
+    baweiV2ThrowIfStoppedEvents();
     target.innerHTML = html;
 
     // 触发 input & composition 事件，兼容 React/DraftJS 更新
@@ -109,6 +137,7 @@ export async function simulatePaste(target: HTMLElement, html: string): Promise<
 
     return true;
   } catch (err) {
+    if (err instanceof Error && err.message === BAWEI_V2_STOP_ERROR_MESSAGE_EVENTS) throw err;
     console.error('最终 innerHTML 回退失败:', err);
   }
 
@@ -120,6 +149,7 @@ export async function simulatePaste(target: HTMLElement, html: string): Promise<
  * @param element The element to focus
  */
 export function simulateFocus(element: HTMLElement): void {
+  baweiV2ThrowIfStoppedEvents();
   element.focus();
   
   const focusEvent = new FocusEvent('focus', {
@@ -143,6 +173,7 @@ function htmlToPlainText(html: string): string {
  * 若浏览器或用户拒绝权限，将抛出异常由调用方捕获。
  */
 async function writeToClipboard(html: string): Promise<void> {
+  baweiV2ThrowIfStoppedEvents();
   const plain = htmlToPlainText(html);
   const item = new ClipboardItem({
     'text/html': new Blob([html], { type: 'text/html' }),
@@ -156,6 +187,7 @@ async function writeToClipboard(html: string): Promise<void> {
  * 返回是否检测到内容增量（粗略成功判定）
  */
 async function simulateHotkeyPaste(target: HTMLElement): Promise<boolean> {
+  baweiV2ThrowIfStoppedEvents();
   const isMac = /mac/i.test(navigator.platform);
   const initialLen = (target.textContent || '').length;
 

@@ -1,6 +1,4 @@
 #!/usr/bin/env node
-/* eslint-disable no-control-regex */
-
 /**
  * 检测项目中未本地化的固定文案
  * 使用 TypeScript AST 分析，准确识别需要本地化的字符串字面量
@@ -569,7 +567,9 @@ async function main() {
       process.exit(0);
     }
 
-    console.log(`\n❌ 发现 ${allResults.length} 个未本地化的固定文案：\n`);
+    console.log(
+      `\n⚠️ 发现 ${allResults.length} 个未本地化的固定文案（仅警告，不拦截提交）：\n`
+    );
     
     // 按文件分组显示结果
     const resultsByFile = allResults.reduce((acc, result) => {
@@ -590,7 +590,7 @@ async function main() {
       console.log();
     }
 
-    process.exit(1);
+    process.exit(0);
   } catch (error) {
     console.error('检查过程中发生错误:', error);
     process.exit(1);

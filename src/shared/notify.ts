@@ -308,6 +308,7 @@ function getBackgroundColor(type: string): string {
  * @returns SVG icon HTML
  */
 function getIconForType(type: string): string {
+  void type;
   const iconSize = '20';
 
   // 使用项目原生多彩图标，保持原有颜色结构
@@ -340,5 +341,6 @@ function getHiddenTransform(position: string): string {
  * @returns CSS transform
  */
 function getVisibleTransform(_position: string): string {
+  void _position;
   return 'translateX(0)';
 }

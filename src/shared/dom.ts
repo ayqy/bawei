@@ -2,6 +2,17 @@
  * DOM utilities for waiting and finding elements
  */
 
+const BAWEI_V2_STOP_ERROR_MESSAGE_DOM = '__BAWEI_V2_STOPPED__';
+
+function baweiV2IsStopRequestedDom(): boolean {
+  try {
+    const fn = (globalThis as unknown as { __BAWEI_V2_IS_STOP_REQUESTED?: () => boolean }).__BAWEI_V2_IS_STOP_REQUESTED;
+    return typeof fn === 'function' ? !!fn() : false;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Waits for an element to appear in the DOM
  * @param selector CSS selector to wait for
@@ -15,34 +26,70 @@ export function waitForElement<T extends Element = Element>(
   root: Document | Element = document
 ): Promise<T> {
   return new Promise((resolve, reject) => {
+    if (baweiV2IsStopRequestedDom()) {
+      reject(new Error(BAWEI_V2_STOP_ERROR_MESSAGE_DOM));
+      return;
+    }
+
     // Check if element already exists
     const existingElement = root.querySelector<T>(selector);
     if (existingElement) {
       resolve(existingElement);
       return;
     }
-    
-    // Set up timeout
-    const timeoutId = setTimeout(() => {
-      observer.disconnect();
-      reject(new Error(`Element '${selector}' not found within ${timeout}ms`));
-    }, timeout);
-    
-    // Set up observer
-    const observer = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        if (mutation.type === 'childList') {
-          const element = root.querySelector<T>(selector);
-          if (element) {
-            observer.disconnect();
-            clearTimeout(timeoutId);
-            resolve(element);
-            return;
-          }
+
+    let done = false;
+    let observer: MutationObserver | null = null;
+    let timeoutId: number | null = null;
+    let stopIntervalId: number | null = null;
+
+    const cleanup = () => {
+      if (observer) {
+        try {
+          observer.disconnect();
+        } catch {
+          // ignore
         }
       }
+      if (timeoutId !== null) clearTimeout(timeoutId);
+      if (stopIntervalId !== null) clearInterval(stopIntervalId);
+    };
+
+    const finishReject = (err: Error) => {
+      if (done) return;
+      done = true;
+      cleanup();
+      reject(err);
+    };
+
+    const finishResolve = (el: T) => {
+      if (done) return;
+      done = true;
+      cleanup();
+      resolve(el);
+    };
+
+    // Set up timeout
+    timeoutId = setTimeout(() => {
+      finishReject(new Error(`Element '${selector}' not found within ${timeout}ms`));
+    }, timeout) as unknown as number;
+
+    // Periodically check stop to abort waits quickly.
+    stopIntervalId = setInterval(() => {
+      if (baweiV2IsStopRequestedDom()) finishReject(new Error(BAWEI_V2_STOP_ERROR_MESSAGE_DOM));
+    }, 200) as unknown as number;
+
+    // Set up observer
+    observer = new MutationObserver(() => {
+      if (done) return;
+      if (baweiV2IsStopRequestedDom()) {
+        finishReject(new Error(BAWEI_V2_STOP_ERROR_MESSAGE_DOM));
+        return;
+      }
+      const element = root.querySelector<T>(selector);
+      if (element) finishResolve(element);
     });
-    
+
     // Start observing
     observer.observe(root instanceof Document ? root.documentElement : root, {
       childList: true,
@@ -81,30 +128,74 @@ export function waitForVisibleElement<T extends HTMLElement = HTMLElement>(
   root: Document | Element = document
 ): Promise<T> {
   return new Promise((resolve, reject) => {
-    const timeoutId = setTimeout(() => {
-      observer.disconnect();
-      reject(new Error(`Visible element '${selector}' not found within ${timeout}ms`));
-    }, timeout);
-    
-    const checkVisibility = () => {
+    if (baweiV2IsStopRequestedDom()) {
+      reject(new Error(BAWEI_V2_STOP_ERROR_MESSAGE_DOM));
+      return;
+    }
+
+    let done = false;
+    let observer: MutationObserver | null = null;
+    let timeoutId: number | null = null;
+    let stopIntervalId: number | null = null;
+
+    const cleanup = () => {
+      if (observer) {
+        try {
+          observer.disconnect();
+        } catch {
+          // ignore
+        }
+      }
+      if (timeoutId !== null) clearTimeout(timeoutId);
+      if (stopIntervalId !== null) clearInterval(stopIntervalId);
+    };
+
+    const finishReject = (err: Error) => {
+      if (done) return;
+      done = true;
+      cleanup();
+      reject(err);
+    };
+
+    const finishResolve = (el: T) => {
+      if (done) return;
+      done = true;
+      cleanup();
+      resolve(el);
+    };
+
+    const checkVisibility = (): boolean => {
+      if (done) return true;
+      if (baweiV2IsStopRequestedDom()) {
+        finishReject(new Error(BAWEI_V2_STOP_ERROR_MESSAGE_DOM));
+        return true;
+      }
       const element = root.querySelector<T>(selector);
       if (element && isElementVisible(element)) {
-        observer.disconnect();
-        clearTimeout(timeoutId);
-        resolve(element);
+        finishResolve(element);
         return true;
       }
       return false;
     };
-    
+
+    // Set up timeout
+    timeoutId = setTimeout(() => {
+      finishReject(new Error(`Visible element '${selector}' not found within ${timeout}ms`));
+    }, timeout) as unknown as number;
+
+    // Periodically check stop to abort waits quickly.
+    stopIntervalId = setInterval(() => {
+      if (baweiV2IsStopRequestedDom()) finishReject(new Error(BAWEI_V2_STOP_ERROR_MESSAGE_DOM));
+    }, 200) as unknown as number;
+
     // Check immediately
     if (checkVisibility()) return;
-    
+
     // Set up observer
-    const observer = new MutationObserver(() => {
+    observer = new MutationObserver(() => {
       checkVisibility();
     });
-    
+
     observer.observe(root instanceof Document ? root.documentElement : root, {
       childList: true,
       subtree: true,

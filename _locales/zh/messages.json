@@ -4,19 +4,19 @@
     "description": "Extension name"
   },
   "appDescription": {
-    "message": "一键将微信公众号文章发布到知乎专栏的浏览器插件。",
+    "message": "一键提取微信公众号文章，并同步发布到多个平台，支持草稿/发布与诊断。",
     "description": "Extension description"
   },
   "publishButtonText": {
-    "message": "发布到知乎",
+    "message": "打开发布面板",
     "description": "Publish button text"
   },
   "publishingToast": {
-    "message": "正在发布到知乎...",
+    "message": "正在启动发布...",
     "description": "Publishing progress toast"
   },
   "publishSuccessToast": {
-    "message": "文章已成功发布到知乎！",
+    "message": "任务已启动",
     "description": "Publishing success toast"
   },
   "publishErrorToast": {
@@ -95,9 +95,9 @@
     "message": "无法提取文章内容",
     "description": "Extract content failed error message"
   },
-  "redirectingToZhihu": {
-    "message": "正在跳转到知乎...",
-    "description": "Redirecting to Zhihu message"
+  "redirectingToTarget": {
+    "message": "正在打开目标平台编辑页...",
+    "description": "Redirecting message"
   },
   "sendToBackgroundFailed": {
     "message": "发送到后台失败",
@@ -110,5 +110,769 @@
   "pasteSuccessToast": {
     "message": "内容粘贴成功",
     "description": "Content pasted successfully message"
+  },
+  "panelAriaLabel": {
+    "message": "发布面板",
+    "description": "Panel aria label"
+  },
+  "panelTitle": {
+    "message": "多平台发布",
+    "description": "Panel title"
+  },
+  "panelClose": {
+    "message": "关闭",
+    "description": "Panel close button"
+  },
+  "panelOpen": {
+    "message": "打开发布面板",
+    "description": "Panel open button (launcher icon)"
+  },
+  "panelChannelLabel": {
+    "message": "渠道（单选，用于查看诊断）",
+    "description": "Channel label"
+  },
+  "panelActionLabel": {
+    "message": "动作",
+    "description": "Action label"
+  },
+  "actionDraft": {
+    "message": "保存草稿",
+    "description": "Draft action label"
+  },
+  "actionPublish": {
+    "message": "直接发布",
+    "description": "Publish action label"
+  },
+  "panelStart": {
+    "message": "开始执行（并发全渠道）",
+    "description": "Start button"
+  },
+  "panelStop": {
+    "message": "停止",
+    "description": "Stop button"
+  },
+  "panelStopping": {
+    "message": "正在停止...",
+    "description": "Stopping state"
+  },
+  "panelSelectAll": {
+    "message": "全选",
+    "description": "Select all channels"
+  },
+  "panelDeselectAll": {
+    "message": "全不选",
+    "description": "Deselect all channels"
+  },
+  "panelStarting": {
+    "message": "正在启动...",
+    "description": "Starting state"
+  },
+  "panelStarted": {
+    "message": "任务已启动：正在并发打开各渠道编辑页...",
+    "description": "Started toast"
+  },
+  "panelStatusLabel": {
+    "message": "渠道执行状态",
+    "description": "Status section label"
+  },
+  "panelDiagnosisLabel": {
+    "message": "诊断",
+    "description": "Diagnosis section label"
+  },
+  "panelDiagnosisHint": {
+    "message": "选择渠道查看诊断信息。",
+    "description": "Diagnosis hint"
+  },
+  "panelDiagnosisChannel": {
+    "message": "渠道",
+    "description": "Diagnosis channel label"
+  },
+  "panelDiagnosisStatus": {
+    "message": "状态",
+    "description": "Diagnosis status label"
+  },
+  "panelDiagnosisStage": {
+    "message": "步骤",
+    "description": "Diagnosis stage label"
+  },
+  "panelDiagnosisMessage": {
+    "message": "提示",
+    "description": "Diagnosis message label"
+  },
+  "panelDiagnosisSuggestion": {
+    "message": "建议",
+    "description": "Diagnosis suggestion label"
+  },
+  "panelContinue": {
+    "message": "继续",
+    "description": "Continue button"
+  },
+  "panelRetry": {
+    "message": "重试",
+    "description": "Retry button"
+  },
+  "statusNotStarted": {
+    "message": "未开始",
+    "description": "Status not started"
+  },
+  "statusRunning": {
+    "message": "进行中",
+    "description": "Status running"
+  },
+  "statusSuccess": {
+    "message": "成功",
+    "description": "Status success"
+  },
+  "statusFailed": {
+    "message": "失败",
+    "description": "Status failed"
+  },
+  "statusWaiting": {
+    "message": "等待处理",
+    "description": "Status waiting"
+  },
+  "channelCsdn": {
+    "message": "CSDN",
+    "description": "Channel CSDN"
+  },
+  "channelTencentCloudDev": {
+    "message": "腾讯云开发者社区",
+    "description": "Channel Tencent Cloud Dev"
+  },
+  "channelCnblogs": {
+    "message": "博客园",
+    "description": "Channel CNBlogs"
+  },
+  "channelOschina": {
+    "message": "OSCHINA",
+    "description": "Channel OSCHINA"
+  },
+  "channelWoshipm": {
+    "message": "人人都是产品经理",
+    "description": "Channel woshipm"
+  },
+  "channelMowen": {
+    "message": "墨问",
+    "description": "Channel mowen"
+  },
+  "channelSspai": {
+    "message": "少数派",
+    "description": "Channel sspai"
+  },
+  "channelBaijiahao": {
+    "message": "百家号",
+    "description": "Channel baijiahao"
+  },
+  "channelToutiao": {
+    "message": "头条号",
+    "description": "Channel toutiao"
+  },
+  "channelFeishuDocs": {
+    "message": "飞书文档",
+    "description": "Channel feishu-docs"
+  },
+  "imagePolicyHint": {
+    "message": "检测到图片：本期不上传图片，默认复用原文外链；如平台限制外链，请手动重新上传/替换图片来源。",
+    "description": "Image policy hint"
+  },
+  "panelRunChannelsLabel": {
+    "message": "本次执行渠道（可多选）",
+    "description": "Panel run channels label"
+  },
+  "panelWoshipmRealNameHint": {
+    "message": "（可能需要实名）",
+    "description": "Panel extra hint for woshipm"
+  },
+  "panelDiagnosisNoJobHint": {
+    "message": "选择动作后点击开始。",
+    "description": "Panel hint when no job started"
+  },
+  "devtoolsPanelTitle": {
+    "message": "元素 JSON",
+    "description": "DevTools panel title"
+  },
+  "devtoolsCopyButton": {
+    "message": "复制 JSON",
+    "description": "DevTools copy button"
+  },
+  "devtoolsCopied": {
+    "message": "已复制",
+    "description": "DevTools copied state"
+  },
+  "devtoolsErrorPrefix": {
+    "message": "错误：",
+    "description": "DevTools error prefix"
+  },
+  "v2MsgFailed": {
+    "message": "执行失败",
+    "description": "V2 runtime message"
+  },
+  "v2SugCheckLoginOrDomThenRetry": {
+    "message": "请检查登录状态/页面结构后重试",
+    "description": "V2 runtime suggestion"
+  },
+  "v2SugCheckSourceLinkAtEndThenContinue": {
+    "message": "请检查正文末尾是否包含“原文链接”，必要时手动补充后再点“继续”",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgVerifyPassedDetailHasSourceLink": {
+    "message": "验收通过：详情页包含原文链接",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFailedDetailNoSourceLink": {
+    "message": "验收未通过：详情页未检测到原文链接",
+    "description": "V2 runtime message"
+  },
+  "v2MsgFillingContent": {
+    "message": "正在填充正文",
+    "description": "V2 runtime message"
+  },
+  "v2MsgConfirmingResult": {
+    "message": "正在确认结果",
+    "description": "V2 runtime message"
+  },
+  "v2MsgSuccessDetectedStartVerify": {
+    "message": "已检测到成功提示，准备验收",
+    "description": "V2 runtime message"
+  },
+  "v2MsgSavingDraft": {
+    "message": "正在保存草稿",
+    "description": "V2 runtime message"
+  },
+  "v2MsgPublishing": {
+    "message": "正在发布",
+    "description": "V2 runtime message"
+  },
+  "v2MsgEnteredEditorPage": {
+    "message": "进入编辑页",
+    "description": "V2 runtime message"
+  },
+  "v2MsgPleaseConfirmDraftSaved": {
+    "message": "请确认草稿已保存",
+    "description": "V2 runtime message"
+  },
+  "v2MsgPleaseConfirmPublishCompleted": {
+    "message": "请确认发布已完成",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFoundTitleOpeningDetail": {
+    "message": "验收：已在列表页找到标题，正在打开详情页",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyBlockedNoDetailLink": {
+    "message": "验收阻塞：找到标题但未能提取详情链接",
+    "description": "V2 runtime message"
+  },
+  "v2SugOpenDetailManuallyThenWaitVerify": {
+    "message": "请手动点击进入详情页后在详情页等待自动验收",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgAppendedSourceLinkKeepOriginal": {
+    "message": "原文链接已追加到正文末尾（保持原创）",
+    "description": "V2 runtime message"
+  },
+  "v2MsgAppendedSourceLinkNoSourceFieldInOriginalMode": {
+    "message": "原文链接已追加到正文末尾（平台原创模式未提供可用来源字段）",
+    "description": "V2 runtime message"
+  },
+  "v2SugIfNoSourceFieldAppendToEnd": {
+    "message": "如平台不支持原文链接字段，将追加到正文末尾",
+    "description": "V2 runtime suggestion"
+  },
+  "v2SugFillSourceFieldManually": {
+    "message": "如需写入平台“原文链接/来源”字段，请手动补充",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgContentWrittenByCkeditorSourceAppended": {
+    "message": "正文已写入编辑器（CKEditor API），原文链接已追加到正文末尾",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyListNoTitleRefresh5s6": {
+    "message": "验收：列表未出现标题，5秒后自动刷新（$1/6）",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyListNoTitleRefresh6s20": {
+    "message": "验收：列表未出现标题，6秒后自动刷新（$1/20）",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyListNoTitleRefresh8s12": {
+    "message": "验收：列表未出现标题，8秒后自动刷新（$1/12）",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyListNoNewArticleRefresh3s24": {
+    "message": "验收：列表暂未定位到新文章，3秒后自动刷新重试（$1/24）",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyListNoNewArticleRefresh3s36": {
+    "message": "验收：列表暂未定位到新文章，3秒后自动刷新重试（$1/36）",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyTokenNotMatchedProbingDetails": {
+    "message": "验收：未直接命中 token，开始探测详情页（$1/$2）",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyNotFoundNewArticleProbingDetails": {
+    "message": "验收：未直接定位到新文章，开始探测详情页（$1/$2）",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyNoSourceOnPageBackToListProbe": {
+    "message": "验收：本页未命中原文链接，返回列表继续探测",
+    "description": "V2 runtime message"
+  },
+  "v2MsgDraftSavedVerifyDone": {
+    "message": "草稿已保存（验收完成）",
+    "description": "V2 runtime message"
+  },
+  "v2MsgPublishTriggeredGoPostsListVerify": {
+    "message": "已触发发布，正在跳转到随笔列表验收",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFailedListStillNoTitleMaybeReviewOrFailed": {
+    "message": "验收未通过：列表页仍未找到标题（可能发布失败或仍在审核）",
+    "description": "V2 runtime message"
+  },
+  "v2MsgDetectedSuccessPageGetDetailLinkVerify": {
+    "message": "检测到发布成功页，正在获取详情链接并跳转验收",
+    "description": "V2 runtime message"
+  },
+  "v2MsgGoManageListVerify": {
+    "message": "正在跳转到文章管理列表验收",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFindNewArticleInList": {
+    "message": "验收：在列表页查找新文章",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFoundPublishedDetailLinkOpeningDetail": {
+    "message": "验收：已在列表页定位到发布详情链接，正在打开详情页",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFoundNewArticleOpeningDetail": {
+    "message": "验收：已在列表页定位到新文章，正在打开详情页",
+    "description": "V2 runtime message"
+  },
+  "v2MsgCsdnVerifyListNoNewArticleRefresh5s36": {
+    "message": "验收：列表未定位到新文章（$1），5秒后自动刷新（$2/36）",
+    "description": "V2 runtime message"
+  },
+  "v2CsdnVerifyByEditorIdLabel": {
+    "message": "按 editorId",
+    "description": "CSDN verify strategy label"
+  },
+  "v2CsdnVerifyByTitleTokenLabel": {
+    "message": "按标题 token",
+    "description": "CSDN verify strategy label"
+  },
+  "v2MsgVerifyFailedListStillNoNewArticle": {
+    "message": "验收未通过：列表页仍未定位到新文章（可能未发布成功/仍在审核/列表未生成可浏览链接）",
+    "description": "V2 runtime message"
+  },
+  "v2MsgFailedTitleInputNotFound": {
+    "message": "执行失败：未找到标题输入框",
+    "description": "V2 runtime message"
+  },
+  "v2SugWaitEditorLoadThenRetry": {
+    "message": "请等待编辑器加载完成后重试；如页面刚打开，请稍等 2 秒再点“重试”",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgSettingOriginalType": {
+    "message": "正在设置文章类型为原创",
+    "description": "V2 runtime message"
+  },
+  "v2MsgSettingTags": {
+    "message": "正在设置文章标签",
+    "description": "V2 runtime message"
+  },
+  "v2MsgSavingDraftToGenerateId": {
+    "message": "正在保存草稿（用于生成文章ID）",
+    "description": "V2 runtime message"
+  },
+  "v2MsgTryingToPublish": {
+    "message": "正在尝试发布",
+    "description": "V2 runtime message"
+  },
+  "v2SugHandleModalRiskRequiredThenContinueOrRetry": {
+    "message": "如出现弹窗/风控/必填项，请手动处理后点击面板“继续”或“重试”",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgPublishClickedWaitingRedirectOrIndex": {
+    "message": "已点击发布，等待跳转或入库…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgPublishTriggeredGoManageListVerify": {
+    "message": "已触发发布，正在跳转到文章管理列表验收",
+    "description": "V2 runtime message"
+  },
+  "v2MsgEnteredPage": {
+    "message": "进入页面",
+    "description": "V2 runtime message"
+  },
+  "v2SugCsdnConfirmPublishThenRefreshOrWaitReview": {
+    "message": "请确认发布成功后再刷新文章管理页；若处于审核中，请等待入库后点“继续”",
+    "description": "V2 runtime suggestion"
+  },
+  "v2SugTencentNoSourceUrlFieldAppend": {
+    "message": "腾讯云社区原创模式无“文章来源URL”字段，将追加到正文末尾",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgTencentContentWrittenLenNeedMin": {
+    "message": "正文已写入（当前字数约 $1，需 >= $2）",
+    "description": "V2 runtime message"
+  },
+  "v2SugContentTooShortMin140AlreadyAutoPadded": {
+    "message": "平台要求正文不少于 140 字，已尝试自动补足；若仍不足请手动补充后继续",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgTencentCreateArticleDetectedStartVerify": {
+    "message": "已检测到 CreateArticle 请求，准备验收",
+    "description": "V2 runtime message"
+  },
+  "v2MsgContentTooShortAutoPadAndRepublish": {
+    "message": "检测到平台校验拦截（正文不足 140 字），正在自动补足并重试发布…",
+    "description": "V2 runtime message"
+  },
+  "v2SugHandleRequiredCaptchaModalThenContinueOrRetry": {
+    "message": "如出现必填项/验证码/弹窗，请手动处理后点击面板“继续”或“重试”",
+    "description": "V2 runtime suggestion"
+  },
+  "v2SugAdjustFormatAtEnd": {
+    "message": "如需更改格式，可在末尾手动调整",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgRedirectedToDetailStartVerify": {
+    "message": "已跳转到文章详情页，准备验收",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyMatchedTokenBySearchOpeningDetail": {
+    "message": "验收：已通过搜索命中标题 token，正在打开详情页",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFailedListNoArticleWithSourceLink": {
+    "message": "验收未通过：列表页未能定位到包含原文链接的文章",
+    "description": "V2 runtime message"
+  },
+  "v2SugConfirmPublishIndexedOrSearchTitleThenContinue": {
+    "message": "请确认发布已完成且文章已入库；可在列表页手动搜索标题后点“继续”",
+    "description": "V2 runtime suggestion"
+  },
+  "v2SugCnblogsNoSourceFieldAppend": {
+    "message": "博客园未提供原文链接字段，将追加到正文末尾",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgSavingAsDraft": {
+    "message": "正在存为草稿",
+    "description": "V2 runtime message"
+  },
+  "v2SugHandleModalRequiredThenContinueOrRetry": {
+    "message": "如出现弹窗/必填项，请手动处理后点击面板“继续”或“重试”",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgVerifyFindNewPostInList": {
+    "message": "验收：在列表页查找新随笔",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFailedListStillNoTitle": {
+    "message": "验收未通过：列表页仍未找到标题",
+    "description": "V2 runtime message"
+  },
+  "v2SugConfirmPublishOrWaitIndexRefreshThenContinue": {
+    "message": "请确认发布完成或等待入库后刷新，再点“继续”",
+    "description": "V2 runtime suggestion"
+  },
+  "v2SugOschinaNoSourceFieldAppend": {
+    "message": "OSCHINA 原创模式无可用原文链接字段，将追加到正文末尾",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgPublishingArticle": {
+    "message": "正在发布文章",
+    "description": "V2 runtime message"
+  },
+  "v2MsgOschinaGoProfileWriteBlogPage": {
+    "message": "正在跳转到个人空间写博客页…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgOschinaStillOnEntryNeedWriteBlogOrRelogin": {
+    "message": "仍停留在入口页，可能需要手动点击“写博客”或重新登录",
+    "description": "V2 runtime message"
+  },
+  "v2SugOschinaLoginThenClickWriteBlogThenContinue": {
+    "message": "请确认 OSCHINA 已登录后，点击页面内“写博客”，再点击面板“继续”",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgOschinaSpaceMigrationSwitchToWritePage": {
+    "message": "检测到空间迁移，正在切换到实际写作页…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgAlreadyInDetailVerifySourceLink": {
+    "message": "检测到已跳转到详情页，准备直接验收原文链接",
+    "description": "V2 runtime message"
+  },
+  "v2MsgOschinaPublishTriggeredGoProfileVerify": {
+    "message": "已触发发布，正在跳转到个人空间验收",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyOschinaSpaceMigrationSwitchToList": {
+    "message": "验收：检测到空间迁移，正在切换到实际空间列表…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifySwitchToBlogList": {
+    "message": "验收：正在切换到博客列表页",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFilteringBlogListByKeyword": {
+    "message": "验收：正在通过关键词筛选博客列表",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyMatchedTokenByKeywordOpeningDetail": {
+    "message": "验收：已通过关键词命中标题 token，正在打开详情页",
+    "description": "V2 runtime message"
+  },
+  "v2SugWoshipmNoSourceFieldAppend": {
+    "message": "woshipm 无原文链接字段，将追加到正文末尾",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgSubmittingReview": {
+    "message": "正在提交审核",
+    "description": "V2 runtime message"
+  },
+  "v2MsgIdentityVerificationRequiredCompleteThenContinue": {
+    "message": "目标平台需要实名认证，请在当前页面完成后继续",
+    "description": "V2 runtime message"
+  },
+  "v2SugDoneThenClickContinue": {
+    "message": "完成后点击面板“继续”",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgPleaseConfirmReviewSubmitted": {
+    "message": "请确认提交审核已完成",
+    "description": "V2 runtime message"
+  },
+  "v2MsgWoshipmReviewSubmittedGoMyArticlesVerify": {
+    "message": "已提交审核，正在跳转到“我的文章”列表验收",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyLocateNewArticleInMyArticles": {
+    "message": "验收：在“我的文章”列表定位新文章",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyMatchedTokenInListApiOpeningDetail": {
+    "message": "验收：已在列表接口中命中标题 token（$1），正在打开详情页",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyListOrDetailNotRecognizedRefresh5s6": {
+    "message": "验收：未识别到列表/详情，5秒后自动刷新（$1/6）",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyBlockedListNoNewArticle": {
+    "message": "验收阻塞：未能在列表页定位到新文章",
+    "description": "V2 runtime message"
+  },
+  "v2SugWoshipmSwitchTabsThenContinue": {
+    "message": "请在“我的文章”页切换到“审核中/已发布/草稿箱”后确认能看到新文章，再点“继续”",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgMowenFillingContentTitleFirstLine": {
+    "message": "正在填充内容（首行为标题）",
+    "description": "V2 runtime message"
+  },
+  "v2SugMowenTitleInFirstLine": {
+    "message": "墨问无独立标题字段，标题会写入第一行",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgSaving": {
+    "message": "正在保存",
+    "description": "V2 runtime message"
+  },
+  "v2MsgPleaseConfirmSaveCompleted": {
+    "message": "请确认保存已完成",
+    "description": "V2 runtime message"
+  },
+  "v2MsgMowenPublishTriggeredGoNotesListVerify": {
+    "message": "已触发发布，正在跳转到笔记列表验收",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFindNewNoteInList": {
+    "message": "验收：在列表页查找新笔记",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFailedListNoTitleTitleIsFirstLine": {
+    "message": "验收未通过：列表页仍未找到标题（标题为正文第一行）",
+    "description": "V2 runtime message"
+  },
+  "v2SugRefreshListThenContinue": {
+    "message": "请刷新列表页后点“继续”",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgFillingTitle": {
+    "message": "正在填充标题",
+    "description": "V2 runtime message"
+  },
+  "v2SugSspaiNoSourceFieldAppend": {
+    "message": "少数派无独立原文链接字段，将追加到正文末尾",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgIdentityVerificationRequiredToPublish": {
+    "message": "目标平台需要实名认证，完成后才能发布",
+    "description": "V2 runtime message"
+  },
+  "v2SugCompleteIdentityVerificationThenContinue": {
+    "message": "请在当前页面完成实名认证后点击面板“继续”",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgVerifyConfirmPublishedVisibleOnDetail": {
+    "message": "验收：确认文章已发布并在详情页可见",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyBlockedNotPublishedYet": {
+    "message": "验收阻塞：文章尚未发布（可能需要实名认证/补充必填项）",
+    "description": "V2 runtime message"
+  },
+  "v2SugCompleteVerificationOrRequiredThenContinueToRetry": {
+    "message": "请在当前页完成实名认证或补齐必填项后，点击面板“继续”重试发布与验收",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgEnteredSspaiWritePage": {
+    "message": "进入少数派写作页",
+    "description": "V2 runtime message"
+  },
+  "v2MsgSspaiPublishTriggeredButNotInVerifiablePage": {
+    "message": "已触发发布，但未进入可验收页面（/write#id 或 /post/id）",
+    "description": "V2 runtime message"
+  },
+  "v2SugCheckRequiredOrIdentityThenContinue": {
+    "message": "请确认是否有必填项/实名认证提示；处理后点击面板“继续”",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgSspaiOpeningWritePage": {
+    "message": "正在打开少数派写作页",
+    "description": "V2 runtime message"
+  },
+  "v2MsgBaijiahaoOpeningEditor": {
+    "message": "正在打开百家号图文编辑器",
+    "description": "V2 runtime message"
+  },
+  "v2MsgBaijiahaoSecurityVerifyTriggered": {
+    "message": "百家号触发百度安全验证，请先完成滑块/扫码验证后继续自动发布…",
+    "description": "V2 runtime message"
+  },
+  "v2SugBaijiahaoNoSourceFieldAppend": {
+    "message": "百家号无独立原文链接字段，将追加到正文末尾",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgPublishBlockedBySecurityVerify": {
+    "message": "发布被安全验证拦截：请按弹窗提示完成验证（扫码/手机号）后继续…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgEnteredBaijiahaoEditor": {
+    "message": "进入百家号编辑页",
+    "description": "V2 runtime message"
+  },
+  "v2MsgPublishTriggeredGoWorksListVerify": {
+    "message": "已触发发布，正在跳转到作品列表验收",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFindNewArticleInWorksList": {
+    "message": "验收：在作品列表查找新文章",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifySetListSearchKeyword": {
+    "message": "验收：正在设置列表搜索关键字：$1",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFoundTitleInListOpeningDetail": {
+    "message": "验收：已在$1列表找到标题，正在打开详情页",
+    "description": "V2 runtime message"
+  },
+  "v2SugToutiaoNoSourceFieldAppend": {
+    "message": "头条号无独立原文链接字段，将追加到正文末尾",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgConfirmingPublishResult": {
+    "message": "正在确认发布结果",
+    "description": "V2 runtime message"
+  },
+  "v2MsgToutiaoSavePublishFailedSaveFailed": {
+    "message": "头条号保存/发布失败（平台返回：保存失败）",
+    "description": "V2 runtime message"
+  },
+  "v2SugToutiaoHandleRequiredFieldsThenContinueVerify": {
+    "message": "请检查是否存在必填项（如封面/分类/声明）或风控提示，处理后点击面板“继续”重试验收",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgEnteredToutiaoEditor": {
+    "message": "进入头条号编辑页",
+    "description": "V2 runtime message"
+  },
+  "v2SugConfirmPublishedNoRequiredRefreshThenContinue": {
+    "message": "请确认发布成功/无必填项后刷新列表，再点“继续”",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgVerifyPassedListNewArticlePublished": {
+    "message": "验收通过：列表页已出现新文章（已发布）",
+    "description": "V2 runtime message"
+  },
+  "v2MsgOutOfScopeReturningToEditor": {
+    "message": "当前页面不在预期范围，正在回到编辑页",
+    "description": "V2 runtime message"
+  },
+  "v2MsgFeishuCreatingBlankDoc": {
+    "message": "正在新建飞书文档（空白文档）",
+    "description": "V2 runtime message"
+  },
+  "v2MsgFeishuApiCreateFailedFallbackUi": {
+    "message": "API 新建文档失败，尝试走页面点击流程…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgFeishuTitleAreaNotFoundSkipUseFilename": {
+    "message": "未找到标题区域，跳过（已用文件名做标题）",
+    "description": "V2 runtime message"
+  },
+  "v2SugFeishuNoSourceFieldAppend": {
+    "message": "飞书文档无独立原文链接字段，将追加到正文末尾",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgFeishuWaitingAutosaveDraft": {
+    "message": "等待自动保存（草稿）",
+    "description": "V2 runtime message"
+  },
+  "v2MsgFeishuWaitingAutosavePublish": {
+    "message": "等待自动保存（发布）",
+    "description": "V2 runtime message"
+  },
+  "v2MsgFeishuContentWrittenBackToFolderVerify": {
+    "message": "已写入内容，正在返回文件夹列表验收",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFindNewDocInFolderList": {
+    "message": "验收：在文件夹列表查找新文档",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFailedFolderListNoTitle": {
+    "message": "验收未通过：文件夹列表仍未找到标题",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFoundTitleOpeningDocDetail": {
+    "message": "验收：已在列表页找到标题，正在打开文档详情页",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyBlockedNoDocLink": {
+    "message": "验收阻塞：找到标题但未能获取文档链接",
+    "description": "V2 runtime message"
+  },
+  "v2SugFeishuOpenDocDetailManuallyThenWaitVerify": {
+    "message": "请手动点击进入文档详情页后在详情页等待自动验收",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgVerifyPassedSavedToCloudAndHasSource": {
+    "message": "验收通过：已保存到云端，且文档包含原文链接",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFailedNoSavedToCloudOrSource": {
+    "message": "验收未通过：未检测到“已保存到云端”或原文链接",
+    "description": "V2 runtime message"
+  },
+  "v2SugFeishuConfirmSavedToCloudAndSourceThenContinue": {
+    "message": "请确认页面出现“已经保存到云端”，且正文末尾包含“原文链接”，再点“继续”",
+    "description": "V2 runtime suggestion"
   }
 }

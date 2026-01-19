@@ -188,13 +188,103 @@ function getSingleScriptConfig(script: string) {
         inlineDynamicImports: true
       }
     },
-    'zhihu-publisher': {
-      input: resolve(__dirname, 'src/content/zhihu-publisher.ts'),
+    'csdn-publisher': {
+      input: resolve(__dirname, 'src/content/csdn-publisher.ts'),
       output: {
         format: 'iife',
-        name: 'ZhihuPublisher',
+        name: 'CsdnPublisher',
         dir: 'dist',
-        entryFileNames: 'src/content/zhihu-publisher.js',
+        entryFileNames: 'src/content/csdn-publisher.js',
+        inlineDynamicImports: true
+      }
+    },
+    'tencent-cloud-dev-publisher': {
+      input: resolve(__dirname, 'src/content/tencent-cloud-dev-publisher.ts'),
+      output: {
+        format: 'iife',
+        name: 'TencentCloudDevPublisher',
+        dir: 'dist',
+        entryFileNames: 'src/content/tencent-cloud-dev-publisher.js',
+        inlineDynamicImports: true
+      }
+    },
+    'cnblogs-publisher': {
+      input: resolve(__dirname, 'src/content/cnblogs-publisher.ts'),
+      output: {
+        format: 'iife',
+        name: 'CnblogsPublisher',
+        dir: 'dist',
+        entryFileNames: 'src/content/cnblogs-publisher.js',
+        inlineDynamicImports: true
+      }
+    },
+    'oschina-publisher': {
+      input: resolve(__dirname, 'src/content/oschina-publisher.ts'),
+      output: {
+        format: 'iife',
+        name: 'OschinaPublisher',
+        dir: 'dist',
+        entryFileNames: 'src/content/oschina-publisher.js',
+        inlineDynamicImports: true
+      }
+    },
+    'woshipm-publisher': {
+      input: resolve(__dirname, 'src/content/woshipm-publisher.ts'),
+      output: {
+        format: 'iife',
+        name: 'WoshipmPublisher',
+        dir: 'dist',
+        entryFileNames: 'src/content/woshipm-publisher.js',
+        inlineDynamicImports: true
+      }
+    },
+    'mowen-publisher': {
+      input: resolve(__dirname, 'src/content/mowen-publisher.ts'),
+      output: {
+        format: 'iife',
+        name: 'MowenPublisher',
+        dir: 'dist',
+        entryFileNames: 'src/content/mowen-publisher.js',
+        inlineDynamicImports: true
+      }
+    },
+    'sspai-publisher': {
+      input: resolve(__dirname, 'src/content/sspai-publisher.ts'),
+      output: {
+        format: 'iife',
+        name: 'SspaiPublisher',
+        dir: 'dist',
+        entryFileNames: 'src/content/sspai-publisher.js',
+        inlineDynamicImports: true
+      }
+    },
+    'baijiahao-publisher': {
+      input: resolve(__dirname, 'src/content/baijiahao-publisher.ts'),
+      output: {
+        format: 'iife',
+        name: 'BaijiahaoPublisher',
+        dir: 'dist',
+        entryFileNames: 'src/content/baijiahao-publisher.js',
+        inlineDynamicImports: true
+      }
+    },
+    'toutiao-publisher': {
+      input: resolve(__dirname, 'src/content/toutiao-publisher.ts'),
+      output: {
+        format: 'iife',
+        name: 'ToutiaoPublisher',
+        dir: 'dist',
+        entryFileNames: 'src/content/toutiao-publisher.js',
+        inlineDynamicImports: true
+      }
+    },
+    'feishu-docs-publisher': {
+      input: resolve(__dirname, 'src/content/feishu-docs-publisher.ts'),
+      output: {
+        format: 'iife',
+        name: 'FeishuDocsPublisher',
+        dir: 'dist',
+        entryFileNames: 'src/content/feishu-docs-publisher.js',
         inlineDynamicImports: true
       }
     },
@@ -202,7 +292,7 @@ function getSingleScriptConfig(script: string) {
       input: resolve(__dirname, 'src/background.ts'),
       output: {
         format: 'umd',
-        name: 'WeChatToZhihuBackground',
+        name: 'BaweiBackground',
         dir: 'dist',
         entryFileNames: 'src/background.js',
         inlineDynamicImports: true
@@ -218,7 +308,16 @@ function getAllScriptsConfig() {
   return {
     input: {
       'wechat-content': resolve(__dirname, 'src/content/wechat-content.ts'),
-      'zhihu-publisher': resolve(__dirname, 'src/content/zhihu-publisher.ts'),
+      'csdn-publisher': resolve(__dirname, 'src/content/csdn-publisher.ts'),
+      'tencent-cloud-dev-publisher': resolve(__dirname, 'src/content/tencent-cloud-dev-publisher.ts'),
+      'cnblogs-publisher': resolve(__dirname, 'src/content/cnblogs-publisher.ts'),
+      'oschina-publisher': resolve(__dirname, 'src/content/oschina-publisher.ts'),
+      'woshipm-publisher': resolve(__dirname, 'src/content/woshipm-publisher.ts'),
+      'mowen-publisher': resolve(__dirname, 'src/content/mowen-publisher.ts'),
+      'sspai-publisher': resolve(__dirname, 'src/content/sspai-publisher.ts'),
+      'baijiahao-publisher': resolve(__dirname, 'src/content/baijiahao-publisher.ts'),
+      'toutiao-publisher': resolve(__dirname, 'src/content/toutiao-publisher.ts'),
+      'feishu-docs-publisher': resolve(__dirname, 'src/content/feishu-docs-publisher.ts'),
       background: resolve(__dirname, 'src/background.ts')
     },
     output: {
@@ -226,7 +325,16 @@ function getAllScriptsConfig() {
       entryFileNames: (chunkInfo) => {
         const name = chunkInfo.name;
         if (name === 'wechat-content') return 'src/content/wechat-content.js';
-        if (name === 'zhihu-publisher') return 'src/content/zhihu-publisher.js';
+        if (name === 'csdn-publisher') return 'src/content/csdn-publisher.js';
+        if (name === 'tencent-cloud-dev-publisher') return 'src/content/tencent-cloud-dev-publisher.js';
+        if (name === 'cnblogs-publisher') return 'src/content/cnblogs-publisher.js';
+        if (name === 'oschina-publisher') return 'src/content/oschina-publisher.js';
+        if (name === 'woshipm-publisher') return 'src/content/woshipm-publisher.js';
+        if (name === 'mowen-publisher') return 'src/content/mowen-publisher.js';
+        if (name === 'sspai-publisher') return 'src/content/sspai-publisher.js';
+        if (name === 'baijiahao-publisher') return 'src/content/baijiahao-publisher.js';
+        if (name === 'toutiao-publisher') return 'src/content/toutiao-publisher.js';
+        if (name === 'feishu-docs-publisher') return 'src/content/feishu-docs-publisher.js';
         if (name === 'background') return 'src/background.js';
         return '[name].js';
       },
@@ -236,3 +344,4 @@ function getAllScriptsConfig() {
     external: [] // 确保所有依赖都被打包
   };
 }
+

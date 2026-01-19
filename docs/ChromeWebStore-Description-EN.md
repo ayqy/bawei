@@ -1,79 +1,32 @@
-# Copylot - AI-Powered Smart Copy Chrome Extension
+# bawei - Cross-post WeChat Official Account Articles
 
-## Transform Your Web Copy-Paste Experience with AI Intelligence
+bawei is a Chrome extension that helps you publish the same WeChat Official Account article to multiple platforms. When you open an article page on `mp.weixin.qq.com`, bawei injects a publish panel, extracts the article title and rendered HTML content, then opens the target editors and fills everything for you.
 
-Tired of copying messy web content that needs hours of manual formatting before you can use it with AI assistants like ChatGPT, Claude, or Gemini? Copylot is the ultimate Chrome extension that intelligently extracts, cleans, and formats web content for seamless AI collaboration.
+## What it does
 
-## 🚀 Core Features That Revolutionize Your Workflow
+- Extracts: title, rendered HTML content, and the source URL (current page)
+- Runs multi-platform publishing concurrently (save draft or publish)
+- “Original-first” behavior: if a platform has no usable source-link field (or it’s not available in original mode), bawei appends `原文链接：<url>` to the end of the content
+- Built-in diagnostics: if you hit login / captcha / identity verification / required fields / risk-control prompts, bawei shows guidance in the panel so you can fix it and continue/retry
 
-### ✨ Smart Content Detection & Extraction
-- **Intelligent Block Recognition**: Automatically identifies and extracts the main content while filtering out ads, navigation, and irrelevant elements
-- **One-Click Clean Copy**: Get perfectly formatted content with a single click - no more manual cleanup required
-- **Smart Table Conversion**: Instantly convert web tables to clean Markdown or CSV format for data analysis
+## Supported platforms (V2)
 
-### 🔧 Professional Code Block Cleaning
-- **Automatic Code Purification**: Removes line numbers, shell prompts ($, >), and "Copy" buttons from code blocks
-- **Clean, Runnable Code**: Get production-ready code that works immediately in your IDE or AI chat
-- **Perfect for Developers**: Ideal for copying code from Stack Overflow, GitHub, or technical blogs
+- CSDN
+- Tencent Cloud Developer Community
+- CNBlogs
+- OSCHINA
+- WoShiPM
+- Mowen
+- SSPAI
+- Baijiahao
+- Toutiao
+- Feishu Docs
 
-### 🤖 AI Prompt Manager
-- **Custom Prompt Templates**: Create and manage your own AI instruction templates
-- **One-Click AI Ready**: Right-click any text and instantly format it with your custom prompts
-- **Cloud Sync**: Your prompts sync across all your devices automatically
-- **Popular Templates**: Pre-built templates for translation, summarization, code explanation, and more
+## Privacy
 
-### 📊 Advanced Copy Features
-- **Append Mode**: Collect content from multiple pages and merge them into one organized document
-- **Multiple Output Formats**: Choose between Markdown, Plain Text, or CSV for tables
-- **Source Attribution**: Automatically include page titles and URLs for proper citation
-- **Hover-to-Copy**: Instantly copy images, videos, and media elements with hover detection
+- 100% local: no server required, no article content is uploaded by bawei
+- Permissions are used only to read the WeChat article page, open target tabs, and automate form filling/verification on those pages
 
-## 🎯 Perfect For These Use Cases
+## Notes
 
-### 📚 Research & Academic Work
-- Copy research papers and articles with perfect formatting
-- Extract data from academic tables and convert to CSV
-- Organize multiple sources with append mode
-- Maintain proper citations automatically
-
-### 💻 Programming & Development
-- Clean code blocks from technical documentation
-- Copy code examples without line numbers or prompts
-- Convert code documentation to markdown
-- Extract API examples and code snippets
-
-### ✍️ Content Creation & Writing
-- Copy blog posts and articles with clean formatting
-- Extract quotes and references with proper attribution
-- Convert web content to markdown for your blog
-- Organize research materials efficiently
-
-### 📊 Data Analysis & Business
-- Convert web tables to CSV for Excel analysis
-- Extract financial data and statistics
-- Copy reports and charts with clean formatting
-- Organize business research materials
-
-## 🔒 Privacy & Performance
-
-- **100% Local Processing**: All content processing happens on your device
-- **No Data Collection**: We never see, store, or transmit your copied content
-- **Lightning Fast**: Optimized for performance with minimal resource usage
-- **Minimal Permissions**: Only requests necessary clipboard and storage access
-
-## 🛠️ Easy Setup & Customization
-
-- **One-Click Installation**: Install from Chrome Web Store and start using immediately
-- **Flexible Interaction**: Choose between single-click, double-click, or hover activation
-- **Customizable Settings**: Configure output format, metadata inclusion, and interaction preferences
-- **Developer Tools Integration**: Advanced element inspection in Chrome DevTools
-
-## 💡 Why Choose Copylot?
-
-Unlike basic copy-paste tools, Copylot understands context and intelligently processes content. Whether you're a researcher, developer, writer, or data analyst, Copylot transforms the tedious task of web content extraction into a seamless, AI-ready experience.
-
-**Join thousands of users who have already revolutionized their web content workflow with Copylot!**
-
----
-
-*Compatible with Chrome, Edge, and other Chromium-based browsers. Free to use with premium features available.* 
+- Image policy (current version): no image uploading. External image links are kept; if a platform blocks external images, follow the panel hints to fix them manually.

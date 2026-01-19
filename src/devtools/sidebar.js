@@ -2,6 +2,7 @@ const jsonContainer = document.getElementById('json-container');
 const copyButton = document.getElementById('copy-button');
 
 const originalButtonText = chrome.i18n.getMessage("devtoolsCopyButton");
+const copiedButtonText = chrome.i18n.getMessage("devtoolsCopied");
 copyButton.textContent = originalButtonText;
 
 copyButton.addEventListener('click', () => {
@@ -9,7 +10,7 @@ copyButton.addEventListener('click', () => {
     type: 'copy-to-clipboard',
     text: jsonContainer.value
   }, () => {
-    copyButton.textContent = chrome.i18n.getMessage("copied");
+    copyButton.textContent = copiedButtonText;
     setTimeout(() => {
       copyButton.textContent = originalButtonText;
     }, 2000);
@@ -121,7 +122,7 @@ function updateSidebar() {
     `(${getElementJson.toString()})($0)`,
     (result, isException) => {
       if (isException) {
-        jsonContainer.value = 'Error: ' + result;
+        jsonContainer.value = (chrome.i18n.getMessage("devtoolsErrorPrefix") || 'Error: ') + result;
       } else {
         jsonContainer.value = JSON.stringify(result, null, 2);
       }
@@ -133,3 +134,4 @@ chrome.devtools.panels.elements.onSelectionChanged.addListener(updateSidebar);
 
 // Initial update
 updateSidebar();
+

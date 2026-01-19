@@ -4,19 +4,19 @@
     "description": "Extension name"
   },
   "appDescription": {
-    "message": "One-click publishing WeChat articles to Zhihu column.",
+    "message": "Cross-post WeChat Official Account articles to multiple platforms—draft or publish—with built-in diagnostics.",
     "description": "Extension description"
   },
   "publishButtonText": {
-    "message": "Publish to Zhihu",
+    "message": "Open publish panel",
     "description": "Publish button text"
   },
   "publishingToast": {
-    "message": "Publishing to Zhihu...",
+    "message": "Starting publishing...",
     "description": "Publishing progress toast"
   },
   "publishSuccessToast": {
-    "message": "Article published to Zhihu successfully!",
+    "message": "Job started",
     "description": "Publishing success toast"
   },
   "publishErrorToast": {
@@ -95,9 +95,9 @@
     "message": "Failed to extract article content",
     "description": "Extract content failed error message"
   },
-  "redirectingToZhihu": {
-    "message": "Redirecting to Zhihu...",
-    "description": "Redirecting to Zhihu message"
+  "redirectingToTarget": {
+    "message": "Opening target editor page...",
+    "description": "Redirecting message"
   },
   "sendToBackgroundFailed": {
     "message": "Failed to send to background",
@@ -110,5 +110,769 @@
   "pasteSuccessToast": {
     "message": "Content pasted successfully",
     "description": "Content pasted successfully message"
+  },
+  "panelAriaLabel": {
+    "message": "Publish panel",
+    "description": "Panel aria label"
+  },
+  "panelTitle": {
+    "message": "Multi-platform publish",
+    "description": "Panel title"
+  },
+  "panelClose": {
+    "message": "Close",
+    "description": "Panel close button"
+  },
+  "panelOpen": {
+    "message": "Open publish panel",
+    "description": "Panel open button (launcher icon)"
+  },
+  "panelChannelLabel": {
+    "message": "Channel (single select for diagnosis)",
+    "description": "Channel label"
+  },
+  "panelActionLabel": {
+    "message": "Action",
+    "description": "Action label"
+  },
+  "actionDraft": {
+    "message": "Save draft",
+    "description": "Draft action label"
+  },
+  "actionPublish": {
+    "message": "Publish",
+    "description": "Publish action label"
+  },
+  "panelStart": {
+    "message": "Start (concurrent all channels)",
+    "description": "Start button"
+  },
+  "panelStop": {
+    "message": "Stop",
+    "description": "Stop button"
+  },
+  "panelStopping": {
+    "message": "Stopping...",
+    "description": "Stopping state"
+  },
+  "panelSelectAll": {
+    "message": "Select all",
+    "description": "Select all channels"
+  },
+  "panelDeselectAll": {
+    "message": "Select none",
+    "description": "Deselect all channels"
+  },
+  "panelStarting": {
+    "message": "Starting...",
+    "description": "Starting state"
+  },
+  "panelStarted": {
+    "message": "Job started: opening editors for all channels...",
+    "description": "Started toast"
+  },
+  "panelStatusLabel": {
+    "message": "Channel status",
+    "description": "Status section label"
+  },
+  "panelDiagnosisLabel": {
+    "message": "Diagnosis",
+    "description": "Diagnosis section label"
+  },
+  "panelDiagnosisHint": {
+    "message": "Select a channel to view diagnosis.",
+    "description": "Diagnosis hint"
+  },
+  "panelDiagnosisChannel": {
+    "message": "Channel",
+    "description": "Diagnosis channel label"
+  },
+  "panelDiagnosisStatus": {
+    "message": "Status",
+    "description": "Diagnosis status label"
+  },
+  "panelDiagnosisStage": {
+    "message": "Stage",
+    "description": "Diagnosis stage label"
+  },
+  "panelDiagnosisMessage": {
+    "message": "Message",
+    "description": "Diagnosis message label"
+  },
+  "panelDiagnosisSuggestion": {
+    "message": "Suggestion",
+    "description": "Diagnosis suggestion label"
+  },
+  "panelContinue": {
+    "message": "Continue",
+    "description": "Continue button"
+  },
+  "panelRetry": {
+    "message": "Retry",
+    "description": "Retry button"
+  },
+  "statusNotStarted": {
+    "message": "Not started",
+    "description": "Status not started"
+  },
+  "statusRunning": {
+    "message": "Running",
+    "description": "Status running"
+  },
+  "statusSuccess": {
+    "message": "Success",
+    "description": "Status success"
+  },
+  "statusFailed": {
+    "message": "Failed",
+    "description": "Status failed"
+  },
+  "statusWaiting": {
+    "message": "Waiting",
+    "description": "Status waiting"
+  },
+  "channelCsdn": {
+    "message": "CSDN",
+    "description": "Channel CSDN"
+  },
+  "channelTencentCloudDev": {
+    "message": "Tencent Cloud Dev",
+    "description": "Channel Tencent Cloud Dev"
+  },
+  "channelCnblogs": {
+    "message": "CNBlogs",
+    "description": "Channel CNBlogs"
+  },
+  "channelOschina": {
+    "message": "OSCHINA",
+    "description": "Channel OSCHINA"
+  },
+  "channelWoshipm": {
+    "message": "WoShiPM",
+    "description": "Channel woshipm"
+  },
+  "channelMowen": {
+    "message": "Mowen",
+    "description": "Channel mowen"
+  },
+  "channelSspai": {
+    "message": "SSPAI",
+    "description": "Channel sspai"
+  },
+  "channelBaijiahao": {
+    "message": "Baijiahao",
+    "description": "Channel baijiahao"
+  },
+  "channelToutiao": {
+    "message": "Toutiao",
+    "description": "Channel toutiao"
+  },
+  "channelFeishuDocs": {
+    "message": "Feishu Docs",
+    "description": "Channel feishu-docs"
+  },
+  "imagePolicyHint": {
+    "message": "Images detected: no image upload in this version; hotlinking original images by default. If the platform blocks hotlinks, please re-upload/replace images manually.",
+    "description": "Image policy hint"
+  },
+  "panelRunChannelsLabel": {
+    "message": "Run channels (multi-select)",
+    "description": "Panel run channels label"
+  },
+  "panelWoshipmRealNameHint": {
+    "message": "(may require identity verification)",
+    "description": "Panel extra hint for woshipm"
+  },
+  "panelDiagnosisNoJobHint": {
+    "message": "Choose an action and click Start.",
+    "description": "Panel hint when no job started"
+  },
+  "devtoolsPanelTitle": {
+    "message": "Element JSON",
+    "description": "DevTools panel title"
+  },
+  "devtoolsCopyButton": {
+    "message": "Copy JSON",
+    "description": "DevTools copy button"
+  },
+  "devtoolsCopied": {
+    "message": "Copied",
+    "description": "DevTools copied state"
+  },
+  "devtoolsErrorPrefix": {
+    "message": "Error: ",
+    "description": "DevTools error prefix"
+  },
+  "v2MsgFailed": {
+    "message": "Failed",
+    "description": "V2 runtime message"
+  },
+  "v2SugCheckLoginOrDomThenRetry": {
+    "message": "Check your login status / page layout changes, then retry.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2SugCheckSourceLinkAtEndThenContinue": {
+    "message": "Check whether the end of the content includes “原文链接”. Add it manually if needed, then click “Continue”.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgVerifyPassedDetailHasSourceLink": {
+    "message": "Verification passed: the details page contains the source link.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFailedDetailNoSourceLink": {
+    "message": "Verification failed: source link not detected on the details page.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgFillingContent": {
+    "message": "Filling content…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgConfirmingResult": {
+    "message": "Confirming…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgSuccessDetectedStartVerify": {
+    "message": "Success detected. Starting verification.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgSavingDraft": {
+    "message": "Saving draft…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgPublishing": {
+    "message": "Publishing…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgEnteredEditorPage": {
+    "message": "Entered editor page.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgPleaseConfirmDraftSaved": {
+    "message": "Confirm that the draft has been saved.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgPleaseConfirmPublishCompleted": {
+    "message": "Confirm that publishing is complete.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFoundTitleOpeningDetail": {
+    "message": "Verification: found the title on the list page. Opening details…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyBlockedNoDetailLink": {
+    "message": "Verification blocked: found the title but couldn't extract the details link.",
+    "description": "V2 runtime message"
+  },
+  "v2SugOpenDetailManuallyThenWaitVerify": {
+    "message": "Open the details page manually, then wait there for automatic verification.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgAppendedSourceLinkKeepOriginal": {
+    "message": "Source link appended to the end (posted as original).",
+    "description": "V2 runtime message"
+  },
+  "v2MsgAppendedSourceLinkNoSourceFieldInOriginalMode": {
+    "message": "Source link appended to the end (no source field available in the platform's original mode).",
+    "description": "V2 runtime message"
+  },
+  "v2SugIfNoSourceFieldAppendToEnd": {
+    "message": "If the platform doesn't support a source link field, the source link will be appended to the end.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2SugFillSourceFieldManually": {
+    "message": "If you need to fill the platform “Source link/Attribution” field, please do it manually.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgContentWrittenByCkeditorSourceAppended": {
+    "message": "Content written to the editor (CKEditor API). Source link appended to the end.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyListNoTitleRefresh5s6": {
+    "message": "Verification: title not found in the list. Auto-refreshing in 5s ($1/6)…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyListNoTitleRefresh6s20": {
+    "message": "Verification: title not found in the list. Auto-refreshing in 6s ($1/20)…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyListNoTitleRefresh8s12": {
+    "message": "Verification: title not found in the list. Auto-refreshing in 8s ($1/12)…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyListNoNewArticleRefresh3s24": {
+    "message": "Verification: new article not found yet. Auto-refreshing in 3s ($1/24)…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyListNoNewArticleRefresh3s36": {
+    "message": "Verification: new article not found yet. Auto-refreshing in 3s ($1/36)…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyTokenNotMatchedProbingDetails": {
+    "message": "Verification: token not matched directly; probing detail pages ($1/$2)…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyNotFoundNewArticleProbingDetails": {
+    "message": "Verification: couldn't locate the new article directly; probing detail pages ($1/$2)…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyNoSourceOnPageBackToListProbe": {
+    "message": "Verification: source link not found on this page. Going back to the list to continue probing…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgDraftSavedVerifyDone": {
+    "message": "Draft saved (verification done).",
+    "description": "V2 runtime message"
+  },
+  "v2MsgPublishTriggeredGoPostsListVerify": {
+    "message": "Publish triggered. Navigating to the posts list for verification.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFailedListStillNoTitleMaybeReviewOrFailed": {
+    "message": "Verification failed: still can't find the title on the list page (publish may have failed or is under review).",
+    "description": "V2 runtime message"
+  },
+  "v2MsgDetectedSuccessPageGetDetailLinkVerify": {
+    "message": "Publish success page detected. Getting the detail link and jumping to verification…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgGoManageListVerify": {
+    "message": "Navigating to the article management list for verification…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFindNewArticleInList": {
+    "message": "Verification: find the new article on the list page.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFoundPublishedDetailLinkOpeningDetail": {
+    "message": "Verification: found the published detail link on the list page. Opening details…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFoundNewArticleOpeningDetail": {
+    "message": "Verification: found the new article on the list page. Opening details…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgCsdnVerifyListNoNewArticleRefresh5s36": {
+    "message": "Verification: new article not found in the list ($1). Auto-refreshing in 5s ($2/36)…",
+    "description": "V2 runtime message"
+  },
+  "v2CsdnVerifyByEditorIdLabel": {
+    "message": "by editorId",
+    "description": "CSDN verify strategy label"
+  },
+  "v2CsdnVerifyByTitleTokenLabel": {
+    "message": "by title token",
+    "description": "CSDN verify strategy label"
+  },
+  "v2MsgVerifyFailedListStillNoNewArticle": {
+    "message": "Verification failed: still can't locate the new article in the list (it may not be published yet / under review / list link not generated).",
+    "description": "V2 runtime message"
+  },
+  "v2MsgFailedTitleInputNotFound": {
+    "message": "Failed: title input not found.",
+    "description": "V2 runtime message"
+  },
+  "v2SugWaitEditorLoadThenRetry": {
+    "message": "Wait for the editor to finish loading and retry. If the page just opened, wait 2 seconds and click “Retry”.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgSettingOriginalType": {
+    "message": "Setting the article type to Original…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgSettingTags": {
+    "message": "Setting article tags…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgSavingDraftToGenerateId": {
+    "message": "Saving draft (to generate an article ID)…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgTryingToPublish": {
+    "message": "Trying to publish…",
+    "description": "V2 runtime message"
+  },
+  "v2SugHandleModalRiskRequiredThenContinueOrRetry": {
+    "message": "If a popup/risk-control/required fields appears, handle it manually and then click “Continue” or “Retry” in the panel.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgPublishClickedWaitingRedirectOrIndex": {
+    "message": "Publish clicked. Waiting for redirect or indexing…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgPublishTriggeredGoManageListVerify": {
+    "message": "Publish triggered. Navigating to the article management list for verification.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgEnteredPage": {
+    "message": "Entered page.",
+    "description": "V2 runtime message"
+  },
+  "v2SugCsdnConfirmPublishThenRefreshOrWaitReview": {
+    "message": "Confirm publishing succeeded, then refresh the management page. If it's under review, wait for indexing and click “Continue”.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2SugTencentNoSourceUrlFieldAppend": {
+    "message": "Tencent Cloud Dev (original mode) has no “Article Source URL” field; the source link will be appended to the end.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgTencentContentWrittenLenNeedMin": {
+    "message": "Content written (about $1 chars; needs ≥ $2).",
+    "description": "V2 runtime message"
+  },
+  "v2SugContentTooShortMin140AlreadyAutoPadded": {
+    "message": "The platform requires at least 140 characters. We tried auto-padding; if it’s still not enough, add content manually and continue.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgTencentCreateArticleDetectedStartVerify": {
+    "message": "CreateArticle request detected. Starting verification.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgContentTooShortAutoPadAndRepublish": {
+    "message": "Blocked by platform validation (content < 140 chars). Auto-padding and retrying publish…",
+    "description": "V2 runtime message"
+  },
+  "v2SugHandleRequiredCaptchaModalThenContinueOrRetry": {
+    "message": "If required fields/captcha/popup appears, handle it manually and then click “Continue” or “Retry” in the panel.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2SugAdjustFormatAtEnd": {
+    "message": "If you want to adjust formatting, you can edit it at the end.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgRedirectedToDetailStartVerify": {
+    "message": "Redirected to the article details page. Starting verification.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyMatchedTokenBySearchOpeningDetail": {
+    "message": "Verification: matched the title token via search. Opening details…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFailedListNoArticleWithSourceLink": {
+    "message": "Verification failed: couldn't locate an article that contains the source link on the list page.",
+    "description": "V2 runtime message"
+  },
+  "v2SugConfirmPublishIndexedOrSearchTitleThenContinue": {
+    "message": "Confirm publishing is complete and the article is indexed. You can also search the title on the list page, then click “Continue”.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2SugCnblogsNoSourceFieldAppend": {
+    "message": "CNBlogs has no source link field; the source link will be appended to the end.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgSavingAsDraft": {
+    "message": "Saving as draft…",
+    "description": "V2 runtime message"
+  },
+  "v2SugHandleModalRequiredThenContinueOrRetry": {
+    "message": "If a popup/required fields appears, handle it manually and then click “Continue” or “Retry” in the panel.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgVerifyFindNewPostInList": {
+    "message": "Verification: find the new post on the list page.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFailedListStillNoTitle": {
+    "message": "Verification failed: still can't find the title on the list page.",
+    "description": "V2 runtime message"
+  },
+  "v2SugConfirmPublishOrWaitIndexRefreshThenContinue": {
+    "message": "Confirm publishing is finished, or wait for indexing, then refresh and click “Continue”.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2SugOschinaNoSourceFieldAppend": {
+    "message": "OSCHINA (original mode) has no usable source link field; the source link will be appended to the end.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgPublishingArticle": {
+    "message": "Publishing article…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgOschinaGoProfileWriteBlogPage": {
+    "message": "Navigating to your profile's “Write Blog” page…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgOschinaStillOnEntryNeedWriteBlogOrRelogin": {
+    "message": "Still on the entry page; you may need to click “写博客” or log in again.",
+    "description": "V2 runtime message"
+  },
+  "v2SugOschinaLoginThenClickWriteBlogThenContinue": {
+    "message": "Make sure you're logged in to OSCHINA, click “写博客”, then click “Continue” in the panel.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgOschinaSpaceMigrationSwitchToWritePage": {
+    "message": "Space migration detected. Switching to the actual writing page…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgAlreadyInDetailVerifySourceLink": {
+    "message": "Detected that we’re already on the detail page; verifying the source link directly…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgOschinaPublishTriggeredGoProfileVerify": {
+    "message": "Publish triggered. Navigating to your profile for verification.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyOschinaSpaceMigrationSwitchToList": {
+    "message": "Verification: space migration detected. Switching to the actual space list…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifySwitchToBlogList": {
+    "message": "Verification: switching to the blog list page…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFilteringBlogListByKeyword": {
+    "message": "Verification: filtering the blog list by keyword…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyMatchedTokenByKeywordOpeningDetail": {
+    "message": "Verification: matched the title token via keyword filter. Opening details…",
+    "description": "V2 runtime message"
+  },
+  "v2SugWoshipmNoSourceFieldAppend": {
+    "message": "WoShiPM has no source link field; the source link will be appended to the end.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgSubmittingReview": {
+    "message": "Submitting for review…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgIdentityVerificationRequiredCompleteThenContinue": {
+    "message": "Identity verification is required. Complete it on this page, then continue.",
+    "description": "V2 runtime message"
+  },
+  "v2SugDoneThenClickContinue": {
+    "message": "Once done, click “Continue” in the panel.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgPleaseConfirmReviewSubmitted": {
+    "message": "Confirm that the review submission has completed.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgWoshipmReviewSubmittedGoMyArticlesVerify": {
+    "message": "Review submitted. Navigating to “My Articles” for verification.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyLocateNewArticleInMyArticles": {
+    "message": "Verification: locate the new article in “My Articles”.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyMatchedTokenInListApiOpeningDetail": {
+    "message": "Verification: matched the title token in the list API ($1). Opening details…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyListOrDetailNotRecognizedRefresh5s6": {
+    "message": "Verification: list/details not recognized. Auto-refreshing in 5s ($1/6)…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyBlockedListNoNewArticle": {
+    "message": "Verification blocked: couldn't locate the new article on the list page.",
+    "description": "V2 runtime message"
+  },
+  "v2SugWoshipmSwitchTabsThenContinue": {
+    "message": "On “My Articles”, switch to “Under Review / Published / Drafts” and confirm you can see the new article, then click “Continue”.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgMowenFillingContentTitleFirstLine": {
+    "message": "Filling content (first line is the title)…",
+    "description": "V2 runtime message"
+  },
+  "v2SugMowenTitleInFirstLine": {
+    "message": "Mowen has no separate title field; the title will be written as the first line.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgSaving": {
+    "message": "Saving…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgPleaseConfirmSaveCompleted": {
+    "message": "Confirm that saving has completed.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgMowenPublishTriggeredGoNotesListVerify": {
+    "message": "Publish triggered. Navigating to the notes list for verification.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFindNewNoteInList": {
+    "message": "Verification: find the new note on the list page.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFailedListNoTitleTitleIsFirstLine": {
+    "message": "Verification failed: still can't find the title on the list page (title is the first line of the content).",
+    "description": "V2 runtime message"
+  },
+  "v2SugRefreshListThenContinue": {
+    "message": "Refresh the list page, then click “Continue”.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgFillingTitle": {
+    "message": "Filling title…",
+    "description": "V2 runtime message"
+  },
+  "v2SugSspaiNoSourceFieldAppend": {
+    "message": "SSPAI has no source link field; the source link will be appended to the end.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgIdentityVerificationRequiredToPublish": {
+    "message": "Identity verification is required before you can publish.",
+    "description": "V2 runtime message"
+  },
+  "v2SugCompleteIdentityVerificationThenContinue": {
+    "message": "Complete identity verification on this page, then click “Continue” in the panel.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgVerifyConfirmPublishedVisibleOnDetail": {
+    "message": "Verification: confirm the article is published and visible on the details page.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyBlockedNotPublishedYet": {
+    "message": "Verification blocked: the article is not published yet (may require identity verification / missing required fields).",
+    "description": "V2 runtime message"
+  },
+  "v2SugCompleteVerificationOrRequiredThenContinueToRetry": {
+    "message": "Complete identity verification or required fields on this page, then click “Continue” to retry publishing and verification.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgEnteredSspaiWritePage": {
+    "message": "Entered SSPAI writing page.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgSspaiPublishTriggeredButNotInVerifiablePage": {
+    "message": "Publish triggered, but did not reach a verifiable page (/write#id or /post/id).",
+    "description": "V2 runtime message"
+  },
+  "v2SugCheckRequiredOrIdentityThenContinue": {
+    "message": "Check if there are required fields or identity verification prompts. Handle them, then click “Continue”.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgSspaiOpeningWritePage": {
+    "message": "Opening SSPAI writing page…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgBaijiahaoOpeningEditor": {
+    "message": "Opening Baijiahao editor…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgBaijiahaoSecurityVerifyTriggered": {
+    "message": "Baidu security verification triggered on Baijiahao. Complete the slider/QR verification first, then continue…",
+    "description": "V2 runtime message"
+  },
+  "v2SugBaijiahaoNoSourceFieldAppend": {
+    "message": "Baijiahao has no source link field; the source link will be appended to the end.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgPublishBlockedBySecurityVerify": {
+    "message": "Publishing was blocked by security verification. Complete the verification (QR code/phone) in the popup, then continue…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgEnteredBaijiahaoEditor": {
+    "message": "Entered Baijiahao editor page.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgPublishTriggeredGoWorksListVerify": {
+    "message": "Publish triggered. Navigating to the works list for verification.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFindNewArticleInWorksList": {
+    "message": "Verification: find the new article in the works list.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifySetListSearchKeyword": {
+    "message": "Verification: setting the list search keyword: $1",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFoundTitleInListOpeningDetail": {
+    "message": "Verification: found the title in the \"$1\" list. Opening details…",
+    "description": "V2 runtime message"
+  },
+  "v2SugToutiaoNoSourceFieldAppend": {
+    "message": "Toutiao has no source link field; the source link will be appended to the end.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgConfirmingPublishResult": {
+    "message": "Confirming publish result…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgToutiaoSavePublishFailedSaveFailed": {
+    "message": "Toutiao save/publish failed (platform response: save failed).",
+    "description": "V2 runtime message"
+  },
+  "v2SugToutiaoHandleRequiredFieldsThenContinueVerify": {
+    "message": "Check if there are required fields (e.g., cover/category/declaration) or risk-control prompts. Handle them, then click “Continue” to retry verification.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgEnteredToutiaoEditor": {
+    "message": "Entered Toutiao editor page.",
+    "description": "V2 runtime message"
+  },
+  "v2SugConfirmPublishedNoRequiredRefreshThenContinue": {
+    "message": "Confirm it was published successfully and no required fields are missing, then refresh the list and click “Continue”.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgVerifyPassedListNewArticlePublished": {
+    "message": "Verification passed: the new article is visible on the list page (Published).",
+    "description": "V2 runtime message"
+  },
+  "v2MsgOutOfScopeReturningToEditor": {
+    "message": "This page is out of the expected scope. Returning to the editor…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgFeishuCreatingBlankDoc": {
+    "message": "Creating a new Feishu doc (blank doc)…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgFeishuApiCreateFailedFallbackUi": {
+    "message": "API document creation failed; falling back to the UI click flow…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgFeishuTitleAreaNotFoundSkipUseFilename": {
+    "message": "Title area not found; skipped (using the file name as the title).",
+    "description": "V2 runtime message"
+  },
+  "v2SugFeishuNoSourceFieldAppend": {
+    "message": "Feishu Docs has no source link field; the source link will be appended to the end.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgFeishuWaitingAutosaveDraft": {
+    "message": "Waiting for auto-save (draft)…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgFeishuWaitingAutosavePublish": {
+    "message": "Waiting for auto-save (publish)…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgFeishuContentWrittenBackToFolderVerify": {
+    "message": "Content written. Returning to the folder list for verification.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFindNewDocInFolderList": {
+    "message": "Verification: find the new doc in the folder list.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFailedFolderListNoTitle": {
+    "message": "Verification failed: still can't find the title in the folder list.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFoundTitleOpeningDocDetail": {
+    "message": "Verification: found the title on the list page. Opening doc details…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyBlockedNoDocLink": {
+    "message": "Verification blocked: found the title but couldn't get the doc link.",
+    "description": "V2 runtime message"
+  },
+  "v2SugFeishuOpenDocDetailManuallyThenWaitVerify": {
+    "message": "Open the doc details page manually, then wait there for automatic verification.",
+    "description": "V2 runtime suggestion"
+  },
+  "v2MsgVerifyPassedSavedToCloudAndHasSource": {
+    "message": "Verification passed: saved to cloud and the doc contains the source link.",
+    "description": "V2 runtime message"
+  },
+  "v2MsgVerifyFailedNoSavedToCloudOrSource": {
+    "message": "Verification failed: didn't detect “已保存到云端” or the source link.",
+    "description": "V2 runtime message"
+  },
+  "v2SugFeishuConfirmSavedToCloudAndSourceThenContinue": {
+    "message": "Confirm the page shows “已经保存到云端” and the content ends with “原文链接”, then click “Continue”.",
+    "description": "V2 runtime suggestion"
   }
 }

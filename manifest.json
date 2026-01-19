@@ -36,10 +36,105 @@
     },
     {
       "matches": [
-        "https://zhuanlan.zhihu.com/write*"
+        "https://mp.csdn.net/mp_blog/creation/editor*",
+        "https://mp.csdn.net/mp_blog/creation/success*",
+        "https://editor.csdn.net/*",
+        "https://mp.csdn.net/mp_blog/manage/*",
+        "https://blog.csdn.net/*"
       ],
       "js": [
-        "src/content/zhihu-publisher.js"
+        "src/content/csdn-publisher.js"
+      ],
+      "run_at": "document_end"
+    },
+    {
+      "matches": [
+        "https://cloud.tencent.com/developer/article/write*",
+        "https://cloud.tencent.com/developer/creator/article*",
+        "https://cloud.tencent.com/developer/article/*"
+      ],
+      "js": [
+        "src/content/tencent-cloud-dev-publisher.js"
+      ],
+      "run_at": "document_end"
+    },
+    {
+      "matches": [
+        "https://i.cnblogs.com/posts/edit*",
+        "https://i.cnblogs.com/posts*",
+        "https://www.cnblogs.com/*"
+      ],
+      "js": [
+        "src/content/cnblogs-publisher.js"
+      ],
+      "run_at": "document_end"
+    },
+    {
+      "matches": [
+        "https://www.oschina.net/blog/write*",
+        "https://my.oschina.net/*/blog/write*",
+        "https://my.oschina.net/*"
+      ],
+      "js": [
+        "src/content/oschina-publisher.js"
+      ],
+      "run_at": "document_end"
+    },
+    {
+      "matches": [
+        "https://www.woshipm.com/writing*",
+        "https://www.woshipm.com/*"
+      ],
+      "js": [
+        "src/content/woshipm-publisher.js"
+      ],
+      "run_at": "document_end"
+    },
+    {
+      "matches": [
+        "https://note.mowen.cn/editor*",
+        "https://note.mowen.cn/my/notes*",
+        "https://note.mowen.cn/detail/*"
+      ],
+      "js": [
+        "src/content/mowen-publisher.js"
+      ],
+      "run_at": "document_end"
+    },
+    {
+      "matches": [
+        "https://sspai.com/write*",
+        "https://sspai.com/*"
+      ],
+      "js": [
+        "src/content/sspai-publisher.js"
+      ],
+      "run_at": "document_end"
+    },
+    {
+      "matches": [
+        "https://baijiahao.baidu.com/*"
+      ],
+      "js": [
+        "src/content/baijiahao-publisher.js"
+      ],
+      "run_at": "document_end"
+    },
+    {
+      "matches": [
+        "https://mp.toutiao.com/*"
+      ],
+      "js": [
+        "src/content/toutiao-publisher.js"
+      ],
+      "run_at": "document_end"
+    },
+    {
+      "matches": [
+        "https://wuxinxuexi.feishu.cn/*"
+      ],
+      "js": [
+        "src/content/feishu-docs-publisher.js"
       ],
       "run_at": "document_end"
     }
@@ -51,7 +146,8 @@
   "web_accessible_resources": [
     {
       "resources": [
-        "src/assets/*"
+        "src/assets/*",
+        "icons/*"
       ],
       "matches": [
         "<all_urls>"

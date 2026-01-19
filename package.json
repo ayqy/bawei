@@ -1,14 +1,16 @@
 {
-  "name": "wechat-to-zhihu-publisher",
+  "name": "bawei",
   "private": true,
   "version": "1.0.0",
-  "description": "A browser extension to publish WeChat articles to Zhihu column",
+  "description": "Cross-post WeChat Official Account articles to multiple platforms (draft/publish) with built-in diagnostics.",
   "type": "module",
   "scripts": {
     "dev": "vite build --watch",
     "build": "npm run clean && BUILD_TARGET=development node scripts/inline-build.ts",
     "build:prod": "npm run clean && BUILD_TARGET=production node scripts/inline-build.ts",
     "preview": "vite preview",
+    "e2e:v2": "npm run build && node scripts/v2-e2e.mjs",
+    "e2e:export-state": "node scripts/export-mcp-storageState.mjs",
     "lint": "eslint . --ext .ts,.tsx --report-unused-disable-directives --max-warnings 0",
     "lint:fix": "eslint . --ext .ts,.tsx --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,css,html}\"",
@@ -27,6 +29,7 @@
     "uuid": "^11.1.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.57.0",
     "@types/chrome": "^0.0.268",
     "@types/diff": "*",
     "@types/node": "^20.14.8",
@@ -53,12 +56,15 @@
   "keywords": [
     "chrome-extension",
     "wechat",
-    "zhihu",
+    "weixin",
+    "weixin-official-account",
+    "cross-post",
     "publisher",
     "content-publishing",
-    "automation"
+    "automation",
+    "multi-platform"
   ],
-  "author": "WeChat to Zhihu Publisher Team",
+  "author": "bawei",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -69,7 +75,7 @@
   },
   "homepage": "https://github.com/ayqy/copy#readme",
   "lint-staged": {
-    "*.{ts,tsx,js}": [
+    "src/**/*.{ts,tsx}": [
       "eslint --max-warnings 0",
       "npm run check-i18n"
     ]
