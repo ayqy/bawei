@@ -8,6 +8,8 @@ import type { ChannelId, ChannelRuntimeState, PublishJob } from '../shared/v2-ty
 /* INLINE:events */
 /* INLINE:v2-protocol */
 /* INLINE:publish-verify */
+/* INLINE:rich-content */
+/* INLINE:image-bridge */
 
 const CHANNEL_ID: ChannelId = 'tencent-cloud-dev';
 
@@ -79,16 +81,6 @@ function escapeAttr(value: string): string {
 function withSourceUrlAppended(contentHtml: string, sourceUrl: string): string {
   const safe = escapeAttr(sourceUrl);
   return `${contentHtml}\n<p><br/></p><p>原文链接：<a href="${safe}" target="_blank" rel="noreferrer noopener">${safe}</a></p>`;
-}
-
-function htmlToPlainTextSafe(html: string): string {
-  try {
-    const tmp = document.createElement('div');
-    tmp.innerHTML = html;
-    return (tmp.textContent || tmp.innerText || '').replace(/\s+/g, ' ').trim();
-  } catch {
-    return '';
-  }
 }
 
 function ensureMinLengthText(text: string, minLen: number, sourceUrl: string): string {
@@ -170,6 +162,26 @@ async function getContextFromBackground(): Promise<{ job: AnyJob; channelId: str
   return { job: res.job, channelId: res.channelId };
 }
 
+async function stageDetectLogin(): Promise<void> {
+  currentStage = 'detectLogin';
+  await report({ status: 'running', stage: 'detectLogin', userMessage: getMessage('v3MsgDetectingLogin') });
+
+  const url = String(location.href || '').toLowerCase();
+  const hasLoginUrl = /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i.test(url);
+  const hasPassword = !!document.querySelector('input[type="password"],input[name*="password" i]');
+  const text = document.body?.innerText || '';
+  const hasLoginText = text.includes('登录') || text.toLowerCase().includes('sign in');
+  if (hasLoginUrl || (hasPassword && hasLoginText)) {
+    await report({
+      status: 'not_logged_in',
+      stage: 'detectLogin',
+      userMessage: getMessage('v3MsgNotLoggedIn'),
+      userSuggestion: getMessage('v3SugLoginThenRetry'),
+    });
+    throw new Error('__BAWEI_V2_STOPPED__');
+  }
+}
+
 async function stageFillTitle(title: string): Promise<void> {
   currentStage = 'fillTitle';
   await report({ status: 'running', stage: 'fillTitle' });
@@ -189,9 +201,11 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
     userSuggestion: getMessage('v2SugTencentNoSourceUrlFieldAppend'),
   });
 
-  const html = withSourceUrlAppended(contentHtml, sourceUrl);
-  const plain = ensureMinLengthText(htmlToPlainTextSafe(html), 160, sourceUrl);
+  const jobTokens = currentJob?.article?.contentTokens;
+  const tokens = Array.isArray(jobTokens) ? jobTokens : buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
+
   const minLen = 140;
+  const expectedImages = tokens.filter((t) => t?.kind === 'image').length;
 
   // 兼容新版编辑器（contenteditable）与 Markdown 模式（textarea）
   const editable = getTencentEditable();
@@ -206,24 +220,68 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
   }
 
   if (target) {
-    simulateFocus(target);
-    try {
-      document.execCommand('selectAll', false);
-      document.execCommand('delete', false);
-    } catch {
-      // ignore
+    const existingText = (() => {
+      try {
+        return String(target.innerText || target.textContent || '');
+      } catch {
+        return '';
+      }
+    })();
+    const existingHasSource = !!(sourceUrl && existingText.includes(sourceUrl));
+    const existingOk =
+      existingHasSource &&
+      (expectedImages === 0 ||
+        Array.from(target.querySelectorAll<HTMLImageElement>('img')).filter((img) => {
+          const src = String(img.getAttribute('src') || '').trim();
+          if (!src) return false;
+          if (src.startsWith('blob:') || src.startsWith('data:')) return true;
+          return !src.includes('qpic.cn') && !src.includes('qlogo.cn');
+        }).length >= expectedImages);
+
+    if (!existingOk) {
+      try {
+        await fillEditorByTokens({
+          jobId: currentJob?.jobId || '',
+          tokens,
+          editorRoot: target,
+          writeMode: 'text',
+          onImageProgress: async (current, total) => {
+            await report({
+              status: 'running',
+              stage: 'fillContent',
+              userMessage: getMessage('v3MsgUploadingImageProgress', [String(current), String(total)]),
+            });
+          },
+        });
+      } catch (e) {
+        await report({
+          status: 'waiting_user',
+          stage: 'waitingUser',
+          userMessage: getMessage('v3MsgImageUploadFailed'),
+          userSuggestion: getMessage('v3SugManualUploadImagesThenContinue'),
+          devDetails: { message: e instanceof Error ? e.message : String(e) },
+        });
+        throw new Error('__BAWEI_V2_STOPPED__');
+      }
     }
 
-    // 腾讯云会严格校验字数（>=140），且 DraftJS 对 insertHTML 兼容性不稳定；
-    // 这里强制用纯文本写入，确保发布接口会真正触发。
-    try {
-      document.execCommand('insertText', false, plain);
-    } catch {
-      // ignore
-    }
     await new Promise((r) => setTimeout(r, 300));
 
     let len = getTextLen(target);
+    if (len < minLen) {
+      const currentText = (target.innerText || target.textContent || '').trim();
+      const padded = ensureMinLengthText(currentText, 160, sourceUrl);
+      const extra = padded.slice(currentText.length);
+      if (extra) {
+        try {
+          document.execCommand('insertText', false, extra);
+        } catch {
+          // ignore
+        }
+        await new Promise((r) => setTimeout(r, 200));
+        len = getTextLen(target);
+      }
+    }
 
     await report({
       userMessage: getMessage('v2MsgTencentContentWrittenLenNeedMin', [String(len), String(minLen)]),
@@ -235,7 +293,8 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
     textarea.value = '';
     textarea.dispatchEvent(new Event('input', { bubbles: true }));
     // Markdown 模式：尽量写入纯文本（避免 HTML 被当作字面量）
-    textarea.value = plain || html;
+    const plain = ensureMinLengthText(htmlToPlainTextSafe(contentHtml), 160, sourceUrl);
+    textarea.value = plain;
     textarea.dispatchEvent(new Event('input', { bubbles: true }));
   }
 
@@ -440,6 +499,7 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
 
 async function runFlow(job: AnyJob): Promise<void> {
   await report({ status: 'running', stage: 'openEntry', userMessage: getMessage('v2MsgEnteredEditorPage') });
+  await stageDetectLogin();
   await stageFillTitle(job.article.title);
   await stageFillContent(job.article.contentHtml, job.article.sourceUrl);
   if (job.action === 'draft') {

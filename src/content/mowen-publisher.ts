@@ -9,6 +9,8 @@ import type { ChannelId, ChannelRuntimeState, PublishJob } from '../shared/v2-ty
 /* INLINE:events */
 /* INLINE:v2-protocol */
 /* INLINE:publish-verify */
+/* INLINE:rich-content */
+/* INLINE:image-bridge */
 
 const CHANNEL_ID: ChannelId = 'mowen';
 
@@ -74,6 +76,26 @@ async function getContextFromBackground(): Promise<{ job: AnyJob; channelId: str
   return { job: res.job, channelId: res.channelId };
 }
 
+async function stageDetectLogin(): Promise<void> {
+  currentStage = 'detectLogin';
+  await report({ status: 'running', stage: 'detectLogin', userMessage: getMessage('v3MsgDetectingLogin') });
+
+  const url = String(location.href || '').toLowerCase();
+  const hasLoginUrl = /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i.test(url);
+  const hasPassword = !!document.querySelector('input[type="password"],input[name*="password" i]');
+  const text = document.body?.innerText || '';
+  const hasLoginText = text.includes('登录') || text.toLowerCase().includes('sign in');
+  if (hasLoginUrl || (hasPassword && hasLoginText) || text.includes('请登录')) {
+    await report({
+      status: 'not_logged_in',
+      stage: 'detectLogin',
+      userMessage: getMessage('v3MsgNotLoggedIn'),
+      userSuggestion: getMessage('v3SugLoginThenRetry'),
+    });
+    throw new Error('__BAWEI_V2_STOPPED__');
+  }
+}
+
 async function stageFillContent(title: string, contentHtml: string, sourceUrl: string): Promise<void> {
   currentStage = 'fillContent';
   await report({
@@ -95,29 +117,54 @@ async function stageFillContent(title: string, contentHtml: string, sourceUrl: s
 
   if (!editor) throw new Error('未找到内容编辑器（可能是编辑器尚未渲染完成）');
 
-  simulateFocus(editor);
   const html = withTitleAndSourceUrl(contentHtml, title, sourceUrl);
+  const tokens = buildRichContentTokens({ contentHtml: html, baseUrl: sourceUrl, sourceUrl: '' });
 
-  // ProseMirror 下优先使用 execCommand，避免系统剪贴板权限导致的卡死
-  let ok = false;
-  try {
-    document.execCommand('selectAll', false);
-    ok = document.execCommand('insertHTML', false, html);
-  } catch {
-    ok = false;
-  }
-
-  if (!ok) {
+  const expectedImages = tokens.filter((t) => t?.kind === 'image').length;
+  const existingText = (() => {
     try {
-      editor.innerHTML = html;
-      editor.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true }));
-      ok = true;
+      return String(editor.textContent || '');
     } catch {
-      ok = false;
+      return '';
+    }
+  })();
+  const existingHasSource = !!(sourceUrl && existingText.includes(sourceUrl));
+  const existingOk =
+    existingHasSource &&
+    (expectedImages === 0 ||
+      Array.from(editor.querySelectorAll<HTMLImageElement>('img')).filter((img) => {
+        const src = String(img.getAttribute('src') || '').trim();
+        if (!src) return false;
+        if (src.startsWith('blob:') || src.startsWith('data:')) return true;
+        return !src.includes('qpic.cn') && !src.includes('qlogo.cn');
+      }).length >= expectedImages);
+
+  if (!existingOk) {
+    try {
+      await fillEditorByTokens({
+        jobId: currentJob?.jobId || '',
+        tokens,
+        editorRoot: editor,
+        writeMode: 'html',
+        onImageProgress: async (current, total) => {
+          await report({
+            status: 'running',
+            stage: 'fillContent',
+            userMessage: getMessage('v3MsgUploadingImageProgress', [String(current), String(total)]),
+          });
+        },
+      });
+    } catch (e) {
+      await report({
+        status: 'waiting_user',
+        stage: 'waitingUser',
+        userMessage: getMessage('v3MsgImageUploadFailed'),
+        userSuggestion: getMessage('v3SugManualUploadImagesThenContinue'),
+        devDetails: { message: e instanceof Error ? e.message : String(e) },
+      });
+      throw new Error('__BAWEI_V2_STOPPED__');
     }
   }
-
-  if (!ok) throw new Error('填充正文失败（插入未生效）');
 }
 
 async function stageSaveDraft(): Promise<void> {
@@ -165,6 +212,7 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
 
 async function runFlow(job: AnyJob): Promise<void> {
   await report({ status: 'running', stage: 'openEntry', userMessage: getMessage('v2MsgEnteredEditorPage') });
+  await stageDetectLogin();
   await stageFillContent(job.article.title, job.article.contentHtml, job.article.sourceUrl);
   if (job.action === 'draft') {
     await stageSaveDraft();

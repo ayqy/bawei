@@ -7,6 +7,9 @@ export const V2_JOB_BROADCAST = 'V2_JOB_BROADCAST' as const;
 export const V2_REQUEST_CONTINUE = 'V2_REQUEST_CONTINUE' as const;
 export const V2_REQUEST_RETRY = 'V2_REQUEST_RETRY' as const;
 export const V2_REQUEST_STOP = 'V2_REQUEST_STOP' as const;
+export const V2_FOCUS_CHANNEL_TAB = 'V2_FOCUS_CHANNEL_TAB' as const;
+
+export const V3_FETCH_IMAGE = 'V3_FETCH_IMAGE' as const;
 
 export type StartJobRequest = {
   type: typeof V2_START_JOB;
@@ -72,3 +75,37 @@ export type StopJobResponse = {
   success: boolean;
   error?: string;
 };
+
+export type FocusChannelTabRequest = {
+  type: typeof V2_FOCUS_CHANNEL_TAB;
+  jobId: string;
+  channelId: ChannelId;
+};
+
+export type FocusChannelTabResponse =
+  | {
+      success: true;
+      tabId?: number;
+    }
+  | {
+      success: false;
+      error: string;
+    };
+
+export type FetchImageRequest = {
+  type: typeof V3_FETCH_IMAGE;
+  jobId: string;
+  url: string;
+};
+
+export type FetchImageResponse =
+  | {
+      success: true;
+      mimeType: string;
+      buffer: ArrayBuffer;
+      size: number;
+    }
+  | {
+      success: false;
+      error: string;
+    };

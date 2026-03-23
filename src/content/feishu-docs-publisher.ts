@@ -14,6 +14,8 @@ import type { ChannelId, ChannelRuntimeState, PublishJob } from '../shared/v2-ty
 /* INLINE:events */
 /* INLINE:v2-protocol */
 /* INLINE:publish-verify */
+/* INLINE:rich-content */
+/* INLINE:image-bridge */
 
 const CHANNEL_ID: ChannelId = 'feishu-docs';
 
@@ -55,24 +57,6 @@ function getDocUrlForJob(jobId: string): string | null {
   }
 }
 
-function escapePlainText(value: string): string {
-  return String(value || '')
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .replaceAll('\u0000', '')
-    .trim();
-}
-
-function htmlToPlainTextSafe(html: string): string {
-  try {
-    const tmp = document.createElement('div');
-    tmp.innerHTML = html;
-    return escapePlainText(tmp.textContent || tmp.innerText || '');
-  } catch {
-    return '';
-  }
-}
-
 function selectContents(el: HTMLElement): void {
   try {
     const sel = window.getSelection();
@@ -84,13 +68,6 @@ function selectContents(el: HTMLElement): void {
   } catch {
     // ignore
   }
-}
-
-function buildPlainContent(contentHtml: string, sourceUrl: string): string {
-  const plain = htmlToPlainTextSafe(contentHtml);
-  const base = plain || '（以下为自动同步内容）';
-  const suffix = sourceUrl ? `\n\n原文链接：${sourceUrl}\n` : '';
-  return `${base}${suffix}`.trim();
 }
 
 function shouldRunOnThisPage(): boolean {
@@ -119,6 +96,26 @@ async function getContextFromBackground(): Promise<{ job: AnyJob; channelId: str
   const res = await chrome.runtime.sendMessage({ type: V2_GET_CONTEXT });
   if (!res?.success) throw new Error(res?.error || 'get context failed');
   return { job: res.job, channelId: res.channelId };
+}
+
+async function stageDetectLogin(): Promise<void> {
+  currentStage = 'detectLogin';
+  await report({ status: 'running', stage: 'detectLogin', userMessage: getMessage('v3MsgDetectingLogin') });
+
+  const url = String(location.href || '').toLowerCase();
+  const hasLoginUrl = /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i.test(url);
+  const hasPassword = !!document.querySelector('input[type="password"],input[name*="password" i]');
+  const text = document.body?.innerText || '';
+  const hasLoginText = text.includes('登录') || text.toLowerCase().includes('sign in');
+  if (hasLoginUrl || (hasPassword && hasLoginText)) {
+    await report({
+      status: 'not_logged_in',
+      stage: 'detectLogin',
+      userMessage: getMessage('v3MsgNotLoggedIn'),
+      userSuggestion: getMessage('v3SugLoginThenRetry'),
+    });
+    throw new Error('__BAWEI_V2_STOPPED__');
+  }
 }
 
 function findClickableByText(text: string): HTMLElement | null {
@@ -357,19 +354,54 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
     { timeoutMs: 60_000, intervalMs: 800 }
   );
 
-  const plain = buildPlainContent(contentHtml, sourceUrl);
+  const jobTokens = currentJob?.article?.contentTokens;
+  const tokens = Array.isArray(jobTokens) ? jobTokens : buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
 
-  // Feishu Docx blocks execCommand insertText/insertHTML. The stable way is to set innerText and dispatch input events.
-  // This also preserves "原创" requirement by appending source URL to the end of the document.
-  simulateClick(editor);
-  simulateFocus(editor);
-  await new Promise((r) => setTimeout(r, 200));
-  try {
-    editor.innerText = plain;
-    editor.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, data: plain, inputType: 'insertText' }));
-    editor.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: plain }));
-  } catch {
-    // ignore
+  const expectedImages = tokens.filter((t) => t?.kind === 'image').length;
+
+  const existingText = (() => {
+    try {
+      return String(editor.textContent || '');
+    } catch {
+      return '';
+    }
+  })();
+  const existingHasSource = !!(sourceUrl && (existingText.includes(sourceUrl) || pageContainsSourceUrl(sourceUrl)));
+  const existingOk =
+    existingHasSource &&
+    (expectedImages === 0 ||
+      Array.from(editor.querySelectorAll<HTMLImageElement>('img')).filter((img) => {
+        const src = String(img.getAttribute('src') || '').trim();
+        if (!src) return false;
+        if (src.startsWith('blob:') || src.startsWith('data:')) return true;
+        return !src.includes('qpic.cn') && !src.includes('qlogo.cn');
+      }).length >= expectedImages);
+
+  if (!existingOk) {
+    try {
+      await fillEditorByTokens({
+        jobId: currentJob?.jobId || '',
+        tokens,
+        editorRoot: editor,
+        writeMode: 'text',
+        onImageProgress: async (current, total) => {
+          await report({
+            status: 'running',
+            stage: 'fillContent',
+            userMessage: getMessage('v3MsgUploadingImageProgress', [String(current), String(total)]),
+          });
+        },
+      });
+    } catch (e) {
+      await report({
+        status: 'waiting_user',
+        stage: 'waitingUser',
+        userMessage: getMessage('v3MsgImageUploadFailed'),
+        userSuggestion: getMessage('v3SugManualUploadImagesThenContinue'),
+        devDetails: { message: e instanceof Error ? e.message : String(e) },
+      });
+      throw new Error('__BAWEI_V2_STOPPED__');
+    }
   }
 
   // Verify we can observe the source URL in the DOM. (Some accounts may render link cards, so also accept the label.)
@@ -400,6 +432,7 @@ async function waitForAutoSave(): Promise<void> {
 }
 
 async function runDocxFlow(job: AnyJob): Promise<void> {
+  await stageDetectLogin();
   await stageFillTitle(job.article.title);
   await stageFillContent(job.article.contentHtml, job.article.sourceUrl);
 
@@ -515,6 +548,7 @@ async function bootstrap(): Promise<void> {
     if (currentJob.stoppedAt) return;
 
     if (isFolderPage()) {
+      await stageDetectLogin();
       // If we are back from docx editing, we should verify list; otherwise create a docx first.
       if (getDocUrlForJob(currentJob.jobId)) {
         await verifyFromFolder(currentJob);

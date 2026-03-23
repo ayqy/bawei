@@ -8,6 +8,8 @@ import type { ChannelId, ChannelRuntimeState, PublishJob } from '../shared/v2-ty
 /* INLINE:events */
 /* INLINE:v2-protocol */
 /* INLINE:publish-verify */
+/* INLINE:rich-content */
+/* INLINE:image-bridge */
 
 const CHANNEL_ID: ChannelId = 'oschina';
 
@@ -73,15 +75,6 @@ function removeSessionValue(key: string): void {
   } catch {
     // ignore
   }
-}
-
-function escapeAttr(value: string): string {
-  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-}
-
-function withSourceUrlAppended(contentHtml: string, sourceUrl: string): string {
-  const safe = escapeAttr(sourceUrl);
-  return `${contentHtml}\n<p><br/></p><p>原文链接：<a href="${safe}" target="_blank" rel="noreferrer noopener">${safe}</a></p>`;
 }
 
 function pageContainsSourceUrlLoose(sourceUrl: string): boolean {
@@ -169,6 +162,26 @@ async function getContextFromBackground(): Promise<{ job: AnyJob; channelId: str
   return { job: res.job, channelId: res.channelId };
 }
 
+async function stageDetectLogin(): Promise<void> {
+  currentStage = 'detectLogin';
+  await report({ status: 'running', stage: 'detectLogin', userMessage: getMessage('v3MsgDetectingLogin') });
+
+  const url = String(location.href || '').toLowerCase();
+  const hasLoginUrl = /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i.test(url);
+  const hasPassword = !!document.querySelector('input[type="password"],input[name*="password" i]');
+  const text = document.body?.innerText || '';
+  const hasLoginText = text.includes('登录') || text.toLowerCase().includes('sign in');
+  if (hasLoginUrl || (hasPassword && hasLoginText) || text.includes('登录后') || text.includes('请登录')) {
+    await report({
+      status: 'not_logged_in',
+      stage: 'detectLogin',
+      userMessage: getMessage('v3MsgNotLoggedIn'),
+      userSuggestion: getMessage('v3SugLoginThenRetry'),
+    });
+    throw new Error('__BAWEI_V2_STOPPED__');
+  }
+}
+
 async function ensureEditorPage(): Promise<void> {
   if (location.hostname !== 'www.oschina.net') return;
   if (!location.pathname.startsWith('/blog/write')) return;
@@ -223,55 +236,8 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
     userSuggestion: getMessage('v2SugOschinaNoSourceFieldAppend'),
   });
 
-  const html = withSourceUrlAppended(contentHtml, sourceUrl);
-
-  // 优先通过 CKEDITOR API 写入（仅改 iframe body 可能不会更新编辑器状态）
-  try {
-    type CkEditorInstance = {
-      setData: (data: string, opts?: { callback?: () => void }) => void;
-      fire?: (eventName: string) => void;
-      updateElement?: () => void;
-    };
-    type CkEditorGlobal = { instances?: Record<string, unknown> };
-
-    const ck = (window as Window & { CKEDITOR?: CkEditorGlobal }).CKEDITOR;
-    const instances = ck?.instances ? Object.values(ck.instances) : [];
-    const inst =
-      instances.find((x): x is CkEditorInstance => {
-        const candidate = x as Partial<CkEditorInstance> | null;
-        return !!candidate && typeof candidate.setData === 'function';
-      }) || null;
-    if (inst) {
-      await new Promise<void>((resolve) => {
-        try {
-          inst.setData(html, { callback: resolve });
-        } catch {
-          resolve();
-        }
-      });
-      try {
-        if (typeof inst.fire === 'function') inst.fire('change');
-        if (typeof inst.updateElement === 'function') inst.updateElement();
-      } catch {
-        // ignore
-      }
-      await report({ userMessage: getMessage('v2MsgContentWrittenByCkeditorSourceAppended') });
-      // 同步隐藏 textarea，避免发布时仍提交旧值（content script 可能无法直接访问 page world 的 CKEDITOR）
-      try {
-        const ta = document.querySelector<HTMLTextAreaElement>('textarea[name="body"], textarea#body');
-        if (ta) {
-          ta.value = html;
-          ta.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true }));
-          ta.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
-        }
-      } catch {
-        // ignore
-      }
-      return;
-    }
-  } catch {
-    // ignore
-  }
+  const jobTokens = currentJob?.article?.contentTokens;
+  const tokens = Array.isArray(jobTokens) ? jobTokens : buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
 
   // 回退：直接写入 iframe body
   const iframe = (await waitForElement<HTMLIFrameElement>('iframe.cke_wysiwyg_frame, iframe', 15000)) as HTMLIFrameElement;
@@ -285,20 +251,76 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
 
   if (!iframe?.contentDocument?.body) throw new Error('未找到正文编辑器（iframe 未就绪）');
 
-  iframe.contentDocument.body.innerHTML = html;
-  iframe.contentDocument.body.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true }));
+  const editorRoot = iframe.contentDocument.body as HTMLElement;
+  const expectedImages = tokens.filter((t) => t?.kind === 'image').length;
+  const existingHtml = (() => {
+    try {
+      return String(editorRoot.innerHTML || '');
+    } catch {
+      return '';
+    }
+  })();
+  const existingHasSource = !!(sourceUrl && existingHtml.includes(sourceUrl));
+  const existingOk =
+    existingHasSource &&
+    (expectedImages === 0 ||
+      Array.from(editorRoot.querySelectorAll<HTMLImageElement>('img')).filter((img) => {
+        const src = String(img.getAttribute('src') || '').trim();
+        if (!src) return false;
+        if (src.startsWith('blob:') || src.startsWith('data:')) return true;
+        return !src.includes('qpic.cn') && !src.includes('qlogo.cn');
+      }).length >= expectedImages);
 
-  // CKEditor 4 的原始字段通常是 textarea[name=body]，仅改 iframe 可能导致提交内容仍为空/旧值
+  if (!existingOk) {
+    try {
+      await fillEditorByTokens({
+        jobId: currentJob?.jobId || '',
+        tokens,
+        editorRoot,
+        writeMode: 'html',
+        onImageProgress: async (current, total) => {
+          await report({
+            status: 'running',
+            stage: 'fillContent',
+            userMessage: getMessage('v3MsgUploadingImageProgress', [String(current), String(total)]),
+          });
+        },
+      });
+    } catch (e) {
+      await report({
+        status: 'waiting_user',
+        stage: 'waitingUser',
+        userMessage: getMessage('v3MsgImageUploadFailed'),
+        userSuggestion: getMessage('v3SugManualUploadImagesThenContinue'),
+        devDetails: { message: e instanceof Error ? e.message : String(e) },
+      });
+      throw new Error('__BAWEI_V2_STOPPED__');
+    }
+  }
+
+  // Best-effort: sync CKEditor element state if available
   try {
-    const ta = document.querySelector<HTMLTextAreaElement>('textarea[name="body"], textarea#body');
-    if (ta) {
-      ta.value = html;
-      ta.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true }));
-      ta.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+    type CkEditorInstance = { fire?: (eventName: string) => void; updateElement?: () => void };
+    type CkEditorGlobal = { instances?: Record<string, unknown> };
+    const ck = (window as Window & { CKEDITOR?: CkEditorGlobal }).CKEDITOR;
+    const instances = ck?.instances ? Object.values(ck.instances) : [];
+    const inst =
+      instances.find((x): x is CkEditorInstance => {
+        const candidate = x as Partial<CkEditorInstance> | null;
+        return !!candidate && typeof candidate.updateElement === 'function';
+      }) || null;
+    if (inst) {
+      try {
+        if (typeof inst.fire === 'function') inst.fire('change');
+        if (typeof inst.updateElement === 'function') inst.updateElement();
+      } catch {
+        // ignore
+      }
     }
   } catch {
     // ignore
   }
+
   await report({ userMessage: getMessage('v2MsgAppendedSourceLinkKeepOriginal') });
 }
 
@@ -379,6 +401,7 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
 
 async function runFlow(job: AnyJob): Promise<void> {
   await report({ status: 'running', stage: 'openEntry', userMessage: getMessage('v2MsgEnteredEditorPage') });
+  await stageDetectLogin();
   await ensureEditorPage();
 
   if (location.hostname === 'www.oschina.net') {

@@ -16,6 +16,8 @@ import type { ChannelId, ChannelRuntimeState, PublishJob } from '../shared/v2-ty
 /* INLINE:events */
 /* INLINE:v2-protocol */
 /* INLINE:publish-verify */
+/* INLINE:rich-content */
+/* INLINE:image-bridge */
 
 const CHANNEL_ID: ChannelId = 'sspai';
 
@@ -96,35 +98,6 @@ function sspaiAuthHeaders(): Record<string, string> {
   return jwt ? { authorization: `Bearer ${jwt}` } : {};
 }
 
-function escapePlainText(value: string): string {
-  return String(value || '')
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .replaceAll('\u0000', '')
-    .trim();
-}
-
-function htmlToPlainTextSafe(html: string): string {
-  try {
-    const tmp = document.createElement('div');
-    tmp.innerHTML = html;
-    return escapePlainText(tmp.textContent || tmp.innerText || '');
-  } catch {
-    return '';
-  }
-}
-
-function ensureMinLengthText(text: string, minLen: number, sourceUrl: string): string {
-  let out = (text || '').trim();
-  if (!out) out = '（以下为自动发布内容）';
-  if (sourceUrl && !out.includes(sourceUrl)) out += `\n\n原文链接：${sourceUrl}`;
-  if (out.length >= minLen) return out;
-  let pad = '\n\n（内容来自原文链接，更多细节请查看原文。）';
-  if (sourceUrl && !out.includes(sourceUrl) && !pad.includes(sourceUrl)) pad += `\n原文链接：${sourceUrl}`;
-  while ((out + pad).length < minLen + 20) pad += '。';
-  return `${out}${pad}`;
-}
-
 function shouldRunOnThisPage(): boolean {
   if (location.hostname !== 'sspai.com') return false;
   if (location.pathname.startsWith('/write')) return true;
@@ -191,79 +164,6 @@ function containsSourceUrlInHtml(html: string, url: string): boolean {
   return html.includes(url);
 }
 
-async function postJson<T = unknown>(url: string, data: unknown): Promise<T> {
-  const res = await fetch(url, {
-    method: 'POST',
-    credentials: 'include',
-    headers: {
-      accept: 'application/json, text/plain, */*',
-      'content-type': 'application/json',
-      'x-requested-with': 'XMLHttpRequest',
-      ...sspaiAuthHeaders(),
-    },
-    body: JSON.stringify(data),
-  });
-  if (!res.ok) throw new Error(`POST ${url} failed: ${res.status}`);
-  const json = (await res.json().catch(() => ({}))) as T;
-  assertSspaiApiOk(json, `POST ${url} failed`);
-  return json;
-}
-
-function plainTextToBodyLastHtml(plain: string): string {
-  const esc = (s: string) =>
-    s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-  const lines = String(plain || '').split('\n');
-  const parts: string[] = [];
-  // SSPAI 的编辑器经常以 <p>&nbsp;</p> 作为空行/分隔，这里对齐它的格式，提高落库稳定性
-  for (const line of lines) {
-    if (!line.trim()) parts.push('<p>&nbsp;</p>');
-    else parts.push(`<p>${esc(line)}</p>`);
-  }
-  // Ensure trailing blank line to match editor behavior
-  parts.push('<p>&nbsp;</p>');
-  return parts.join('');
-}
-
-async function saveBodyViaApi(articleId: string, title: string, plain: string): Promise<void> {
-  // 刚创建的文章可能存在“ID 已出现但 token 仍未下发”的短暂窗口，需重试等待。
-  const { info, token } = await retryUntil(
-    async () => {
-      const info = await fetchArticleInfo(articleId);
-      const token = info?.data?.token || '';
-      if (!token) throw new Error('token not ready');
-      return { info, token };
-    },
-    { timeoutMs: 30_000, intervalMs: 800 }
-  );
-
-  const titleLast = title.slice(0, 32);
-  const bodyLast = plainTextToBodyLastHtml(plain);
-  const nowSec = Math.floor(Date.now() / 1000);
-
-  // 1) Auto-save（与站点自身一致的接口）
-  await postJson('/api/v1/matrix/editor/article/auto/save', {
-    id: Number(articleId),
-    token,
-    title_last: titleLast,
-    body_last: bodyLast,
-    update_at: nowSec,
-  });
-
-  // 2) Explicit update（等价于点“保存”按钮）
-  const base = info?.data || {};
-  const payload = {
-    ...base,
-    id: Number(articleId),
-    title: titleLast,
-    title_last: titleLast,
-    body_last: bodyLast,
-    tags: Array.isArray(base.tags) ? (base.tags as unknown[]) : [],
-    custom_tags: Array.isArray(base.custom_tags) ? (base.custom_tags as unknown[]) : [],
-    token,
-  };
-  await postJson('/api/v1/matrix/editor/article/update', payload);
-}
-
 async function report(patch: Partial<ChannelRuntimeState>): Promise<void> {
   if (!currentJob) return;
   await chrome.runtime.sendMessage({
@@ -285,6 +185,26 @@ function findButtonExact(text: string): HTMLButtonElement | null {
   return btns.find((b) => (b.textContent || '').replace(/\s+/g, ' ').trim() === text) || null;
 }
 
+async function stageDetectLogin(): Promise<void> {
+  currentStage = 'detectLogin';
+  await report({ status: 'running', stage: 'detectLogin', userMessage: getMessage('v3MsgDetectingLogin') });
+
+  const url = String(location.href || '').toLowerCase();
+  const hasLoginUrl = /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i.test(url);
+  const hasPassword = !!document.querySelector('input[type="password"],input[name*="password" i]');
+  const text = document.body?.innerText || '';
+  const hasLoginText = text.includes('登录') || text.toLowerCase().includes('sign in');
+  if (hasLoginUrl || (hasPassword && hasLoginText)) {
+    await report({
+      status: 'not_logged_in',
+      stage: 'detectLogin',
+      userMessage: getMessage('v3MsgNotLoggedIn'),
+      userSuggestion: getMessage('v3SugLoginThenRetry'),
+    });
+    throw new Error('__BAWEI_V2_STOPPED__');
+  }
+}
+
 async function stageFillTitle(title: string): Promise<void> {
   currentStage = 'fillTitle';
   await report({ status: 'running', stage: 'fillTitle', userMessage: getMessage('v2MsgFillingTitle') });
@@ -303,9 +223,88 @@ async function stageFillContent(contentHtml: string, sourceUrl: string, articleI
     userSuggestion: getMessage('v2SugSspaiNoSourceFieldAppend'),
   });
 
-  const plain = ensureMinLengthText(htmlToPlainTextSafe(contentHtml), 120, sourceUrl);
-  // 直接走站点 API 保存正文，避免编辑器 DOM/事件链条变化导致落库失败
-  await saveBodyViaApi(articleId, currentJob?.article?.title || '', plain);
+  const jobTokens = currentJob?.article?.contentTokens;
+  const tokens = Array.isArray(jobTokens) ? jobTokens : buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
+
+  const expectedImages = tokens.filter((t) => t?.kind === 'image').length;
+
+  const plainLen = tokens
+    .filter((t) => t?.kind === 'html')
+    .map((t) => htmlToPlainTextSafe((t as { html?: string }).html || ''))
+    .join('\n')
+    .replace(/\s+/g, '')
+    .length;
+
+  if (plainLen < 120) {
+    let pad = '（内容来自原文链接，更多细节请查看原文。）';
+    while (pad.replace(/\s+/g, '').length < 140) pad += '。';
+    const padHtml = `<p>${pad}</p>`;
+    const last = tokens[tokens.length - 1];
+    if (last?.kind === 'html' && sourceUrl && String((last as { html?: string }).html || '').includes(sourceUrl)) {
+      tokens.splice(tokens.length - 1, 0, { kind: 'html', html: padHtml });
+    } else {
+      tokens.push({ kind: 'html', html: padHtml });
+    }
+  }
+
+  const editor = await retryUntil(
+    async () => {
+      const el =
+        (document.querySelector<HTMLElement>('.ck-editor__editable[contenteditable="true"]') as HTMLElement | null) ||
+        (findContentEditor(document) as HTMLElement | null) ||
+        null;
+      if (!el) throw new Error('editor not ready');
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 200 || rect.height < 80) throw new Error('editor not visible');
+      return el;
+    },
+    { timeoutMs: 60_000, intervalMs: 800 }
+  );
+
+  const existingHtml = (() => {
+    try {
+      return String(editor.innerHTML || '');
+    } catch {
+      return '';
+    }
+  })();
+  const existingHasSource = !!(sourceUrl && existingHtml.includes(sourceUrl));
+  const existingOk =
+    existingHasSource &&
+    (expectedImages === 0 ||
+      Array.from(editor.querySelectorAll<HTMLImageElement>('img')).filter((img) => {
+        const src = String(img.getAttribute('src') || '').trim();
+        if (!src) return false;
+        if (src.startsWith('blob:') || src.startsWith('data:')) return true;
+        return !src.includes('qpic.cn') && !src.includes('qlogo.cn');
+      }).length >= expectedImages);
+
+  if (!existingOk) {
+    try {
+      await fillEditorByTokens({
+        jobId: currentJob?.jobId || '',
+        tokens,
+        editorRoot: editor,
+        writeMode: 'html',
+        onImageProgress: async (current, total) => {
+          await report({
+            status: 'running',
+            stage: 'fillContent',
+            userMessage: getMessage('v3MsgUploadingImageProgress', [String(current), String(total)]),
+          });
+        },
+      });
+    } catch (e) {
+      await report({
+        status: 'waiting_user',
+        stage: 'waitingUser',
+        userMessage: getMessage('v3MsgImageUploadFailed'),
+        userSuggestion: getMessage('v3SugManualUploadImagesThenContinue'),
+        devDetails: { message: e instanceof Error ? e.message : String(e) },
+      });
+      throw new Error('__BAWEI_V2_STOPPED__');
+    }
+  }
 
   // 等待自动保存把内容写入 body_last（通过 API 验证，不依赖 UI 文案）
   await retryUntil(
@@ -408,6 +407,7 @@ async function stageVerifyPublished(articleId: string): Promise<void> {
 async function runWriteFlow(job: AnyJob): Promise<void> {
   await report({ status: 'running', stage: 'openEntry', userMessage: getMessage('v2MsgEnteredSspaiWritePage') });
 
+  await stageDetectLogin();
   await stageFillTitle(job.article.title);
   const articleId = await waitForArticleId();
   await stageFillContent(job.article.contentHtml, job.article.sourceUrl, articleId);

@@ -231,6 +231,10 @@
     "message": "Waiting",
     "description": "Status waiting"
   },
+  "statusNotLoggedIn": {
+    "message": "Not logged in",
+    "description": "Status not logged in"
+  },
   "channelCsdn": {
     "message": "CSDN",
     "description": "Channel CSDN"
@@ -272,7 +276,7 @@
     "description": "Channel feishu-docs"
   },
   "imagePolicyHint": {
-    "message": "Images detected: no image upload in this version; hotlinking original images by default. If the platform blocks hotlinks, please re-upload/replace images manually.",
+    "message": "Images detected: will download and upload images to each platform. If blocked by risk-control/upload failure, follow the diagnosis to handle it manually.",
     "description": "Image policy hint"
   },
   "panelRunChannelsLabel": {
@@ -506,6 +510,34 @@
   "v2MsgEnteredPage": {
     "message": "Entered page.",
     "description": "V2 runtime message"
+  },
+  "v3MsgDetectingLogin": {
+    "message": "Checking login status…",
+    "description": "V3 runtime message"
+  },
+  "v3MsgNotLoggedIn": {
+    "message": "Not logged in: please sign in first.",
+    "description": "V3 runtime message"
+  },
+  "v3SugLoginThenRetry": {
+    "message": "Please sign in on that platform tab, then click “Retry”.",
+    "description": "V3 runtime suggestion"
+  },
+  "v3SugClickStatusToReopen": {
+    "message": "Click the channel status to reopen the tab.",
+    "description": "V3 runtime suggestion"
+  },
+  "v3MsgUploadingImageProgress": {
+    "message": "Uploading images ($1/$2)…",
+    "description": "V3 runtime message"
+  },
+  "v3MsgImageUploadFailed": {
+    "message": "Image upload failed: please upload images manually and continue.",
+    "description": "V3 runtime message"
+  },
+  "v3SugManualUploadImagesThenContinue": {
+    "message": "Upload the remaining images in the editor (keep the order/position as close as possible), then click “Continue”.",
+    "description": "V3 runtime suggestion"
   },
   "v2SugCsdnConfirmPublishThenRefreshOrWaitReview": {
     "message": "Confirm publishing succeeded, then refresh the management page. If it's under review, wait for indexing and click “Continue”.",

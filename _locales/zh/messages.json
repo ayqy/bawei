@@ -231,6 +231,10 @@
     "message": "等待处理",
     "description": "Status waiting"
   },
+  "statusNotLoggedIn": {
+    "message": "未登录",
+    "description": "Status not logged in"
+  },
   "channelCsdn": {
     "message": "CSDN",
     "description": "Channel CSDN"
@@ -272,7 +276,7 @@
     "description": "Channel feishu-docs"
   },
   "imagePolicyHint": {
-    "message": "检测到图片：本期不上传图片，默认复用原文外链；如平台限制外链，请手动重新上传/替换图片来源。",
+    "message": "检测到图片：将自动下载并上传到各平台；如遇风控/上传失败，请按诊断提示手动处理。",
     "description": "Image policy hint"
   },
   "panelRunChannelsLabel": {
@@ -506,6 +510,34 @@
   "v2MsgEnteredPage": {
     "message": "进入页面",
     "description": "V2 runtime message"
+  },
+  "v3MsgDetectingLogin": {
+    "message": "正在检测登录状态",
+    "description": "V3 runtime message"
+  },
+  "v3MsgNotLoggedIn": {
+    "message": "未登录：请先登录该渠道",
+    "description": "V3 runtime message"
+  },
+  "v3SugLoginThenRetry": {
+    "message": "请在该渠道页面完成登录后点击“重试”",
+    "description": "V3 runtime suggestion"
+  },
+  "v3SugClickStatusToReopen": {
+    "message": "可点击该渠道状态重新打开页面",
+    "description": "V3 runtime suggestion"
+  },
+  "v3MsgUploadingImageProgress": {
+    "message": "正在上传图片（$1/$2）",
+    "description": "V3 runtime message"
+  },
+  "v3MsgImageUploadFailed": {
+    "message": "图片自动上传失败：请手动上传后继续",
+    "description": "V3 runtime message"
+  },
+  "v3SugManualUploadImagesThenContinue": {
+    "message": "请在该平台编辑器内手动上传剩余图片（保持顺序/位置尽量一致），然后点击“继续”推进流程",
+    "description": "V3 runtime suggestion"
   },
   "v2SugCsdnConfirmPublishThenRefreshOrWaitReview": {
     "message": "请确认发布成功后再刷新文章管理页；若处于审核中，请等待入库后点“继续”",

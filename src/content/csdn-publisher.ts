@@ -8,6 +8,8 @@ import type { ChannelId, ChannelRuntimeState, PublishJob } from '../shared/v2-ty
 /* INLINE:events */
 /* INLINE:v2-protocol */
 /* INLINE:publish-verify */
+/* INLINE:rich-content */
+/* INLINE:image-bridge */
 
 const CHANNEL_ID: ChannelId = 'csdn';
 
@@ -122,19 +124,10 @@ function setProbeIndexInWindowName(jobId: string, nextIndex: number): void {
   }
 }
 
-function escapeAttr(value: string): string {
-  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-}
-
 function isElementDisplayed(el: Element): el is HTMLElement {
   if (!(el instanceof HTMLElement)) return false;
   const style = window.getComputedStyle(el);
   return style.display !== 'none' && style.visibility !== 'hidden' && el.offsetParent !== null;
-}
-
-function withSourceUrlAppended(contentHtml: string, sourceUrl: string): string {
-  const safe = escapeAttr(sourceUrl);
-  return `${contentHtml}\n<p><br/></p><p>原文链接：<a href="${safe}" target="_blank" rel="noreferrer noopener">${safe}</a></p>`;
 }
 
 function shouldRunOnThisPage(): boolean {
@@ -396,7 +389,22 @@ async function verifyFromDetailPage(job: AnyJob): Promise<void> {
 
 async function stageDetectLogin(): Promise<void> {
   currentStage = 'detectLogin';
-  await report({ status: 'running', stage: 'detectLogin' });
+  await report({ status: 'running', stage: 'detectLogin', userMessage: getMessage('v3MsgDetectingLogin') });
+
+  const url = String(location.href || '').toLowerCase();
+  const hasLoginUrl = /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i.test(url);
+  const hasPassword = !!document.querySelector('input[type="password"],input[name*="password" i]');
+  const text = document.body?.innerText || '';
+  const hasLoginText = text.includes('登录') || text.toLowerCase().includes('sign in');
+  if (hasLoginUrl || (hasPassword && hasLoginText)) {
+    await report({
+      status: 'not_logged_in',
+      stage: 'detectLogin',
+      userMessage: getMessage('v3MsgNotLoggedIn'),
+      userSuggestion: getMessage('v3SugLoginThenRetry'),
+    });
+    throw new Error('__BAWEI_V2_STOPPED__');
+  }
 }
 
 async function stageFillTitle(title: string): Promise<void> {
@@ -542,43 +550,8 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
     // ignore
   }
 
-  const html = withSourceUrlAppended(contentHtml, sourceUrl);
-
-  // 优先通过 CKEDITOR API 写入（仅改 iframe body 可能不会更新编辑器状态）
-  try {
-    type CkEditorInstance = {
-      setData: (data: string, opts?: { callback?: () => void }) => void;
-      fire?: (eventName: string) => void;
-      updateElement?: () => void;
-    };
-    type CkEditorGlobal = { instances?: Record<string, unknown> };
-
-    const ck = (window as Window & { CKEDITOR?: CkEditorGlobal }).CKEDITOR;
-    const instRaw = (ck?.instances as Record<string, unknown> | undefined)?.editor;
-    const inst = instRaw as CkEditorInstance | undefined;
-    if (inst && typeof inst.setData === 'function') {
-      await new Promise<void>((resolve) => {
-        try {
-          inst.setData(html, { callback: resolve });
-        } catch {
-          resolve();
-        }
-      });
-      try {
-        if (typeof inst.fire === 'function') inst.fire('change');
-        if (typeof inst.updateElement === 'function') inst.updateElement();
-      } catch {
-        // ignore
-      }
-      await report({
-        userMessage: getMessage('v2MsgContentWrittenByCkeditorSourceAppended'),
-        userSuggestion: getMessage('v2SugFillSourceFieldManually'),
-      });
-      return;
-    }
-  } catch {
-    // ignore
-  }
+  const jobTokens = currentJob?.article?.contentTokens;
+  const tokens = Array.isArray(jobTokens) ? jobTokens : buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
 
   // CSDN 富文本编辑器（CKEditor）通常使用 iframe 承载可编辑 body
   const ckIframe = (await (async () => {
@@ -600,32 +573,75 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
     }
   }
 
-  if (ckIframe?.contentDocument?.body) {
-    ckIframe.contentDocument.body.innerHTML = html;
-    ckIframe.contentDocument.body.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true }));
-    await report({
-      userMessage: getMessage('v2MsgAppendedSourceLinkNoSourceFieldInOriginalMode'),
-      userSuggestion: getMessage('v2SugFillSourceFieldManually'),
-    });
-    return;
+  const editorRoot = (ckIframe?.contentDocument?.body as HTMLElement | null) || findContentEditor(document);
+  if (!editorRoot) throw new Error('未找到内容编辑器（可能是编辑器尚未加载）');
+
+  const expectedImages = tokens.filter((t) => t?.kind === 'image').length;
+  const existingHtml = (() => {
+    try {
+      return String(editorRoot.innerHTML || '');
+    } catch {
+      return '';
+    }
+  })();
+  const existingHasSource = !!(sourceUrl && existingHtml.includes(sourceUrl));
+  const existingOk =
+    existingHasSource &&
+    (expectedImages === 0 ||
+      Array.from(editorRoot.querySelectorAll<HTMLImageElement>('img')).filter((img) => {
+        const src = String(img.getAttribute('src') || '').trim();
+        if (!src) return false;
+        if (src.startsWith('blob:') || src.startsWith('data:')) return true;
+        return !src.includes('qpic.cn') && !src.includes('qlogo.cn');
+      }).length >= expectedImages);
+
+  if (!existingOk) {
+    try {
+      await fillEditorByTokens({
+        jobId: currentJob?.jobId || '',
+        tokens,
+        editorRoot,
+        writeMode: 'html',
+        onImageProgress: async (current, total) => {
+          await report({
+            status: 'running',
+            stage: 'fillContent',
+            userMessage: getMessage('v3MsgUploadingImageProgress', [String(current), String(total)]),
+          });
+        },
+      });
+    } catch (e) {
+      await report({
+        status: 'waiting_user',
+        stage: 'waitingUser',
+        userMessage: getMessage('v3MsgImageUploadFailed'),
+        userSuggestion: getMessage('v3SugManualUploadImagesThenContinue'),
+        devDetails: { message: e instanceof Error ? e.message : String(e) },
+      });
+      throw new Error('__BAWEI_V2_STOPPED__');
+    }
   }
 
-  const editor = findContentEditor(document);
-  if (!editor) throw new Error('未找到内容编辑器（可能是编辑器尚未加载）');
-
-  simulateFocus(editor);
-
+  // Best-effort: sync CKEditor element state if available
   try {
-    document.execCommand('selectAll', false);
-    document.execCommand('insertHTML', false, html);
+    type CkEditorInstance = { fire?: (eventName: string) => void; updateElement?: () => void };
+    type CkEditorGlobal = { instances?: Record<string, unknown> };
+    const ck = (window as Window & { CKEDITOR?: CkEditorGlobal }).CKEDITOR;
+    const instRaw = (ck?.instances as Record<string, unknown> | undefined)?.editor;
+    const inst = instRaw as CkEditorInstance | undefined;
+    if (inst) {
+      try {
+        if (typeof inst.fire === 'function') inst.fire('change');
+        if (typeof inst.updateElement === 'function') inst.updateElement();
+      } catch {
+        // ignore
+      }
+    }
   } catch {
-    editor.innerHTML = html;
+    // ignore
   }
 
-  await report({
-    userMessage: getMessage('v2MsgAppendedSourceLinkNoSourceFieldInOriginalMode'),
-    userSuggestion: getMessage('v2SugFillSourceFieldManually'),
-  });
+  await report({ userMessage: getMessage('v2MsgAppendedSourceLinkKeepOriginal') });
 }
 
 async function stageSaveDraft(): Promise<void> {

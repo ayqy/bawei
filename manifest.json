@@ -9,6 +9,10 @@
     "tabs",
     "scripting"
   ],
+  "host_permissions": [
+    "https://*.qpic.cn/*",
+    "https://*.qlogo.cn/*"
+  ],
   "action": {
     "default_title": "__MSG_appName__",
     "default_icon": {

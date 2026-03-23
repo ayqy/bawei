@@ -5,6 +5,8 @@
 
 const BAWEI_V2_STOP_ERROR_MESSAGE_EVENTS = '__BAWEI_V2_STOPPED__';
 
+type View = Window & typeof globalThis;
+
 function baweiV2IsStopRequestedEvents(): boolean {
   try {
     const fn = (globalThis as unknown as { __BAWEI_V2_IS_STOP_REQUESTED?: () => boolean }).__BAWEI_V2_IS_STOP_REQUESTED;
@@ -18,6 +20,16 @@ function baweiV2ThrowIfStoppedEvents(): void {
   if (baweiV2IsStopRequestedEvents()) throw new Error(BAWEI_V2_STOP_ERROR_MESSAGE_EVENTS);
 }
 
+function viewOf(node: unknown): View {
+  try {
+    const n = node as { ownerDocument?: Document | null } | null;
+    const doc = n?.ownerDocument || null;
+    return (doc?.defaultView || window) as View;
+  } catch {
+    return window as View;
+  }
+}
+
 /**
  * Simulates a realistic click event on an element
  * @param element The element to click
@@ -25,14 +37,15 @@ function baweiV2ThrowIfStoppedEvents(): void {
 export function simulateClick(element: HTMLElement): void {
   baweiV2ThrowIfStoppedEvents();
 
+  const view = viewOf(element);
   // Dispatch sequence of events that frameworks expect
   const events = ['mousedown', 'mouseup', 'click'];
   
   events.forEach(eventType => {
-    const event = new MouseEvent(eventType, {
+    const event = new view.MouseEvent(eventType, {
       bubbles: true,
       cancelable: true,
-      view: window,
+      view,
       button: 0,
       buttons: 1,
     });
@@ -48,6 +61,7 @@ export function simulateClick(element: HTMLElement): void {
 export function simulateType(input: HTMLInputElement | HTMLTextAreaElement, text: string): void {
   baweiV2ThrowIfStoppedEvents();
 
+  const view = viewOf(input);
   // Focus the input first
   input.focus();
   
@@ -61,7 +75,7 @@ export function simulateType(input: HTMLInputElement | HTMLTextAreaElement, text
     input.value += char;
     
     // Dispatch input event after each character
-    const inputEvent = new InputEvent('input', {
+    const inputEvent = new view.InputEvent('input', {
       bubbles: true,
       cancelable: true,
       data: char,
@@ -71,7 +85,7 @@ export function simulateType(input: HTMLInputElement | HTMLTextAreaElement, text
   }
   
   // Dispatch change event at the end
-  const changeEvent = new Event('change', {
+  const changeEvent = new view.Event('change', {
     bubbles: true,
     cancelable: true,
   });
@@ -150,13 +164,112 @@ export async function simulatePaste(target: HTMLElement, html: string): Promise<
  */
 export function simulateFocus(element: HTMLElement): void {
   baweiV2ThrowIfStoppedEvents();
+  const view = viewOf(element);
   element.focus();
   
-  const focusEvent = new FocusEvent('focus', {
+  const focusEvent = new view.FocusEvent('focus', {
     bubbles: true,
     cancelable: true,
   });
   element.dispatchEvent(focusEvent);
+}
+
+export function setFilesToInput(input: HTMLInputElement, files: File[]): void {
+  baweiV2ThrowIfStoppedEvents();
+  const view = viewOf(input);
+  const dt = new view.DataTransfer();
+  for (const file of files) {
+    try {
+      dt.items.add(file);
+    } catch {
+      // ignore
+    }
+  }
+  try {
+    input.files = dt.files;
+  } catch {
+    // ignore
+  }
+  try {
+    input.dispatchEvent(new view.Event('input', { bubbles: true, cancelable: true }));
+    input.dispatchEvent(new view.Event('change', { bubbles: true, cancelable: true }));
+  } catch {
+    // ignore
+  }
+}
+
+export function simulateDropFiles(target: HTMLElement, files: File[]): void {
+  baweiV2ThrowIfStoppedEvents();
+  const view = viewOf(target);
+  const dt = new view.DataTransfer();
+  for (const file of files) {
+    try {
+      dt.items.add(file);
+    } catch {
+      // ignore
+    }
+  }
+
+  const events: Array<{ type: string; ctor: 'DragEvent' | 'Event' }> = [
+    { type: 'dragenter', ctor: 'DragEvent' },
+    { type: 'dragover', ctor: 'DragEvent' },
+    { type: 'drop', ctor: 'DragEvent' },
+  ];
+
+  for (const it of events) {
+    baweiV2ThrowIfStoppedEvents();
+    try {
+      const ev = new (view as unknown as { DragEvent: typeof DragEvent }).DragEvent(it.type, {
+        bubbles: true,
+        cancelable: true,
+        dataTransfer: dt,
+      });
+      target.dispatchEvent(ev);
+      continue;
+    } catch {
+      // ignore
+    }
+    try {
+      const ev = new view.Event(it.type, { bubbles: true, cancelable: true });
+      (ev as unknown as { dataTransfer?: DataTransfer }).dataTransfer = dt;
+      target.dispatchEvent(ev);
+    } catch {
+      // ignore
+    }
+  }
+}
+
+export function simulatePasteFiles(target: HTMLElement, files: File[]): void {
+  baweiV2ThrowIfStoppedEvents();
+  const view = viewOf(target);
+  const dt = new view.DataTransfer();
+  for (const file of files) {
+    try {
+      dt.items.add(file);
+    } catch {
+      // ignore
+    }
+  }
+
+  try {
+    const ev = new (view as unknown as { ClipboardEvent: typeof ClipboardEvent }).ClipboardEvent('paste', {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: dt,
+    } as unknown as ClipboardEventInit);
+    target.dispatchEvent(ev);
+    return;
+  } catch {
+    // ignore
+  }
+
+  try {
+    const ev = new view.Event('paste', { bubbles: true, cancelable: true });
+    (ev as unknown as { clipboardData?: DataTransfer }).clipboardData = dt;
+    target.dispatchEvent(ev);
+  } catch {
+    // ignore
+  }
 }
 
 // 将 HTML 转为纯文本，去除标签与多余空白

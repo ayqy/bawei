@@ -17,6 +17,8 @@ import type { ChannelId, ChannelRuntimeState, PublishJob } from '../shared/v2-ty
 /* INLINE:events */
 /* INLINE:v2-protocol */
 /* INLINE:publish-verify */
+/* INLINE:rich-content */
+/* INLINE:image-bridge */
 
 const CHANNEL_ID: ChannelId = 'baijiahao';
 
@@ -39,38 +41,12 @@ function getMessage(key: string, substitutions?: string[]): string {
   }
 }
 
-function escapeAttr(value: string): string {
-  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-}
-
 function buildListSearchToken(title: string): string {
   const normalized = normalizeForSearch(title);
   // Baijiahao search seems sensitive to punctuation; keep only Chinese/letters/numbers for keyword.
   const cleaned = normalized.replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '');
   const candidate = cleaned.length >= 4 ? cleaned : normalized;
   return titleToken(candidate);
-}
-
-function withSourceUrlAppended(contentHtml: string, sourceUrl: string): string {
-  const safe = escapeAttr(sourceUrl);
-  const plain = htmlToPlainTextSafe(contentHtml);
-  // Some Baijiahao accounts show a blocking prompt when content is too short (< 40 chars).
-  // Add a small note to satisfy minimum length while keeping "原创" (no repost field).
-  const needPad = plain.replace(/\s+/g, '').length < 50;
-  const pad = needPad
-    ? '<p>（提示：本文内容较短，更多细节请点击下方原文链接查看完整内容。）</p>'
-    : '';
-  return `${contentHtml}\n<p><br/></p>${pad}<p>原文链接：<a href="${safe}" target="_blank" rel="noreferrer noopener">${safe}</a></p>`;
-}
-
-function htmlToPlainTextSafe(html: string): string {
-  try {
-    const tmp = document.createElement('div');
-    tmp.innerHTML = html;
-    return (tmp.textContent || tmp.innerText || '').replace(/\s+/g, ' ').trim();
-  } catch {
-    return '';
-  }
 }
 
 function normalizeLoose(value: string): string {
@@ -147,6 +123,26 @@ async function getContextFromBackground(): Promise<{ job: AnyJob; channelId: str
   const res = await chrome.runtime.sendMessage({ type: V2_GET_CONTEXT });
   if (!res?.success) throw new Error(res?.error || 'get context failed');
   return { job: res.job, channelId: res.channelId };
+}
+
+async function stageDetectLogin(): Promise<void> {
+  currentStage = 'detectLogin';
+  await report({ status: 'running', stage: 'detectLogin', userMessage: getMessage('v3MsgDetectingLogin') });
+
+  const url = String(location.href || '').toLowerCase();
+  const hasLoginUrl = /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i.test(url);
+  const hasPassword = !!document.querySelector('input[type="password"],input[name*="password" i]');
+  const text = document.body?.innerText || '';
+  const hasLoginText = text.includes('登录') || text.toLowerCase().includes('sign in');
+  if (hasLoginUrl || (hasPassword && hasLoginText)) {
+    await report({
+      status: 'not_logged_in',
+      stage: 'detectLogin',
+      userMessage: getMessage('v3MsgNotLoggedIn'),
+      userSuggestion: getMessage('v3SugLoginThenRetry'),
+    });
+    throw new Error('__BAWEI_V2_STOPPED__');
+  }
 }
 
 function findByExactText(text: string): HTMLElement | null {
@@ -404,22 +400,65 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
   }
   if (!iframe?.contentDocument?.body) throw new Error('未找到正文编辑器（iframe 未就绪）');
 
-  const html = withSourceUrlAppended(contentHtml, sourceUrl);
   const body = iframe.contentDocument.body;
 
-  try {
-    body.focus();
-    iframe.contentDocument.execCommand('selectAll', false);
-    iframe.contentDocument.execCommand('delete', false);
-    const ok = iframe.contentDocument.execCommand('insertHTML', false, html);
-    if (!ok) throw new Error('insertHTML failed');
-  } catch {
-    // Fallback: innerHTML
+  const jobTokens = currentJob?.article?.contentTokens;
+  const tokens = Array.isArray(jobTokens) ? jobTokens : buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
+
+  const expectedImages = tokens.filter((t) => t?.kind === 'image').length;
+  const needPad = htmlToPlainTextSafe(contentHtml).replace(/\s+/g, '').length < 50;
+  if (needPad) {
+    const padHtml = '<p>（提示：本文内容较短，更多细节请点击下方原文链接查看完整内容。）</p>';
+    const last = tokens[tokens.length - 1];
+    if (last?.kind === 'html' && sourceUrl && String((last as { html?: string }).html || '').includes(sourceUrl)) {
+      tokens.splice(tokens.length - 1, 0, { kind: 'html', html: padHtml });
+    } else {
+      tokens.push({ kind: 'html', html: padHtml });
+    }
+  }
+
+  const existingHtml = (() => {
     try {
-      body.innerHTML = html;
-      body.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true }));
+      return String(body.innerHTML || '');
     } catch {
-      // ignore
+      return '';
+    }
+  })();
+  const existingHasSource = !!(sourceUrl && existingHtml.includes(sourceUrl));
+  const existingOk =
+    existingHasSource &&
+    (expectedImages === 0 ||
+      Array.from(body.querySelectorAll<HTMLImageElement>('img')).filter((img) => {
+        const src = String(img.getAttribute('src') || '').trim();
+        if (!src) return false;
+        if (src.startsWith('blob:') || src.startsWith('data:')) return true;
+        return !src.includes('qpic.cn') && !src.includes('qlogo.cn');
+      }).length >= expectedImages);
+
+  if (!existingOk) {
+    try {
+      await fillEditorByTokens({
+        jobId: currentJob?.jobId || '',
+        tokens,
+        editorRoot: body as unknown as HTMLElement,
+        writeMode: 'html',
+        onImageProgress: async (current, total) => {
+          await report({
+            status: 'running',
+            stage: 'fillContent',
+            userMessage: getMessage('v3MsgUploadingImageProgress', [String(current), String(total)]),
+          });
+        },
+      });
+    } catch (e) {
+      await report({
+        status: 'waiting_user',
+        stage: 'waitingUser',
+        userMessage: getMessage('v3MsgImageUploadFailed'),
+        userSuggestion: getMessage('v3SugManualUploadImagesThenContinue'),
+        devDetails: { message: e instanceof Error ? e.message : String(e) },
+      });
+      throw new Error('__BAWEI_V2_STOPPED__');
     }
   }
 
@@ -1127,6 +1166,7 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
 async function runEditorFlow(job: AnyJob): Promise<void> {
   await report({ status: 'running', stage: 'openEntry', userMessage: getMessage('v2MsgEnteredBaijiahaoEditor') });
 
+  await stageDetectLogin();
   await stageFillTitle(job.article.title);
   await stageFillContent(job.article.contentHtml, job.article.sourceUrl);
 

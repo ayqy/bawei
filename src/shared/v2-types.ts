@@ -25,11 +25,23 @@ export type ChannelStage =
   | 'waitingUser'
   | 'done';
 
-export type ChannelResultStatus = 'not_started' | 'running' | 'success' | 'failed' | 'waiting_user';
+export type ChannelResultStatus = 'not_started' | 'running' | 'success' | 'failed' | 'waiting_user' | 'not_logged_in';
+
+export type RichContentToken =
+  | {
+      kind: 'html';
+      html: string;
+    }
+  | {
+      kind: 'image';
+      src: string;
+      alt?: string;
+    };
 
 export interface ArticlePayload {
   title: string;
   contentHtml: string;
+  contentTokens?: RichContentToken[];
   sourceUrl: string;
   author?: string;
   publishTime?: string;

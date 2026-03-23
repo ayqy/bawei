@@ -9,6 +9,7 @@ import type { Settings } from '../shared/settings-manager';
 /* INLINE:settings-manager */
 /* INLINE:notify */
 /* INLINE:v2-protocol */
+/* INLINE:rich-content */
 
 let isInitialized = false;
 let settings: Settings | null = null;
@@ -454,8 +455,14 @@ async function handleStartClick(): Promise<void> {
     const hasImages = /<img\b/i.test(contentHtml);
     globalHint = hasImages
       ? getMessage('imagePolicyHint') ||
-        '检测到图片：本期不上传图片，默认复用原文外链；如平台限制外链，请按诊断提示手动处理。'
+        '检测到图片：将自动下载并上传到各平台；如遇风控/上传失败，请按诊断提示手动处理。'
       : null;
+
+    const contentTokens = buildRichContentTokens({
+      contentHtml,
+      baseUrl: sourceUrl,
+      sourceUrl,
+    });
 
     const response = await chrome.runtime.sendMessage({
       type: V2_START_JOB,
@@ -465,6 +472,7 @@ async function handleStartClick(): Promise<void> {
       article: {
         title,
         contentHtml,
+        contentTokens,
         sourceUrl,
       },
     });
@@ -557,6 +565,7 @@ function statusLabel(status: string): string {
   if (status === 'success') return getMessage('statusSuccess') || '成功';
   if (status === 'failed') return getMessage('statusFailed') || '失败';
   if (status === 'waiting_user') return getMessage('statusWaiting') || '等待处理';
+  if (status === 'not_logged_in') return getMessage('statusNotLoggedIn') || '未登录';
   return getMessage('statusNotStarted') || '未开始';
 }
 
@@ -652,10 +661,21 @@ function renderStatusList(): void {
       font-size: 11px;
       padding: 2px 8px;
       border-radius: 999px;
-      background: ${status === 'success' ? 'rgba(0,180,90,0.12)' : status === 'failed' ? 'rgba(255,77,79,0.12)' : status === 'waiting_user' ? 'rgba(250,173,20,0.16)' : status === 'running' ? 'rgba(22,119,255,0.12)' : 'rgba(0,0,0,0.06)'};
-      color: ${status === 'success' ? '#0a7a3a' : status === 'failed' ? '#cf1322' : status === 'waiting_user' ? '#ad6800' : status === 'running' ? '#0958d9' : '#555'};
+      background: ${status === 'success' ? 'rgba(0,180,90,0.12)' : status === 'failed' ? 'rgba(255,77,79,0.12)' : status === 'waiting_user' ? 'rgba(250,173,20,0.16)' : status === 'not_logged_in' ? 'rgba(114,46,209,0.14)' : status === 'running' ? 'rgba(22,119,255,0.12)' : 'rgba(0,0,0,0.06)'};
+      color: ${status === 'success' ? '#0a7a3a' : status === 'failed' ? '#cf1322' : status === 'waiting_user' ? '#ad6800' : status === 'not_logged_in' ? '#531dab' : status === 'running' ? '#0958d9' : '#555'};
     `;
     badge.textContent = statusLabel(status);
+    if (currentJobId) {
+      badge.style.cursor = 'pointer';
+      badge.title = getMessage('panelDiagnosisHint') || '点击跳转到该渠道页面';
+      badge.addEventListener('click', async () => {
+        try {
+          await chrome.runtime.sendMessage({ type: V2_FOCUS_CHANNEL_TAB, jobId: currentJobId, channelId: ch.id });
+        } catch {
+          // ignore
+        }
+      });
+    }
 
     right.appendChild(badge);
 
@@ -676,6 +696,16 @@ function renderStatusList(): void {
     }
 
     if (allowControl && status === 'failed') {
+      const btn = document.createElement('button');
+      btn.textContent = getMessage('panelRetry') || '重试';
+      btn.style.cssText = `font-size:11px; padding:4px 8px; border-radius:6px; border:1px solid rgba(0,0,0,0.12); background:#fff; cursor:pointer;`;
+      btn.addEventListener('click', async () => {
+        await chrome.runtime.sendMessage({ type: V2_REQUEST_RETRY, jobId: currentJobId, channelId: ch.id });
+      });
+      right.appendChild(btn);
+    }
+
+    if (allowControl && status === 'not_logged_in') {
       const btn = document.createElement('button');
       btn.textContent = getMessage('panelRetry') || '重试';
       btn.style.cssText = `font-size:11px; padding:4px 8px; border-radius:6px; border:1px solid rgba(0,0,0,0.12); background:#fff; cursor:pointer;`;
@@ -713,7 +743,9 @@ function renderDiagnosis(): void {
   if (state?.userSuggestion) lines.push(`${getMessage('panelDiagnosisSuggestion') || '建议'}：${state.userSuggestion}`);
   if (globalHint) lines.push(`\n${globalHint}`);
 
-  const isDevBuild = (process?.env?.BUILD_TARGET || 'production') !== 'production';
+  // 注意：content script 运行在浏览器环境，`process` 可能不存在；直接引用会触发 ReferenceError
+  const isDevBuild =
+    (typeof process !== 'undefined' ? (process as { env?: { BUILD_TARGET?: string } }).env?.BUILD_TARGET : 'production') !== 'production';
   if (isDevBuild && state?.devDetails) {
     lines.push(`\n[DEV]\n${JSON.stringify(state.devDetails, null, 2)}`);
   }

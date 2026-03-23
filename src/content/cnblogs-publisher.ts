@@ -8,6 +8,8 @@ import type { ChannelId, ChannelRuntimeState, PublishJob } from '../shared/v2-ty
 /* INLINE:events */
 /* INLINE:v2-protocol */
 /* INLINE:publish-verify */
+/* INLINE:rich-content */
+/* INLINE:image-bridge */
 
 const CHANNEL_ID: ChannelId = 'cnblogs';
 
@@ -25,15 +27,6 @@ function getMessage(key: string, substitutions?: string[]): string {
   } catch {
     return key;
   }
-}
-
-function escapeAttr(value: string): string {
-  return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
-}
-
-function withSourceUrlAppended(contentHtml: string, sourceUrl: string): string {
-  const safe = escapeAttr(sourceUrl);
-  return `${contentHtml}\n<p><br/></p><p>原文链接：<a href="${safe}" target="_blank" rel="noreferrer noopener">${safe}</a></p>`;
 }
 
 function shouldRunOnThisPage(): boolean {
@@ -68,6 +61,26 @@ async function getContextFromBackground(): Promise<{ job: AnyJob; channelId: str
   const res = await chrome.runtime.sendMessage({ type: V2_GET_CONTEXT });
   if (!res?.success) throw new Error(res?.error || 'get context failed');
   return { job: res.job, channelId: res.channelId };
+}
+
+async function stageDetectLogin(): Promise<void> {
+  currentStage = 'detectLogin';
+  await report({ status: 'running', stage: 'detectLogin', userMessage: getMessage('v3MsgDetectingLogin') });
+
+  const url = String(location.href || '').toLowerCase();
+  const hasLoginUrl = /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i.test(url);
+  const hasPassword = !!document.querySelector('input[type="password"],input[name*="password" i]');
+  const text = document.body?.innerText || '';
+  const hasLoginText = text.includes('登录') || text.toLowerCase().includes('sign in');
+  if (hasLoginUrl || (hasPassword && hasLoginText)) {
+    await report({
+      status: 'not_logged_in',
+      stage: 'detectLogin',
+      userMessage: getMessage('v3MsgNotLoggedIn'),
+      userSuggestion: getMessage('v3SugLoginThenRetry'),
+    });
+    throw new Error('__BAWEI_V2_STOPPED__');
+  }
 }
 
 async function stageFillTitle(title: string): Promise<void> {
@@ -112,9 +125,56 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
   }
 
   if (!iframe?.contentDocument?.body) throw new Error('未找到正文编辑器（iframe 未就绪）');
-  const html = withSourceUrlAppended(contentHtml, sourceUrl);
-  iframe.contentDocument.body.innerHTML = html;
-  iframe.contentDocument.body.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true }));
+
+  const jobTokens = currentJob?.article?.contentTokens;
+  const tokens = Array.isArray(jobTokens) ? jobTokens : buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
+
+  const editorRoot = iframe.contentDocument.body as HTMLElement;
+  const expectedImages = tokens.filter((t) => t?.kind === 'image').length;
+  const existingHtml = (() => {
+    try {
+      return String(editorRoot.innerHTML || '');
+    } catch {
+      return '';
+    }
+  })();
+  const existingHasSource = !!(sourceUrl && existingHtml.includes(sourceUrl));
+  const existingOk =
+    existingHasSource &&
+    (expectedImages === 0 ||
+      Array.from(editorRoot.querySelectorAll<HTMLImageElement>('img')).filter((img) => {
+        const src = String(img.getAttribute('src') || '').trim();
+        if (!src) return false;
+        if (src.startsWith('blob:') || src.startsWith('data:')) return true;
+        return !src.includes('qpic.cn') && !src.includes('qlogo.cn');
+      }).length >= expectedImages);
+
+  if (!existingOk) {
+    try {
+      await fillEditorByTokens({
+        jobId: currentJob?.jobId || '',
+        tokens,
+        editorRoot,
+        writeMode: 'html',
+        onImageProgress: async (current, total) => {
+          await report({
+            status: 'running',
+            stage: 'fillContent',
+            userMessage: getMessage('v3MsgUploadingImageProgress', [String(current), String(total)]),
+          });
+        },
+      });
+    } catch (e) {
+      await report({
+        status: 'waiting_user',
+        stage: 'waitingUser',
+        userMessage: getMessage('v3MsgImageUploadFailed'),
+        userSuggestion: getMessage('v3SugManualUploadImagesThenContinue'),
+        devDetails: { message: e instanceof Error ? e.message : String(e) },
+      });
+      throw new Error('__BAWEI_V2_STOPPED__');
+    }
+  }
 
   await report({ userMessage: getMessage('v2MsgAppendedSourceLinkKeepOriginal') });
 }
@@ -165,6 +225,7 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
 
 async function runFlow(job: AnyJob): Promise<void> {
   await report({ status: 'running', stage: 'openEntry', userMessage: getMessage('v2MsgEnteredEditorPage') });
+  await stageDetectLogin();
   await stageFillTitle(job.article.title);
   await stageFillContent(job.article.contentHtml, job.article.sourceUrl);
   if (job.action === 'draft') {

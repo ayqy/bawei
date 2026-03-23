@@ -3,16 +3,22 @@ import { cleanExpiredData, getJobData, getJobState, markJobStopped, storeJobData
 import type { ChannelId, ChannelRuntimeState, PublishAction, PublishJob } from './shared/v2-types';
 import {
   V2_CHANNEL_UPDATE,
+  V2_FOCUS_CHANNEL_TAB,
   V2_GET_CONTEXT,
   V2_JOB_BROADCAST,
   V2_REQUEST_CONTINUE,
   V2_REQUEST_RETRY,
   V2_REQUEST_STOP,
   V2_START_JOB,
+  V3_FETCH_IMAGE,
 } from './shared/v2-protocol';
 import type {
   ChannelUpdate,
   ContinueRequest,
+  FetchImageRequest,
+  FetchImageResponse,
+  FocusChannelTabRequest,
+  FocusChannelTabResponse,
   GetContextResponse,
   RetryRequest,
   StartJobRequest,
@@ -97,6 +103,14 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       handleV2StopJob(message as StopJobRequest, sendResponse as (response: StopJobResponse) => void);
       return true;
 
+    case V2_FOCUS_CHANNEL_TAB:
+      handleV2FocusChannelTab(message as FocusChannelTabRequest, sendResponse as (response: FocusChannelTabResponse) => void);
+      return true;
+
+    case V3_FETCH_IMAGE:
+      handleV3FetchImage(message as FetchImageRequest, sendResponse as (response: FetchImageResponse) => void);
+      return true;
+
     case 'ping':
       sendResponse({ success: true, message: 'pong' });
       break;
@@ -122,6 +136,19 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
 const tabIdToContext = new Map<number, { jobId: string; channelId: ChannelId }>();
 const jobIdToSourceTabId = new Map<string, number>();
 const jobStateCache = new Map<string, Record<ChannelId, ChannelRuntimeState>>();
+
+const CHANNEL_ENTRY_URLS: Record<ChannelId, string> = {
+  csdn: 'https://mp.csdn.net/mp_blog/creation/editor',
+  'tencent-cloud-dev': 'https://cloud.tencent.com/developer/article/write',
+  cnblogs: 'https://i.cnblogs.com/posts/edit',
+  oschina: 'https://www.oschina.net/blog/write',
+  woshipm: 'https://www.woshipm.com/writing',
+  mowen: 'https://note.mowen.cn/editor',
+  sspai: 'https://sspai.com/write',
+  baijiahao: 'https://baijiahao.baidu.com/builder/rc/edit?type=news&is_from_cms=1',
+  toutiao: 'https://mp.toutiao.com/profile_v4/graphic/publish',
+  'feishu-docs': 'https://wuxinxuexi.feishu.cn/drive/folder/PyWAfSFwrlMgiydvlHectMn2nSd',
+};
 
 const ALL_CHANNELS: ChannelId[] = [
   'csdn',
@@ -166,6 +193,25 @@ function buildInitialState(): Record<ChannelId, ChannelRuntimeState> {
     toutiao: nowState('toutiao'),
     'feishu-docs': nowState('feishu-docs'),
   };
+}
+
+async function patchJobChannelState(jobId: string, channelId: ChannelId, patch: Partial<ChannelRuntimeState>): Promise<void> {
+  const job = await getJobData(jobId);
+  if (job?.stoppedAt) return;
+
+  const current = jobStateCache.get(jobId) || (await getJobState(jobId)) || buildInitialState();
+  const prev = current[channelId] || nowState(channelId);
+  const next: ChannelRuntimeState = {
+    ...prev,
+    ...patch,
+    channelId,
+    updatedAt: Date.now(),
+    tabId: patch.tabId ?? prev.tabId,
+  };
+  current[channelId] = next;
+  jobStateCache.set(jobId, current);
+  await storeJobState(jobId, current);
+  await broadcastJobState(jobId);
 }
 
 async function broadcastJobState(jobId: string): Promise<void> {
@@ -223,25 +269,12 @@ async function handleV2StartJob(message: StartJobRequest, sender: chrome.runtime
       jobIdToSourceTabId.set(jobId, sourceTabId);
     }
 
-    const entryUrls: Record<ChannelId, string> = {
-      csdn: 'https://mp.csdn.net/mp_blog/creation/editor',
-      'tencent-cloud-dev': 'https://cloud.tencent.com/developer/article/write',
-      cnblogs: 'https://i.cnblogs.com/posts/edit',
-      oschina: 'https://www.oschina.net/blog/write',
-      woshipm: 'https://www.woshipm.com/writing',
-      mowen: 'https://note.mowen.cn/editor',
-      sspai: 'https://sspai.com/write',
-      baijiahao: 'https://baijiahao.baidu.com/builder/rc/edit?type=news&is_from_cms=1',
-      toutiao: 'https://mp.toutiao.com/profile_v4/graphic/publish',
-      'feishu-docs': 'https://wuxinxuexi.feishu.cn/drive/folder/PyWAfSFwrlMgiydvlHectMn2nSd',
-    };
-
     // Open selected channel tabs concurrently
     await Promise.all(
       channelsToRun.map(async (channelId) => {
         // Ensure the focus channel is opened in the foreground so that sites with strict
         // user-gesture requirements (e.g. modal dialogs / AI cover pickers) can proceed.
-        const tab = await chrome.tabs.create({ url: entryUrls[channelId], active: channelId === message.focusChannel });
+        const tab = await chrome.tabs.create({ url: CHANNEL_ENTRY_URLS[channelId], active: channelId === message.focusChannel });
         if (!tab.id) return;
         tabIdToContext.set(tab.id, { jobId, channelId });
         const next: ChannelRuntimeState = {
@@ -347,9 +380,125 @@ async function handleV2StopJob(message: StopJobRequest, sendResponse: (response:
       })
     );
 
+    cleanupImagesForJob(jobId);
+
     sendResponse({ success: true });
   } catch (error) {
     console.warn('[V2] Failed to stop job:', error);
+    sendResponse({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
+  }
+}
+
+async function handleV2FocusChannelTab(message: FocusChannelTabRequest, sendResponse: (response: FocusChannelTabResponse) => void) {
+  try {
+    const { jobId, channelId } = message;
+    if (!jobId || !channelId) throw new Error('Missing jobId/channelId');
+
+    const state = jobStateCache.get(jobId) || (await getJobState(jobId));
+    const tabId = state?.[channelId]?.tabId;
+    if (tabId) {
+      try {
+        const tab = await chrome.tabs.get(tabId);
+        if (tab?.windowId != null) {
+          await chrome.windows.update(tab.windowId, { focused: true });
+        }
+        await chrome.tabs.update(tabId, { active: true });
+        sendResponse({ success: true, tabId });
+        return;
+      } catch {
+        // ignore (tab might be closed)
+      }
+    }
+
+    const url = CHANNEL_ENTRY_URLS[channelId];
+    const tab = await chrome.tabs.create({ url, active: true });
+    if (!tab.id) throw new Error('Failed to create tab');
+
+    tabIdToContext.set(tab.id, { jobId, channelId });
+    await patchJobChannelState(jobId, channelId, {
+      tabId: tab.id,
+    });
+
+    sendResponse({ success: true, tabId: tab.id });
+  } catch (error) {
+    sendResponse({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
+  }
+}
+
+const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+const imageCache = new Map<string, { mimeType: string; buffer: ArrayBuffer; size: number; fetchedAt: number }>();
+const imageInFlight = new Map<string, Promise<{ mimeType: string; buffer: ArrayBuffer; size: number; fetchedAt: number }>>();
+const jobIdToImageUrls = new Map<string, Set<string>>();
+
+function isAllowedImageUrl(raw: string): boolean {
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
+    const host = u.hostname.toLowerCase();
+    if (host === 'qpic.cn' || host.endsWith('.qpic.cn')) return true;
+    if (host === 'qlogo.cn' || host.endsWith('.qlogo.cn')) return true;
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function cleanupImagesForJob(jobId: string): void {
+  const urls = jobIdToImageUrls.get(jobId);
+  if (!urls) return;
+  for (const url of urls) {
+    imageCache.delete(url);
+    imageInFlight.delete(url);
+  }
+  jobIdToImageUrls.delete(jobId);
+}
+
+async function fetchImageCached(url: string): Promise<{ mimeType: string; buffer: ArrayBuffer; size: number; fetchedAt: number }> {
+  const cached = imageCache.get(url);
+  if (cached) return cached;
+
+  const inFlight = imageInFlight.get(url);
+  if (inFlight) return await inFlight;
+
+  const task = (async () => {
+    const res = await fetch(url, { credentials: 'omit' });
+    if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
+    const ct = res.headers.get('content-type') || '';
+    const mimeType = ct.split(';')[0].trim() || 'application/octet-stream';
+    const buffer = await res.arrayBuffer();
+    const size = buffer?.byteLength || 0;
+    if (!size) throw new Error('empty image');
+    if (size > IMAGE_MAX_BYTES) throw new Error(`image too large: ${size}`);
+    const out = { mimeType, buffer, size, fetchedAt: Date.now() };
+    imageCache.set(url, out);
+    return out;
+  })();
+
+  imageInFlight.set(url, task);
+  try {
+    return await task;
+  } finally {
+    imageInFlight.delete(url);
+  }
+}
+
+async function handleV3FetchImage(message: FetchImageRequest, sendResponse: (response: FetchImageResponse) => void) {
+  try {
+    const jobId = message.jobId;
+    const url = message.url;
+    if (!jobId || !url) throw new Error('Missing jobId/url');
+    if (!isAllowedImageUrl(url)) throw new Error('Image URL is not allowed');
+
+    const data = await fetchImageCached(url);
+    let set = jobIdToImageUrls.get(jobId);
+    if (!set) {
+      set = new Set();
+      jobIdToImageUrls.set(jobId, set);
+    }
+    set.add(url);
+
+    sendResponse({ success: true, mimeType: data.mimeType, buffer: data.buffer, size: data.size });
+  } catch (error) {
     sendResponse({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
   }
 }
@@ -376,6 +525,98 @@ async function handleV2Control(message: ContinueRequest | RetryRequest, sendResp
     sendResponse({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
   }
 }
+
+function looksLikeLoginUrl(url: string, channelId: ChannelId): boolean {
+  const raw = String(url || '');
+  const low = raw.toLowerCase();
+  const patterns: Record<ChannelId, RegExp[]> = {
+    csdn: [/passport\.csdn\.net\/login/i, /\/login/i],
+    'tencent-cloud-dev': [/cloud\.tencent\.com\/login/i, /\/account\/login/i, /\/login/i],
+    cnblogs: [/account\.cnblogs\.com\/signin/i, /\/signin/i, /\/login/i],
+    oschina: [/oschina\.net\/home\/login/i, /\/login/i],
+    woshipm: [/passport/i, /\/login/i, /\/signin/i],
+    mowen: [/\/login/i, /\/signin/i],
+    sspai: [/\/login/i, /\/signin/i],
+    baijiahao: [/passport/i, /\/login/i],
+    toutiao: [/\/auth\/page\/login/i, /\/login/i],
+    'feishu-docs': [/passport\.feishu\.cn/i, /\/login/i, /\/signin/i],
+  };
+
+  if (patterns[channelId].some((r) => r.test(low))) return true;
+  return /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i.test(low);
+}
+
+chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
+  const ctx = tabIdToContext.get(tabId);
+  if (!ctx) return;
+
+  const url = String(changeInfo.url || tab.url || '');
+  const status = String(changeInfo.status || '');
+
+  // Best-effort: once page is complete, mark stage=detectLogin (unless already progressed).
+  if (status === 'complete') {
+    void (async () => {
+      try {
+        const state = jobStateCache.get(ctx.jobId) || (await getJobState(ctx.jobId));
+        const cur = state?.[ctx.channelId];
+        const stage = cur?.stage;
+        const st = cur?.status;
+        if (st && st !== 'running') return;
+        if (stage && stage !== 'openEntry') return;
+        await patchJobChannelState(ctx.jobId, ctx.channelId, {
+          status: 'running',
+          stage: 'detectLogin',
+          userMessage: chrome.i18n.getMessage('v3MsgDetectingLogin'),
+        });
+      } catch {
+        // ignore
+      }
+    })();
+  }
+
+  if (url && looksLikeLoginUrl(url, ctx.channelId)) {
+    void patchJobChannelState(ctx.jobId, ctx.channelId, {
+      status: 'not_logged_in',
+      stage: 'detectLogin',
+      userMessage: chrome.i18n.getMessage('v3MsgNotLoggedIn'),
+      userSuggestion: chrome.i18n.getMessage('v3SugLoginThenRetry'),
+    });
+  }
+});
+
+chrome.tabs.onRemoved.addListener((tabId) => {
+  const ctx = tabIdToContext.get(tabId);
+  if (!ctx) return;
+  tabIdToContext.delete(tabId);
+
+  void (async () => {
+    try {
+      const state = jobStateCache.get(ctx.jobId) || (await getJobState(ctx.jobId));
+      const cur = state?.[ctx.channelId];
+      const status = cur?.status || 'not_started';
+
+      // 如果渠道已成功/已失败，不要因为用户关闭 tab 而回退状态。
+      if (status === 'success' || status === 'failed') return;
+
+      // 对于 waiting_user / not_logged_in：保留原状态，只提示可点击状态重开。
+      if (status === 'waiting_user' || status === 'not_logged_in') {
+        await patchJobChannelState(ctx.jobId, ctx.channelId, {
+          userSuggestion: chrome.i18n.getMessage('v3SugClickStatusToReopen'),
+        });
+        return;
+      }
+
+      // running / not_started 等：视为流程被中断
+      await patchJobChannelState(ctx.jobId, ctx.channelId, {
+        status: 'failed',
+        userMessage: chrome.i18n.getMessage('v2MsgFailed'),
+        userSuggestion: chrome.i18n.getMessage('v3SugClickStatusToReopen'),
+      });
+    } catch {
+      // ignore
+    }
+  })();
+});
 
 // Handle storage changes for cross-device sync
 chrome.storage.onChanged.addListener((changes, namespace) => {

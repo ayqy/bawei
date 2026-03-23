@@ -16,6 +16,8 @@ import type { ChannelId, ChannelRuntimeState, PublishJob } from '../shared/v2-ty
 /* INLINE:events */
 /* INLINE:v2-protocol */
 /* INLINE:publish-verify */
+/* INLINE:rich-content */
+/* INLINE:image-bridge */
 
 const CHANNEL_ID: ChannelId = 'toutiao';
 
@@ -37,53 +39,6 @@ function getMessage(key: string, substitutions?: string[]): string {
 
 const EDITOR_URL = 'https://mp.toutiao.com/profile_v4/graphic/publish';
 const LIST_URL = 'https://mp.toutiao.com/profile_v4/manage/content/all';
-
-function escapePlainText(value: string): string {
-  return String(value || '')
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .replaceAll('\u0000', '')
-    .trim();
-}
-
-function htmlToPlainTextSafe(html: string): string {
-  try {
-    const tmp = document.createElement('div');
-    tmp.innerHTML = html;
-    return escapePlainText(tmp.textContent || tmp.innerText || '');
-  } catch {
-    return '';
-  }
-}
-
-function escapeHtml(value: string): string {
-  return String(value || '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-function plainTextToHtml(plain: string): string {
-  const lines = String(plain || '').split('\n');
-  const parts: string[] = [];
-  for (const line of lines) {
-    if (!line.trim()) parts.push('<p><br/></p>');
-    else parts.push(`<p>${escapeHtml(line)}</p>`);
-  }
-  return parts.join('');
-}
-
-function ensureMinLengthText(text: string, minLen: number, sourceUrl: string): string {
-  let out = (text || '').trim();
-  if (!out) out = '（以下为自动发布内容）';
-  if (sourceUrl && !out.includes(sourceUrl)) out += `\n\n原文链接：${sourceUrl}`;
-  if (out.length >= minLen) return out;
-  let pad = '\n\n（内容来自原文链接，更多细节请查看原文。）';
-  if (sourceUrl && !out.includes(sourceUrl) && !pad.includes(sourceUrl)) pad += `\n原文链接：${sourceUrl}`;
-  while ((out + pad).length < minLen + 20) pad += '。';
-  return `${out}${pad}`;
-}
 
 function shouldRunOnThisPage(): boolean {
   if (location.hostname === 'mp.toutiao.com') return true;
@@ -117,6 +72,26 @@ async function getContextFromBackground(): Promise<{ job: AnyJob; channelId: str
   const res = await chrome.runtime.sendMessage({ type: V2_GET_CONTEXT });
   if (!res?.success) throw new Error(res?.error || 'get context failed');
   return { job: res.job, channelId: res.channelId };
+}
+
+async function stageDetectLogin(): Promise<void> {
+  currentStage = 'detectLogin';
+  await report({ status: 'running', stage: 'detectLogin', userMessage: getMessage('v3MsgDetectingLogin') });
+
+  const url = String(location.href || '').toLowerCase();
+  const hasLoginUrl = /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i.test(url);
+  const hasPassword = !!document.querySelector('input[type="password"],input[name*="password" i]');
+  const text = document.body?.innerText || '';
+  const hasLoginText = text.includes('登录') || text.toLowerCase().includes('sign in');
+  if (hasLoginUrl || (hasPassword && hasLoginText)) {
+    await report({
+      status: 'not_logged_in',
+      stage: 'detectLogin',
+      userMessage: getMessage('v3MsgNotLoggedIn'),
+      userSuggestion: getMessage('v3SugLoginThenRetry'),
+    });
+    throw new Error('__BAWEI_V2_STOPPED__');
+  }
 }
 
 function findAnyButtonByText(text: string): HTMLButtonElement | null {
@@ -197,7 +172,28 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
     userSuggestion: getMessage('v2SugToutiaoNoSourceFieldAppend'),
   });
 
-  const plain = ensureMinLengthText(htmlToPlainTextSafe(contentHtml), 180, sourceUrl);
+  const jobTokens = currentJob?.article?.contentTokens;
+  const tokens = Array.isArray(jobTokens) ? jobTokens : buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
+  const expectedImages = tokens.filter((t) => t?.kind === 'image').length;
+
+  const plainLen = tokens
+    .filter((t) => t?.kind === 'html')
+    .map((t) => htmlToPlainTextSafe((t as { html?: string }).html || ''))
+    .join('\n')
+    .replace(/\s+/g, '')
+    .length;
+
+  if (plainLen < 180) {
+    let pad = '（内容来自原文链接，更多细节请查看原文。）';
+    while (pad.replace(/\s+/g, '').length < 220) pad += '。';
+    const padHtml = `<p>${pad}</p>`;
+    const last = tokens[tokens.length - 1];
+    if (last?.kind === 'html' && sourceUrl && String((last as { html?: string }).html || '').includes(sourceUrl)) {
+      tokens.splice(tokens.length - 1, 0, { kind: 'html', html: padHtml });
+    } else {
+      tokens.push({ kind: 'html', html: padHtml });
+    }
+  }
 
   const editor = await retryUntil(
     async () => {
@@ -214,38 +210,50 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
     { timeoutMs: 60_000, intervalMs: 800 }
   );
 
-  closeOverlaysBestEffort();
-  simulateClick(editor);
-  simulateFocus(editor);
-
-  try {
-    document.execCommand('selectAll', false);
-    document.execCommand('delete', false);
-  } catch {
-    // ignore
-  }
-  const html = plainTextToHtml(plain);
-  // NOTE: avoid navigator.clipboard in this page (can hang waiting permission). Prefer execCommand + innerText.
-  let wrote = false;
-  try {
-    wrote = document.execCommand('insertText', false, plain);
-  } catch {
-    // ignore
-  }
-  if (!wrote) {
+  const existingText = (() => {
     try {
-      wrote = document.execCommand('insertHTML', false, html);
+      return String(editor.textContent || '');
     } catch {
-      // ignore
+      return '';
     }
-  }
-  if (!wrote) {
+  })();
+  const existingHasSource = !!(sourceUrl && (existingText.includes(sourceUrl) || pageContainsSourceUrl(sourceUrl)));
+  const existingOk =
+    existingHasSource &&
+    (expectedImages === 0 ||
+      Array.from(editor.querySelectorAll<HTMLImageElement>('img')).filter((img) => {
+        const src = String(img.getAttribute('src') || '').trim();
+        if (!src) return false;
+        if (src.startsWith('blob:') || src.startsWith('data:')) return true;
+        return !src.includes('qpic.cn') && !src.includes('qlogo.cn');
+      }).length >= expectedImages);
+
+  if (!existingOk) {
+    closeOverlaysBestEffort();
     try {
-      editor.innerText = plain;
-      editor.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, data: plain, inputType: 'insertText' }));
-      editor.dispatchEvent(new CompositionEvent('compositionend', { bubbles: true, data: plain }));
-    } catch {
-      // ignore
+      await fillEditorByTokens({
+        jobId: currentJob?.jobId || '',
+        tokens,
+        editorRoot: editor,
+        writeMode: 'text',
+        onImageProgress: async (current, total) => {
+          closeOverlaysBestEffort();
+          await report({
+            status: 'running',
+            stage: 'fillContent',
+            userMessage: getMessage('v3MsgUploadingImageProgress', [String(current), String(total)]),
+          });
+        },
+      });
+    } catch (e) {
+      await report({
+        status: 'waiting_user',
+        stage: 'waitingUser',
+        userMessage: getMessage('v3MsgImageUploadFailed'),
+        userSuggestion: getMessage('v3SugManualUploadImagesThenContinue'),
+        devDetails: { message: e instanceof Error ? e.message : String(e) },
+      });
+      throw new Error('__BAWEI_V2_STOPPED__');
     }
   }
 
@@ -552,6 +560,7 @@ async function stageConfirmSuccess(): Promise<void> {
 async function runEditorFlow(job: AnyJob): Promise<void> {
   await report({ status: 'running', stage: 'openEntry', userMessage: getMessage('v2MsgEnteredToutiaoEditor') });
 
+  await stageDetectLogin();
   // Best-effort required fields (avoid image upload)
   await stageEnsureNoCover();
   await stageEnsureNoAds();
