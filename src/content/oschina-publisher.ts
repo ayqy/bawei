@@ -53,6 +53,10 @@ function getListRetryKey(jobId: string): string {
   return `bawei_v2_oschina_list_retry_${jobId}`;
 }
 
+function getWwwEntryRetryKey(jobId: string): string {
+  return `bawei_v2_oschina_www_entry_retry_${jobId}`;
+}
+
 function setSessionValue(key: string, value: string): void {
   try {
     sessionStorage.setItem(key, value);
@@ -91,17 +95,13 @@ function pageContainsSourceUrlLoose(sourceUrl: string): boolean {
 }
 
 function shouldRunOnThisPage(): boolean {
-  if (location.hostname === 'www.oschina.net' && location.pathname.startsWith('/blog/write')) return true;
+  if (location.hostname === 'www.oschina.net') return true;
   if (location.hostname === 'my.oschina.net') return true; // list/detail/write 都在此域
   return false;
 }
 
 function isWritePage(): boolean {
   return location.hostname === 'my.oschina.net' && /\/blog\/write/.test(location.pathname);
-}
-
-function isLandingWritePage(): boolean {
-  return location.hostname === 'www.oschina.net' && location.pathname.startsWith('/blog/write');
 }
 
 function isMyOschinaPage(): boolean {
@@ -119,6 +119,28 @@ function detectCanonicalWriteUrl(): string | null {
   } catch {
     return null;
   }
+}
+
+function detectWriteEntryUrlOnWww(): string | null {
+  try {
+    const direct = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href]')).find((a) => {
+      const href = String(a.href || '');
+      if (!href) return false;
+      return href.includes('/blog/write');
+    });
+    if (direct?.href) return direct.href;
+
+    const byText = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href]')).find((a) => {
+      const text = (a.textContent || '').trim();
+      if (!text.includes('写博客')) return false;
+      const href = String(a.href || '');
+      return !!href;
+    });
+    if (byText?.href) return byText.href;
+  } catch {
+    // ignore
+  }
+  return null;
 }
 
 function detectCanonicalSpacePath(): string | null {
@@ -168,10 +190,11 @@ async function stageDetectLogin(): Promise<void> {
 
   const url = String(location.href || '').toLowerCase();
   const hasLoginUrl = /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i.test(url);
-  const hasPassword = !!document.querySelector('input[type="password"],input[name*="password" i]');
-  const text = document.body?.innerText || '';
-  const hasLoginText = text.includes('登录') || text.toLowerCase().includes('sign in');
-  if (hasLoginUrl || (hasPassword && hasLoginText) || text.includes('登录后') || text.includes('请登录')) {
+  const hasPassword = !!document.querySelector('input[type="password"],input[name*="password" i],input[id*="password" i]');
+  const text = String(document.body?.innerText || '');
+  const hardLoginText = /请先登录后继续|请登录后操作|登录后继续/i.test(text);
+
+  if (hasLoginUrl || hasPassword || hardLoginText) {
     await report({
       status: 'not_logged_in',
       stage: 'detectLogin',
@@ -182,9 +205,42 @@ async function stageDetectLogin(): Promise<void> {
   }
 }
 
-async function ensureEditorPage(): Promise<void> {
-  if (location.hostname !== 'www.oschina.net') return;
-  if (!location.pathname.startsWith('/blog/write')) return;
+async function ensureEditorPage(): Promise<boolean> {
+  if (location.hostname !== 'www.oschina.net') return false;
+
+  if (!location.pathname.startsWith('/blog/write')) {
+    const detected = detectWriteEntryUrlOnWww();
+    const target = detected || 'https://www.oschina.net/blog/write';
+    const retryKey = currentJob ? getWwwEntryRetryKey(currentJob.jobId) : '';
+    if (!detected && retryKey) {
+      const n = Number(getSessionValue(retryKey) || '0') + 1;
+      setSessionValue(retryKey, String(n));
+      if (n >= 3) {
+        await report({
+          status: 'not_logged_in',
+          stage: 'detectLogin',
+          userMessage: getMessage('v3MsgNotLoggedIn'),
+          userSuggestion: getMessage('v3SugLoginThenRetry'),
+          devDetails: { reason: 'oschina-www-entry-loop', attempts: n, currentUrl: location.href },
+        });
+        throw new Error('__BAWEI_V2_STOPPED__');
+      }
+    } else if (retryKey) {
+      removeSessionValue(retryKey);
+    }
+
+    if (target && target !== location.href) {
+      await report({
+        status: 'running',
+        stage: 'openEntry',
+        userMessage: getMessage('v2MsgOschinaGoProfileWriteBlogPage'),
+        devDetails: { from: location.href, to: target },
+      });
+      location.href = target;
+      return true;
+    }
+    return false;
+  }
 
   // /blog/write 是入口页：需要跳转到 my.oschina.net 的个人空间写作页
   const target = await retryUntil(
@@ -208,8 +264,9 @@ async function ensureEditorPage(): Promise<void> {
   );
 
   if (target instanceof HTMLAnchorElement && target.href) {
+    if (currentJob) removeSessionValue(getWwwEntryRetryKey(currentJob.jobId));
     location.href = target.href;
-    return;
+    return true;
   }
 
   try {
@@ -217,6 +274,7 @@ async function ensureEditorPage(): Promise<void> {
   } catch {
     (target as unknown as HTMLElement).click();
   }
+  return true;
 }
 
 async function stageFillTitle(title: string): Promise<void> {
@@ -402,29 +460,16 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
 async function runFlow(job: AnyJob): Promise<void> {
   await report({ status: 'running', stage: 'openEntry', userMessage: getMessage('v2MsgEnteredEditorPage') });
   await stageDetectLogin();
-  await ensureEditorPage();
+  const redirected = await ensureEditorPage();
+  if (redirected) return;
 
   if (location.hostname === 'www.oschina.net') {
     await report({
-      status: 'running',
-      stage: 'openEntry',
-      userMessage: getMessage('v2MsgOschinaGoProfileWriteBlogPage'),
+      status: 'waiting_user',
+      stage: 'waitingUser',
+      userMessage: getMessage('v2MsgOschinaStillOnEntryNeedWriteBlogOrRelogin'),
+      userSuggestion: getMessage('v2SugOschinaLoginThenClickWriteBlogThenContinue'),
     });
-
-    // 给入口页充分时间渲染/跳转；若仍卡住再提示手动处理
-    setTimeout(() => {
-      try {
-        if (location.hostname !== 'www.oschina.net') return;
-        void report({
-          status: 'waiting_user',
-          stage: 'waitingUser',
-          userMessage: getMessage('v2MsgOschinaStillOnEntryNeedWriteBlogOrRelogin'),
-          userSuggestion: getMessage('v2SugOschinaLoginThenClickWriteBlogThenContinue'),
-        });
-      } catch {
-        // ignore
-      }
-    }, 60_000);
     return;
   }
 
@@ -483,11 +528,7 @@ async function bootstrap(): Promise<void> {
     if (ctx.channelId !== CHANNEL_ID) return;
     currentJob = ctx.job;
     if (currentJob.stoppedAt) return;
-    if (isLandingWritePage()) {
-      await runFlow(currentJob);
-      return;
-    }
-    if (isWritePage()) {
+    if (location.hostname === 'www.oschina.net' || isWritePage()) {
       await runFlow(currentJob);
       return;
     }

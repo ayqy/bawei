@@ -102,6 +102,150 @@ function getTencentEditable(): HTMLElement | null {
   );
 }
 
+function getTencentMarkdownModel(): { getValue: () => string; setValue: (value: string) => void } | null {
+  try {
+    const view = window as unknown as {
+      monaco?: {
+        editor?: {
+          getModels?: () => Array<{ getValue?: () => string; setValue?: (value: string) => void }>;
+        };
+      };
+    };
+    const models = view.monaco?.editor?.getModels?.() || [];
+    const model = models[0];
+    if (!model || typeof model.getValue !== 'function' || typeof model.setValue !== 'function') return null;
+    return {
+      getValue: () => String(model.getValue?.() || ''),
+      setValue: (value: string) => {
+        model.setValue?.(value);
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+function isTencentMarkdownMode(): boolean {
+  if (getTencentMarkdownModel()) return true;
+  return !!Array.from(document.querySelectorAll('a,button,span,div')).find((n) =>
+    (n.textContent || '').trim().includes('切换到富文本编辑器')
+  );
+}
+
+function findTencentSwitchLink(text: string): HTMLElement | null {
+  const exact = Array.from(document.querySelectorAll<HTMLElement>('a,button')).find((n) => (n.textContent || '').trim() === text);
+  if (exact) return exact;
+  const fuzzy = Array.from(document.querySelectorAll<HTMLElement>('a,button,span,div')).find((n) =>
+    (n.textContent || '').trim().includes(text)
+  );
+  if (!fuzzy) return null;
+  return (fuzzy.closest('a,button') as HTMLElement | null) || fuzzy;
+}
+
+async function ensureTencentMarkdownMode(): Promise<void> {
+  if (isTencentMarkdownMode()) return;
+
+  const switchBtn = findTencentSwitchLink('切换到Markdown编辑器');
+  if (switchBtn) {
+    simulateClick(switchBtn);
+  }
+
+  await retryUntil(
+    async () => {
+      if (!isTencentMarkdownMode()) throw new Error('markdown mode not ready');
+      return true;
+    },
+    { timeoutMs: 15_000, intervalMs: 300 }
+  );
+}
+
+function markdownToPlainText(markdown: string): string {
+  return String(markdown || '')
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`[^`]*`/g, ' ')
+    .replace(/!\[[^\]]*]\([^)]+\)/g, ' ')
+    .replace(/\[([^\]]+)]\([^)]+\)/g, '$1')
+    .replace(/[>#*_~|]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function buildTencentMarkdownFromTokens(tokens: Array<{ kind?: string; html?: string; src?: string; alt?: string }>, sourceUrl: string): string {
+  const lines: string[] = [];
+  let imageIndex = 0;
+
+  for (const token of tokens) {
+    if (!token) continue;
+
+    if (token.kind === 'html') {
+      const text = htmlToPlainTextSafe(token.html || '').trim();
+      if (text) {
+        lines.push(text);
+        lines.push('');
+      }
+      continue;
+    }
+
+    if (token.kind === 'image') {
+      imageIndex += 1;
+      const src = String(token.src || '').trim();
+      if (!src) continue;
+      const altRaw = String(token.alt || '').trim();
+      const alt = (altRaw || `image-${imageIndex}`).replace(/]/g, '').replace(/\n/g, ' ').trim();
+      lines.push(`![${alt}](${src})`);
+      lines.push('');
+    }
+  }
+
+  if (sourceUrl) {
+    lines.push(`原文链接：${sourceUrl}`);
+  }
+
+  const markdown = lines
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  return markdown || '（以下为自动发布内容）';
+}
+
+function getTencentContentTextLen(sourceUrl: string): number {
+  const editable = getTencentEditable();
+  if (editable) {
+    return ((editable.innerText || editable.textContent || '').trim() || '').length;
+  }
+
+  const model = getTencentMarkdownModel();
+  if (model) {
+    const plain = markdownToPlainText(model.getValue());
+    return ensureMinLengthText(plain, 0, sourceUrl).trim().length;
+  }
+
+  return 0;
+}
+
+function ensureTencentMarkdownMinLength(minLen: number, sourceUrl: string): void {
+  const model = getTencentMarkdownModel();
+  if (!model) return;
+
+  const current = String(model.getValue() || '');
+  const plain = markdownToPlainText(current);
+  if (plain.length >= minLen) return;
+
+  const padded = ensureMinLengthText(plain, Math.max(minLen, 160), sourceUrl);
+  const extra = padded.slice(plain.length).trim();
+  if (!extra) return;
+
+  const next = `${current.trim()}\n\n${extra}`.trim();
+  model.setValue(next);
+
+  const hiddenInput = document.querySelector<HTMLTextAreaElement>('textarea.inputarea');
+  if (hiddenInput) {
+    hiddenInput.value = next;
+    hiddenInput.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+    hiddenInput.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+  }
+}
+
 function getTextLen(node: HTMLElement): number {
   return ((node.innerText || node.textContent || '').trim() || '').length;
 }
@@ -166,12 +310,11 @@ async function stageDetectLogin(): Promise<void> {
   currentStage = 'detectLogin';
   await report({ status: 'running', stage: 'detectLogin', userMessage: getMessage('v3MsgDetectingLogin') });
 
-  const url = String(location.href || '').toLowerCase();
-  const hasLoginUrl = /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i.test(url);
-  const hasPassword = !!document.querySelector('input[type="password"],input[name*="password" i]');
-  const text = document.body?.innerText || '';
-  const hasLoginText = text.includes('登录') || text.toLowerCase().includes('sign in');
-  if (hasLoginUrl || (hasPassword && hasLoginText)) {
+  const loginState = detectPageLoginState({
+    loginUrlPattern: /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i,
+    loggedInPattern: /开发者社区|写文章|发布|草稿|内容管理|账号设置|退出登录|个人中心/i,
+  });
+  if (loginState.status === 'not_logged_in') {
     await report({
       status: 'not_logged_in',
       stage: 'detectLogin',
@@ -206,97 +349,143 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
 
   const minLen = 140;
   const expectedImages = tokens.filter((t) => t?.kind === 'image').length;
+  let len = 0;
+  let mode: 'markdown' | 'rich' | 'textarea' = 'textarea';
 
-  // 兼容新版编辑器（contenteditable）与 Markdown 模式（textarea）
-  const editable = getTencentEditable();
-  const editor = editable || findContentEditor(document);
-  let target: HTMLElement | null = null;
-  if (editor) {
-    if ((editor as HTMLElement).getAttribute('contenteditable') === 'true') {
-      target = editor as HTMLElement;
-    } else {
-      target = ((editor as HTMLElement).querySelector('[contenteditable="true"]') as HTMLElement | null) || null;
-    }
-  }
+  const markdownFilled = await (async () => {
+    try {
+      await ensureTencentMarkdownMode();
+      const model = getTencentMarkdownModel();
+      if (!model) return false;
 
-  if (target) {
-    const existingText = (() => {
-      try {
-        return String(target.innerText || target.textContent || '');
-      } catch {
-        return '';
-      }
-    })();
-    const existingHasSource = !!(sourceUrl && existingText.includes(sourceUrl));
-    const existingOk =
-      existingHasSource &&
-      (expectedImages === 0 ||
-        Array.from(target.querySelectorAll<HTMLImageElement>('img')).filter((img) => {
-          const src = String(img.getAttribute('src') || '').trim();
-          if (!src) return false;
-          if (src.startsWith('blob:') || src.startsWith('data:')) return true;
-          return !src.includes('qpic.cn') && !src.includes('qlogo.cn');
-        }).length >= expectedImages);
-
-    if (!existingOk) {
-      try {
-        await fillEditorByTokens({
-          jobId: currentJob?.jobId || '',
-          tokens,
-          editorRoot: target,
-          writeMode: 'text',
-          onImageProgress: async (current, total) => {
-            await report({
-              status: 'running',
-              stage: 'fillContent',
-              userMessage: getMessage('v3MsgUploadingImageProgress', [String(current), String(total)]),
-            });
-          },
-        });
-      } catch (e) {
-        await report({
-          status: 'waiting_user',
-          stage: 'waitingUser',
-          userMessage: getMessage('v3MsgImageUploadFailed'),
-          userSuggestion: getMessage('v3SugManualUploadImagesThenContinue'),
-          devDetails: { message: e instanceof Error ? e.message : String(e) },
-        });
-        throw new Error('__BAWEI_V2_STOPPED__');
-      }
-    }
-
-    await new Promise((r) => setTimeout(r, 300));
-
-    let len = getTextLen(target);
-    if (len < minLen) {
-      const currentText = (target.innerText || target.textContent || '').trim();
-      const padded = ensureMinLengthText(currentText, 160, sourceUrl);
-      const extra = padded.slice(currentText.length);
-      if (extra) {
-        try {
-          document.execCommand('insertText', false, extra);
-        } catch {
-          // ignore
+      if (expectedImages > 0) {
+        for (let i = 1; i <= expectedImages; i += 1) {
+          await report({
+            status: 'running',
+            stage: 'fillContent',
+            userMessage: getMessage('v3MsgUploadingImageProgress', [String(i), String(expectedImages)]),
+          });
         }
-        await new Promise((r) => setTimeout(r, 200));
-        len = getTextLen(target);
+      }
+
+      const markdown = buildTencentMarkdownFromTokens(tokens as Array<{ kind?: string; html?: string; src?: string; alt?: string }>, sourceUrl);
+      model.setValue(markdown);
+
+      const hiddenInput = document.querySelector<HTMLTextAreaElement>('textarea.inputarea');
+      if (hiddenInput) {
+        hiddenInput.value = markdown;
+        hiddenInput.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+        hiddenInput.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+      }
+
+      ensureTencentMarkdownMinLength(minLen, sourceUrl);
+      len = getTencentContentTextLen(sourceUrl);
+      mode = 'markdown';
+      return true;
+    } catch (error) {
+      await report({
+        status: 'running',
+        stage: 'fillContent',
+        devDetails: { message: `markdown fill fallback: ${error instanceof Error ? error.message : String(error)}` },
+      });
+      return false;
+    }
+  })();
+
+  if (!markdownFilled) {
+    const editable = getTencentEditable();
+    const editor = editable || findContentEditor(document);
+    let target: HTMLElement | null = null;
+    if (editor) {
+      if ((editor as HTMLElement).getAttribute('contenteditable') === 'true') {
+        target = editor as HTMLElement;
+      } else {
+        target = ((editor as HTMLElement).querySelector('[contenteditable="true"]') as HTMLElement | null) || null;
       }
     }
 
-    await report({
-      userMessage: getMessage('v2MsgTencentContentWrittenLenNeedMin', [String(len), String(minLen)]),
-      userSuggestion: len < minLen ? getMessage('v2SugContentTooShortMin140AlreadyAutoPadded') : undefined,
-    });
-  } else {
-    const textarea = (await waitForElement('textarea', 15000)) as HTMLTextAreaElement;
-    simulateFocus(textarea);
-    textarea.value = '';
-    textarea.dispatchEvent(new Event('input', { bubbles: true }));
-    // Markdown 模式：尽量写入纯文本（避免 HTML 被当作字面量）
-    const plain = ensureMinLengthText(htmlToPlainTextSafe(contentHtml), 160, sourceUrl);
-    textarea.value = plain;
-    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    if (target) {
+      mode = 'rich';
+      const existingText = (() => {
+        try {
+          return String(target.innerText || target.textContent || '');
+        } catch {
+          return '';
+        }
+      })();
+      const existingHasSource = !!(sourceUrl && existingText.includes(sourceUrl));
+      const existingOk =
+        existingHasSource &&
+        (expectedImages === 0 ||
+          Array.from(target.querySelectorAll<HTMLImageElement>('img')).filter((img) => {
+            const src = String(img.getAttribute('src') || '').trim();
+            if (!src) return false;
+            if (src.startsWith('blob:') || src.startsWith('data:')) return true;
+            return !src.includes('qpic.cn') && !src.includes('qlogo.cn');
+          }).length >= expectedImages);
+
+      if (!existingOk) {
+        try {
+          await fillEditorByTokens({
+            jobId: currentJob?.jobId || '',
+            tokens,
+            editorRoot: target,
+            writeMode: 'text',
+            onImageProgress: async (current, total) => {
+              await report({
+                status: 'running',
+                stage: 'fillContent',
+                userMessage: getMessage('v3MsgUploadingImageProgress', [String(current), String(total)]),
+              });
+            },
+          });
+        } catch (e) {
+          await report({
+            status: 'waiting_user',
+            stage: 'waitingUser',
+            userMessage: getMessage('v3MsgImageUploadFailed'),
+            userSuggestion: getMessage('v3SugManualUploadImagesThenContinue'),
+            devDetails: { message: e instanceof Error ? e.message : String(e) },
+          });
+          throw new Error('__BAWEI_V2_STOPPED__');
+        }
+      }
+
+      await new Promise((r) => setTimeout(r, 300));
+
+      len = getTextLen(target);
+      if (len < minLen) {
+        const currentText = (target.innerText || target.textContent || '').trim();
+        const padded = ensureMinLengthText(currentText, 160, sourceUrl);
+        const extra = padded.slice(currentText.length);
+        if (extra) {
+          try {
+            document.execCommand('insertText', false, extra);
+          } catch {
+            // ignore
+          }
+          await new Promise((r) => setTimeout(r, 200));
+          len = getTextLen(target);
+        }
+      }
+    } else {
+      mode = 'textarea';
+      const textarea = (await waitForElement('textarea', 15000)) as HTMLTextAreaElement;
+      simulateFocus(textarea);
+      textarea.value = '';
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      const plain = ensureMinLengthText(htmlToPlainTextSafe(contentHtml), 160, sourceUrl);
+      textarea.value = plain;
+      textarea.dispatchEvent(new Event('input', { bubbles: true }));
+      len = plain.length;
+    }
   }
+
+  await report({
+    userMessage: getMessage('v2MsgTencentContentWrittenLenNeedMin', [String(len), String(minLen)]),
+    userSuggestion: len < minLen ? getMessage('v2SugContentTooShortMin140AlreadyAutoPadded') : undefined,
+    devDetails: { mode, expectedImages, textLength: len },
+  });
 
   await report({
     userMessage: getMessage('v2MsgAppendedSourceLinkKeepOriginal'),
@@ -380,24 +569,27 @@ async function stageSubmitPublish(): Promise<void> {
 
   // 腾讯云校验：正文不少于 140 字；若不足则自动补足（避免确认发布后被拦截成草稿）
   try {
-    const editable = getTencentEditable();
-    const text = ((editable?.innerText || editable?.textContent || '').trim() || '') as string;
     const sourceUrl = currentJob?.article?.sourceUrl || '';
-    if (editable && text.length < 140) {
-      // 如果前一步富文本写入失败，直接重写为一段足够长的纯文本，保证前端校验与后端发布都能通过
-      const html = withSourceUrlAppended(currentJob?.article?.contentHtml || '', sourceUrl);
-      const plain = ensureMinLengthText(htmlToPlainTextSafe(html), 160, sourceUrl);
-      simulateFocus(editable);
-      try {
-        document.execCommand('selectAll', false);
-        document.execCommand('delete', false);
-      } catch {
-        // ignore
-      }
-      try {
-        document.execCommand('insertText', false, plain);
-      } catch {
-        // ignore
+    const currentLen = getTencentContentTextLen(sourceUrl);
+    if (currentLen < 140) {
+      const editable = getTencentEditable();
+      if (editable) {
+        const html = withSourceUrlAppended(currentJob?.article?.contentHtml || '', sourceUrl);
+        const plain = ensureMinLengthText(htmlToPlainTextSafe(html), 160, sourceUrl);
+        simulateFocus(editable);
+        try {
+          document.execCommand('selectAll', false);
+          document.execCommand('delete', false);
+        } catch {
+          // ignore
+        }
+        try {
+          document.execCommand('insertText', false, plain);
+        } catch {
+          // ignore
+        }
+      } else {
+        ensureTencentMarkdownMinLength(140, sourceUrl);
       }
       await new Promise((r) => setTimeout(r, 250));
     }
@@ -445,11 +637,11 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
         userMessage: getMessage('v2MsgContentTooShortAutoPadAndRepublish'),
       });
       try {
+        const sourceUrl = currentJob?.article?.sourceUrl || '';
         const editable = getTencentEditable();
         if (editable) {
           const cur = ((editable.innerText || editable.textContent || '').trim() || '') as string;
           if (cur.length < 140) {
-            const sourceUrl = currentJob?.article?.sourceUrl || '';
             const html = withSourceUrlAppended(currentJob?.article?.contentHtml || '', sourceUrl);
             const plain = ensureMinLengthText(htmlToPlainTextSafe(html), 160, sourceUrl);
             simulateFocus(editable);
@@ -465,6 +657,8 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
               // ignore
             }
           }
+        } else {
+          ensureTencentMarkdownMinLength(140, sourceUrl);
         }
       } catch {
         // ignore

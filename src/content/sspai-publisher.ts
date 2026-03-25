@@ -189,12 +189,11 @@ async function stageDetectLogin(): Promise<void> {
   currentStage = 'detectLogin';
   await report({ status: 'running', stage: 'detectLogin', userMessage: getMessage('v3MsgDetectingLogin') });
 
-  const url = String(location.href || '').toLowerCase();
-  const hasLoginUrl = /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i.test(url);
-  const hasPassword = !!document.querySelector('input[type="password"],input[name*="password" i]');
-  const text = document.body?.innerText || '';
-  const hasLoginText = text.includes('登录') || text.toLowerCase().includes('sign in');
-  if (hasLoginUrl || (hasPassword && hasLoginText)) {
+  const loginState = detectPageLoginState({
+    loginUrlPattern: /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i,
+    loggedInPattern: /写文章|草稿|发布|账号设置|少数派|退出登录|我的文章/i,
+  });
+  if (loginState.status === 'not_logged_in') {
     await report({
       status: 'not_logged_in',
       stage: 'detectLogin',
@@ -225,8 +224,25 @@ async function stageFillContent(contentHtml: string, sourceUrl: string, articleI
 
   const jobTokens = currentJob?.article?.contentTokens;
   const tokens = Array.isArray(jobTokens) ? jobTokens : buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
+  const escapeAttr = (value: string): string =>
+    String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  const editorTokens = tokens.map((token) => {
+    if (!token || token.kind !== 'image') return token;
+    const src = String(token.src || '').trim();
+    if (!src) return { kind: 'html', html: '<p><br/></p>' };
+    const alt = escapeAttr(String(token.alt || ''));
+    const safeSrc = escapeAttr(src);
+    return {
+      kind: 'html',
+      html: `<p><img src="${safeSrc}"${alt ? ` alt="${alt}"` : ''} /></p>`,
+    };
+  });
 
-  const expectedImages = tokens.filter((t) => t?.kind === 'image').length;
+  const expectedImages = editorTokens.filter((t) => t?.kind === 'image').length;
 
   const plainLen = tokens
     .filter((t) => t?.kind === 'html')
@@ -251,11 +267,24 @@ async function stageFillContent(contentHtml: string, sourceUrl: string, articleI
     async () => {
       const el =
         (document.querySelector<HTMLElement>('.ck-editor__editable[contenteditable="true"]') as HTMLElement | null) ||
+        (document.querySelector<HTMLElement>('.ck-editor__editable') as HTMLElement | null) ||
+        (document.querySelector<HTMLElement>('.x-editor-inst.wangEditor-txt') as HTMLElement | null) ||
+        (document.querySelector<HTMLElement>('[class*="ck-editor__editable"]') as HTMLElement | null) ||
         (findContentEditor(document) as HTMLElement | null) ||
         null;
       if (!el) throw new Error('editor not ready');
       const rect = el.getBoundingClientRect();
       if (rect.width < 200 || rect.height < 80) throw new Error('editor not visible');
+
+      try {
+        simulateClick(el);
+        simulateFocus(el);
+        if (el.getAttribute('contenteditable') !== 'true') {
+          el.setAttribute('contenteditable', 'true');
+        }
+      } catch {
+        // ignore
+      }
       return el;
     },
     { timeoutMs: 60_000, intervalMs: 800 }
@@ -283,16 +312,9 @@ async function stageFillContent(contentHtml: string, sourceUrl: string, articleI
     try {
       await fillEditorByTokens({
         jobId: currentJob?.jobId || '',
-        tokens,
+        tokens: editorTokens,
         editorRoot: editor,
         writeMode: 'html',
-        onImageProgress: async (current, total) => {
-          await report({
-            status: 'running',
-            stage: 'fillContent',
-            userMessage: getMessage('v3MsgUploadingImageProgress', [String(current), String(total)]),
-          });
-        },
       });
     } catch (e) {
       await report({
@@ -306,16 +328,41 @@ async function stageFillContent(contentHtml: string, sourceUrl: string, articleI
     }
   }
 
-  // 等待自动保存把内容写入 body_last（通过 API 验证，不依赖 UI 文案）
-  await retryUntil(
+  const baselineInfo = await fetchArticleInfo(articleId).catch(() => null);
+  const baselineBody = String(baselineInfo?.data?.body_last || baselineInfo?.data?.body || '');
+  const baselineLen = baselineBody.replace(/\s+/g, '').length;
+  const sourceHost = (() => {
+    try {
+      return new URL(sourceUrl).hostname;
+    } catch {
+      return '';
+    }
+  })();
+
+  const persisted = await retryUntil(
     async () => {
       const info = await fetchArticleInfo(articleId);
-      const bodyLast = info?.data?.body_last || '';
+      const bodyLast = String(info?.data?.body_last || info?.data?.body || '');
+      if (!bodyLast) throw new Error('waiting body_last update');
       if (containsSourceUrlInHtml(bodyLast, sourceUrl)) return true;
+
+      const normalized = bodyLast.replace(/\s+/g, '');
+      if (sourceHost && normalized.includes(sourceHost.replace(/\s+/g, ''))) return true;
+      if (normalized.length > Math.max(baselineLen + 80, 240)) return true;
       throw new Error('waiting body_last update');
     },
-    { timeoutMs: 90_000, intervalMs: 1200 }
-  );
+    { timeoutMs: 120_000, intervalMs: 1200 }
+  ).catch(() => false);
+
+  if (!persisted) {
+    await report({
+      status: 'running',
+      stage: 'fillContent',
+      userMessage: getMessage('v2MsgContentFilled'),
+      userSuggestion: getMessage('v2SugSspaiNoSourceFieldAppend'),
+      devDetails: { message: 'body_last未及时刷新，继续提交流程并在发布后验收原文链接' },
+    });
+  }
 }
 
 async function stageSaveDraft(): Promise<void> {

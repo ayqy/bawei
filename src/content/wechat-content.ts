@@ -48,6 +48,11 @@ let isStartingJob = false;
 let isAwaitingFirstBroadcast = false;
 let isStoppingJob = false;
 let isJobStopped = false;
+let imageRewriteObserver: MutationObserver | null = null;
+let imageRewriteScheduled = false;
+let panelKeepAliveTimer: number | null = null;
+let panelBridgeBound = false;
+let cachedArticlePayload: { title: string; sourceUrl: string; contentHtml: string; contentTokens: unknown[] } | null = null;
 
 /**
  * Gets localized message
@@ -87,12 +92,7 @@ function extractArticleTitle(): string {
   return document.title || '';
 }
 
-/**
- * Extracts article content HTML from the page
- * @returns Article content HTML
- */
-function extractArticleContent(): string {
-  // Try multiple selectors for WeChat article content
+function findArticleContentRoot(): HTMLElement | null {
   const contentSelectors = [
     '#js_content',
     '.rich_media_content',
@@ -100,17 +100,233 @@ function extractArticleContent(): string {
     '.article-content',
     '[data-role="content"]',
   ];
-  
+
   for (const selector of contentSelectors) {
-    const contentElement = document.querySelector(selector);
+    const contentElement = document.querySelector<HTMLElement>(selector);
     if (contentElement && contentElement.innerHTML?.trim()) {
-      return contentElement.innerHTML.trim();
+      return contentElement;
     }
   }
-  
+
+  return null;
+}
+
+/**
+ * Extracts article content HTML from the page
+ * @returns Article content HTML
+ */
+function extractArticleContent(): string {
+  const contentElement = findArticleContentRoot();
+  if (contentElement) {
+    return contentElement.innerHTML.trim();
+  }
+
   // Fallback to body content if specific selectors fail
   const bodyContent = document.body.innerHTML;
   return bodyContent || '';
+}
+
+function rewriteOneArticleImage(img: HTMLImageElement): void {
+  const attrs = ['data-src', 'data-original', 'data-actualsrc', 'data-lazy-src', 'src'];
+  let raw = '';
+  for (const key of attrs) {
+    const val = String(img.getAttribute(key) || '').trim();
+    if (val) {
+      raw = val;
+      break;
+    }
+  }
+  if (!raw) return;
+
+  const proxied = toProxyImageUrl(raw, window.location.href);
+  if (!proxied) return;
+
+  for (const key of attrs) {
+    if (img.hasAttribute(key)) img.setAttribute(key, proxied);
+  }
+  if (!attrs.some((key) => img.hasAttribute(key))) {
+    img.setAttribute('src', proxied);
+  }
+
+  if (img.hasAttribute('srcset')) {
+    img.setAttribute('srcset', proxied);
+  }
+}
+
+function rewriteArticleImageUrlsInDom(): void {
+  const root = findArticleContentRoot();
+  if (!root) return;
+
+  const imgs = Array.from(root.querySelectorAll<HTMLImageElement>('img'));
+  for (const img of imgs) {
+    rewriteOneArticleImage(img);
+  }
+}
+
+function scheduleRewriteArticleImages(): void {
+  if (imageRewriteScheduled) return;
+  imageRewriteScheduled = true;
+  requestAnimationFrame(() => {
+    imageRewriteScheduled = false;
+    rewriteArticleImageUrlsInDom();
+  });
+}
+
+function buildArticlePayload(): { title: string; sourceUrl: string; contentHtml: string; contentTokens: unknown[] } {
+  rewriteArticleImageUrlsInDom();
+  ensureArticleImageProxyObserver();
+
+  const title = extractArticleTitle();
+  const sourceUrl = window.location.href;
+  const rawContentHtml = extractArticleContent();
+  const contentHtml = rewriteHtmlImageUrlsToProxy(rawContentHtml, sourceUrl);
+  const contentTokens = buildRichContentTokens({
+    contentHtml,
+    baseUrl: sourceUrl,
+    sourceUrl,
+  });
+
+  if (!title.trim()) {
+    throw new Error(getMessage('extractTitleFailed') || '无法提取文章标题');
+  }
+
+  if (!contentHtml.trim()) {
+    throw new Error(getMessage('extractContentFailed') || '无法提取文章内容');
+  }
+
+  return { title, sourceUrl, contentHtml, contentTokens };
+}
+
+function ensureArticleImageProxyObserver(): void {
+  if (imageRewriteObserver) return;
+  const root = findArticleContentRoot();
+  if (!root) return;
+
+  imageRewriteObserver = new MutationObserver((mutations) => {
+    for (const m of mutations) {
+      if (m.type === 'attributes') {
+        const target = m.target;
+        if (target instanceof HTMLImageElement) {
+          rewriteOneArticleImage(target);
+          continue;
+        }
+      }
+
+      if (m.type === 'childList' && m.addedNodes.length) {
+        let hasImageNode = false;
+        for (const node of Array.from(m.addedNodes)) {
+          if (node instanceof HTMLImageElement) {
+            rewriteOneArticleImage(node);
+            hasImageNode = true;
+            continue;
+          }
+          if (node instanceof HTMLElement && node.querySelector('img')) {
+            hasImageNode = true;
+          }
+        }
+        if (hasImageNode) scheduleRewriteArticleImages();
+      }
+    }
+  });
+
+  imageRewriteObserver.observe(root, {
+    subtree: true,
+    childList: true,
+    attributes: true,
+    attributeFilter: ['src', 'srcset', 'data-src', 'data-original', 'data-actualsrc', 'data-lazy-src'],
+  });
+}
+
+function getRuntimeStateMirrorNode(): HTMLScriptElement {
+  let node = document.querySelector<HTMLScriptElement>('#bawei-v2-runtime-state');
+  if (node) return node;
+
+  node = document.createElement('script');
+  node.id = 'bawei-v2-runtime-state';
+  node.type = 'application/json';
+  node.setAttribute('data-bawei-v2', 'runtime-state');
+  node.style.display = 'none';
+  const root = document.documentElement || document.body || document.head;
+  if (root) root.appendChild(node);
+  return node;
+}
+
+function writeRuntimeStateMirror(): void {
+  try {
+    const node = getRuntimeStateMirrorNode();
+    const state: Partial<Record<ChannelId, Pick<ChannelRuntimeState, 'status' | 'stage' | 'userMessage' | 'userSuggestion'>>> = {};
+    for (const ch of ALL_CHANNELS) {
+      const s = latestState?.[ch.id];
+      state[ch.id] = {
+        status: s?.status || 'not_started',
+        stage: s?.stage || '',
+        userMessage: s?.userMessage || '',
+        userSuggestion: s?.userSuggestion || '',
+      };
+    }
+
+    node.textContent = JSON.stringify({
+      version: 1,
+      updatedAt: Date.now(),
+      sourceUrl: window.location.href,
+      currentJobId,
+      focusChannel,
+      selectedAction,
+      runChannels: Array.from(runChannels),
+      isExecuting: isExecutingNow(),
+      isStartingJob,
+      isAwaitingFirstBroadcast,
+      isStoppingJob,
+      hasPanel: !!document.querySelector('#bawei-v2-panel'),
+      hasLauncher: !!document.querySelector('#bawei-v2-launcher'),
+      state,
+    });
+  } catch {
+    // ignore
+  }
+}
+
+function ensurePanelArtifacts(): void {
+  if (!document.querySelector('#bawei-v2-launcher')) {
+    createLauncherIcon();
+  }
+  if (!document.querySelector('#bawei-v2-panel')) {
+    createPublishPanel();
+    collapsePanel();
+  }
+  writeRuntimeStateMirror();
+}
+
+function startPanelKeepAlive(): void {
+  if (panelKeepAliveTimer !== null) return;
+  panelKeepAliveTimer = window.setInterval(() => {
+    try {
+      ensurePanelArtifacts();
+      rewriteArticleImageUrlsInDom();
+    } catch {
+      // ignore
+    }
+  }, 3000);
+}
+
+function bindPanelBridgeEvents(): void {
+  if (panelBridgeBound) return;
+  panelBridgeBound = true;
+  const handler = (event: Event) => {
+    const custom = event as CustomEvent<{ action?: string }>;
+    const action = String(custom.detail?.action || '');
+    if (action === 'show') {
+      ensurePanelArtifacts();
+      showPanel();
+      return;
+    }
+    if (action === 'collapse') {
+      collapsePanel();
+      return;
+    }
+    ensurePanelArtifacts();
+  };
+  window.addEventListener('bawei-v2-ensure-panel', handler);
 }
 
 function collapsePanel(): void {
@@ -123,6 +339,7 @@ function collapsePanel(): void {
   if (launcher) {
     launcher.style.display = 'block';
   }
+  writeRuntimeStateMirror();
 }
 
 function showPanel(): void {
@@ -144,6 +361,7 @@ function showPanel(): void {
   renderStatusList();
   renderDiagnosis();
   refreshPanelControls();
+  writeRuntimeStateMirror();
 }
 
 function createLauncherIcon(): void {
@@ -182,6 +400,7 @@ function createLauncherIcon(): void {
   launcher.addEventListener('click', showPanel);
 
   document.body.appendChild(launcher);
+  writeRuntimeStateMirror();
 }
 
 /**
@@ -389,6 +608,7 @@ function createPublishPanel(): void {
   renderStatusList();
   renderDiagnosis();
   refreshPanelControls();
+  writeRuntimeStateMirror();
 }
 
 /**
@@ -402,6 +622,7 @@ async function handleStartClick(): Promise<void> {
     if (!currentJobId || isStoppingJob) return;
     isStoppingJob = true;
     refreshPanelControls();
+    writeRuntimeStateMirror();
 
     try {
       const response = await chrome.runtime.sendMessage({
@@ -416,12 +637,14 @@ async function handleStartClick(): Promise<void> {
       isAwaitingFirstBroadcast = false;
       renderStatusList();
       renderDiagnosis();
+      writeRuntimeStateMirror();
     } catch (error) {
       console.error('Failed to stop job:', error);
       showError(getMessage('publishErrorToast') || `失败：${error instanceof Error ? error.message : getMessage('unknownError') || '未知错误'}`);
     } finally {
       isStoppingJob = false;
       refreshPanelControls();
+      writeRuntimeStateMirror();
     }
     return;
   }
@@ -436,20 +659,18 @@ async function handleStartClick(): Promise<void> {
   latestState = null;
   refreshPanelControls();
   renderStatusList();
+  writeRuntimeStateMirror();
 
   try {
-    // Extract article data
-    const title = extractArticleTitle();
-    const contentHtml = extractArticleContent();
-    const sourceUrl = window.location.href;
-    
-    if (!title.trim()) {
-      throw new Error(getMessage('extractTitleFailed') || '无法提取文章标题');
-    }
-    
-    if (!contentHtml.trim()) {
-      throw new Error(getMessage('extractContentFailed') || '无法提取文章内容');
-    }
+    const payload =
+      cachedArticlePayload && cachedArticlePayload.sourceUrl === window.location.href
+        ? cachedArticlePayload
+        : buildArticlePayload();
+    cachedArticlePayload = payload;
+
+    const title = payload.title;
+    const sourceUrl = payload.sourceUrl;
+    const contentHtml = payload.contentHtml;
 
     // Diagnose image policy (external images)
     const hasImages = /<img\b/i.test(contentHtml);
@@ -457,12 +678,7 @@ async function handleStartClick(): Promise<void> {
       ? getMessage('imagePolicyHint') ||
         '检测到图片：将自动下载并上传到各平台；如遇风控/上传失败，请按诊断提示手动处理。'
       : null;
-
-    const contentTokens = buildRichContentTokens({
-      contentHtml,
-      baseUrl: sourceUrl,
-      sourceUrl,
-    });
+    const contentTokens = payload.contentTokens;
 
     const response = await chrome.runtime.sendMessage({
       type: V2_START_JOB,
@@ -488,14 +704,9 @@ async function handleStartClick(): Promise<void> {
     renderStatusList();
     renderDiagnosis();
     refreshPanelControls();
+    writeRuntimeStateMirror();
     showInfo(getMessage('panelStarted') || '任务已启动：正在并发打开各渠道编辑页...');
 
-    // Keep existing setting behavior (optional): close original page after starting job
-    if (settings?.autoCloseOriginal) {
-      setTimeout(() => {
-        window.close();
-      }, 2000);
-    }
     
   } catch (error) {
     console.error('Failed to publish article:', error);
@@ -503,6 +714,7 @@ async function handleStartClick(): Promise<void> {
   } finally {
     isStartingJob = false;
     refreshPanelControls();
+    writeRuntimeStateMirror();
   }
 }
 
@@ -518,6 +730,26 @@ async function initialize(): Promise<void> {
     // Load settings
     settings = (await getSettings()) as Settings;
     console.log('Settings loaded:', settings);
+
+    try {
+      await chrome.runtime.sendMessage({ type: 'ping' });
+    } catch {
+      // ignore
+    }
+
+    try {
+      rewriteArticleImageUrlsInDom();
+      ensureArticleImageProxyObserver();
+      setTimeout(() => {
+        try {
+          cachedArticlePayload = buildArticlePayload();
+        } catch {
+          // ignore
+        }
+      }, 600);
+    } catch {
+      // ignore
+    }
     
     // Wait for page to be ready
     if (document.readyState === 'loading') {
@@ -528,10 +760,13 @@ async function initialize(): Promise<void> {
     
     // Additional wait for dynamic content
     setTimeout(() => {
-      createLauncherIcon();
+      ensurePanelArtifacts();
     }, 1000);
+    startPanelKeepAlive();
+    bindPanelBridgeEvents();
     
     isInitialized = true;
+    writeRuntimeStateMirror();
     console.log('WeChat content script initialized successfully');
     
   } catch (error) {
@@ -543,21 +778,7 @@ async function initialize(): Promise<void> {
  * Checks if we should run on this page
  */
 function shouldRun(): boolean {
-  // Check if we're on a WeChat article page
-  const isWeChatDomain = window.location.hostname === 'mp.weixin.qq.com';
-  
-  if (!isWeChatDomain) {
-    return false;
-  }
-  
-  // Additional checks to ensure it's an article page
-  const hasArticleIndicators = 
-    document.querySelector('#activity-name') ||
-    document.querySelector('#js_content') ||
-    document.querySelector('.rich_media_title') ||
-    document.title.includes('微信公众平台');
-  
-  return !!hasArticleIndicators;
+  return window.location.hostname === 'mp.weixin.qq.com';
 }
 
 function statusLabel(status: string): string {
@@ -620,6 +841,7 @@ function refreshPanelControls(): void {
   if (diagWrapper) {
     diagWrapper.style.display = currentJobId ? 'block' : 'none';
   }
+  writeRuntimeStateMirror();
 }
 
 function renderStatusList(): void {
@@ -721,6 +943,7 @@ function renderStatusList(): void {
   }
 
   refreshPanelControls();
+  writeRuntimeStateMirror();
 }
 
 function renderDiagnosis(): void {
@@ -730,6 +953,7 @@ function renderDiagnosis(): void {
   const state = latestState?.[focusChannel];
   if (!currentJobId) {
     box.textContent = '';
+    writeRuntimeStateMirror();
     return;
   }
 
@@ -751,6 +975,7 @@ function renderDiagnosis(): void {
   }
 
   box.textContent = lines.join('\n');
+  writeRuntimeStateMirror();
 }
 
 // Entry point
@@ -792,5 +1017,6 @@ chrome.runtime.onMessage.addListener((message) => {
 
     renderStatusList();
     renderDiagnosis();
+    writeRuntimeStateMirror();
   }
 });

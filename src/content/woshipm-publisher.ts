@@ -45,6 +45,29 @@ function getListUrl(): string {
   return 'https://www.woshipm.com/me/posts';
 }
 
+function getProbeKey(jobId: string): string {
+  return `bawei_v2_woshipm_probe_idx_${jobId}`;
+}
+
+function getHomeRetryKey(jobId: string): string {
+  return `bawei_v2_woshipm_home_retry_${jobId}`;
+}
+
+function buildBackHash(jobId: string, backUrl: string): string {
+  return `#bawei_v2=1&job=${encodeURIComponent(jobId)}&back=${encodeURIComponent(backUrl)}`;
+}
+
+function parseBackUrlFromHash(): string | null {
+  const h = (location.hash || '').replace(/^#/, '');
+  if (!h) return null;
+  const parts = h.split('&');
+  for (const p of parts) {
+    const [k, v] = p.split('=');
+    if (k === 'back' && v) return decodeURIComponent(v);
+  }
+  return null;
+}
+
 async function report(patch: Partial<ChannelRuntimeState>): Promise<void> {
   if (!currentJob) return;
   await chrome.runtime.sendMessage({
@@ -68,9 +91,9 @@ async function stageDetectLogin(): Promise<void> {
   const url = String(location.href || '').toLowerCase();
   const hasLoginUrl = /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i.test(url);
   const hasPassword = !!document.querySelector('input[type="password"],input[name*="password" i]');
-  const text = document.body?.innerText || '';
-  const hasLoginText = text.includes('登录') || text.toLowerCase().includes('sign in');
-  if (hasLoginUrl || (hasPassword && hasLoginText) || text.includes('请登录')) {
+  const text = String(document.body?.innerText || '');
+  const hardLoginText = /请先登录后继续|请登录后操作|登录后继续/i.test(text);
+  if (hasLoginUrl || hasPassword || hardLoginText) {
     await report({
       status: 'not_logged_in',
       stage: 'detectLogin',
@@ -377,7 +400,51 @@ async function bootstrap(): Promise<void> {
     // 非 writing 页：尽量把它当作列表/详情做验收
     if (!isWritingPage()) {
       // 详情页优先：包含原文链接即通过
-      if (await verifyMaybeDetail(currentJob)) return;
+      if (await verifyMaybeDetail(currentJob)) {
+        sessionStorage.removeItem(getProbeKey(currentJob.jobId));
+        return;
+      }
+
+      // 探测详情回退：未命中原文链接时回到列表继续探测
+      const backUrl = parseBackUrlFromHash();
+      if (backUrl) {
+        await report({
+          status: 'running',
+          stage: 'confirmSuccess',
+          userMessage: getMessage('v2MsgVerifyNoSourceOnPageBackToListProbe'),
+          devDetails: summarizeVerifyDetails({ listUrl: backUrl, listVisible: true, publishedUrl: location.href, sourceUrlPresent: false }),
+        });
+        location.href = backUrl;
+        return;
+      }
+
+      // 非列表页统一先跳到“我的文章”，避免在首页/活动页无限刷新
+      if (!isMyPostsPage()) {
+        const listUrl = getListUrl();
+        const retryKey = getHomeRetryKey(currentJob.jobId);
+        const n = Number(sessionStorage.getItem(retryKey) || '0') + 1;
+        sessionStorage.setItem(retryKey, String(n));
+        if (n >= 3) {
+          await report({
+            status: 'not_logged_in',
+            stage: 'detectLogin',
+            userMessage: getMessage('v3MsgNotLoggedIn'),
+            userSuggestion: getMessage('v3SugLoginThenRetry'),
+            devDetails: { reason: 'woshipm-home-loop', attempts: n, currentUrl: location.href },
+          });
+          throw new Error('__BAWEI_V2_STOPPED__');
+        }
+        await report({
+          status: 'running',
+          stage: 'confirmSuccess',
+          userMessage: getMessage('v2MsgWoshipmReviewSubmittedGoMyArticlesVerify'),
+          devDetails: summarizeVerifyDetails({ listUrl }),
+        });
+        location.href = listUrl;
+        return;
+      }
+
+      sessionStorage.removeItem(getHomeRetryKey(currentJob.jobId));
 
       // 我的文章列表页：优先用接口数据定位（页面可能异步渲染，直接查 DOM 容易误判）
       if (isMyPostsPage()) {
@@ -386,24 +453,50 @@ async function bootstrap(): Promise<void> {
 
         const token = titleToken(currentJob.article.title);
         const statuses = ['pending', 'publish', 'draft', 'future', 'all'];
+        const probeCandidates: string[] = [];
         for (const s of statuses) {
           const posts = await fetchMyPosts(s, 1);
           if (!posts?.length) continue;
+
+          for (const post of posts) {
+            const href = extractPostUrl(post);
+            if (href) probeCandidates.push(href);
+          }
 
           const hit = posts.find((p) => extractPostTitle(p).includes(token)) || null;
           if (!hit) continue;
 
           const href = extractPostUrl(hit);
           if (href) {
+            sessionStorage.removeItem(getProbeKey(currentJob.jobId));
             await report({
               status: 'running',
               stage: 'confirmSuccess',
               userMessage: getMessage('v2MsgVerifyMatchedTokenInListApiOpeningDetail', [String(s)]),
               devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: true, publishedUrl: href }),
             });
-            location.href = href;
+            location.href = `${href}${buildBackHash(currentJob.jobId, location.href)}`;
             return;
           }
+        }
+
+        const uniqProbe = Array.from(new Set(probeCandidates)).slice(0, 8);
+        if (uniqProbe.length) {
+          const key = getProbeKey(currentJob.jobId);
+          const idx = Number(sessionStorage.getItem(key) || '0');
+          if (idx < uniqProbe.length) {
+            sessionStorage.setItem(key, String(idx + 1));
+            const backWithProbe = `${location.origin}${location.pathname}${location.search}#bawei_v2=1&job=${encodeURIComponent(currentJob.jobId)}`;
+            await report({
+              status: 'running',
+              stage: 'confirmSuccess',
+              userMessage: getMessage('v2MsgVerifyNotFoundNewArticleProbingDetails', [String(idx + 1), String(uniqProbe.length)]),
+              devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: true, publishedUrl: uniqProbe[idx] }),
+            });
+            location.href = `${uniqProbe[idx]}${buildBackHash(currentJob.jobId, backWithProbe)}`;
+            return;
+          }
+          sessionStorage.removeItem(key);
         }
       }
 
@@ -412,13 +505,14 @@ async function bootstrap(): Promise<void> {
         const node = findAnyElementContainingText(titleToken(currentJob.article.title));
         const link = (node?.closest('a') as HTMLAnchorElement | null) || findAnchorContainingText(titleToken(currentJob.article.title));
         if (link?.href) {
+          sessionStorage.removeItem(getProbeKey(currentJob.jobId));
           await report({
             status: 'running',
             stage: 'confirmSuccess',
             userMessage: getMessage('v2MsgVerifyFoundTitleOpeningDetail'),
             devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: true }),
           });
-          location.href = link.href;
+          location.href = `${link.href}${buildBackHash(currentJob.jobId, location.href)}`;
           return;
         }
       }

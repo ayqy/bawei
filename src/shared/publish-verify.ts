@@ -67,9 +67,84 @@ export function pageContainsTitle(title: string): boolean {
 }
 
 export function pageContainsSourceUrl(sourceUrl: string): boolean {
+  const target = String(sourceUrl || '').trim();
+  if (!target) return false;
   const html = document.documentElement?.outerHTML || '';
   const bodyText = document.body?.innerText || '';
-  return html.includes(sourceUrl) || bodyText.includes(sourceUrl);
+  if (html.includes(target) || bodyText.includes(target)) return true;
+
+  try {
+    const decoded = decodeURIComponent(target);
+    if (decoded && decoded !== target && (html.includes(decoded) || bodyText.includes(decoded))) return true;
+  } catch {
+    // ignore
+  }
+
+  try {
+    const u = new URL(target);
+    const host = String(u.hostname || '').trim();
+    const path = String(u.pathname || '').replace(/\/+$/g, '').trim();
+    const pathToken = path
+      .split('/')
+      .filter(Boolean)
+      .pop();
+    const hostHit = host ? html.includes(host) || bodyText.includes(host) : false;
+    if (!hostHit) return false;
+    if (!pathToken) return true;
+    if (path && (html.includes(path) || bodyText.includes(path))) return true;
+    if (html.includes(pathToken) || bodyText.includes(pathToken)) return true;
+  } catch {
+    // ignore
+  }
+
+  return false;
+}
+
+export function detectPageLoginState(options?: {
+  loginUrlPattern?: RegExp;
+  strictLoginPattern?: RegExp;
+  loggedInPattern?: RegExp;
+}): { status: 'logged_in' | 'not_logged_in' | 'unknown'; reason: string } {
+  const url = String(location.href || '').toLowerCase();
+  const text = String(document.body?.innerText || '').slice(0, 12000);
+  const loginUrlPattern = options?.loginUrlPattern || /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i;
+  const strictLoginPattern =
+    options?.strictLoginPattern || /请登录|请先登录|登录后继续|未登录|扫码登录|账号登录|手机号登录|sign in|log in/i;
+  const loggedInPattern =
+    options?.loggedInPattern ||
+    /退出登录|个人中心|创作中心|创作后台|写文章|发布文章|发布管理|内容管理|工作台|我的文章|文章管理|账号设置|消息中心/i;
+
+  const hasLoginUrl = loginUrlPattern.test(url);
+  const hasPassword = !!document.querySelector('input[type="password"],input[name*="password" i],input[id*="password" i]');
+  const hasLoginBtn = Array.from(document.querySelectorAll<HTMLElement>('button,a,span,div')).some((el) => {
+    try {
+      const style = window.getComputedStyle(el);
+      const rect = el.getBoundingClientRect();
+      if (style.display === 'none' || style.visibility === 'hidden' || rect.width <= 0 || rect.height <= 0) return false;
+    } catch {
+      // ignore
+    }
+    const t = String(el.textContent || '').trim();
+    if (!t) return false;
+    return /登录|登入|sign in|log in|扫码登录|手机号登录/i.test(t);
+  });
+  const hasStrictLoginText = strictLoginPattern.test(text);
+  const hasLoggedInHints = loggedInPattern.test(text);
+  const hasStrongLoginSignals =
+    (hasPassword && hasLoginBtn) ||
+    (hasStrictLoginText && (hasLoginBtn || hasPassword || hasLoginUrl)) ||
+    (hasLoginUrl && hasPassword);
+
+  if (hasLoggedInHints && !hasStrongLoginSignals) {
+    return { status: 'logged_in', reason: 'logged-in-dom-hints' };
+  }
+  if (hasStrongLoginSignals) {
+    return { status: 'not_logged_in', reason: hasLoginUrl ? 'login-url' : 'login-dom' };
+  }
+  if (hasLoginUrl) {
+    return { status: 'unknown', reason: 'login-url-no-form' };
+  }
+  return { status: 'logged_in', reason: 'entry-page-accessible' };
 }
 
 export function findLinkByText(text: string): HTMLAnchorElement | null {

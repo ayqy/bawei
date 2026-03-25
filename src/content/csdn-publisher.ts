@@ -230,10 +230,8 @@ async function verifyFromManagePage(job: AnyJob): Promise<void> {
   const searchInput = document.querySelector<HTMLInputElement>('input[placeholder="请输入关键词"]');
   if (searchInput) {
     try {
-      const keyword = compactKeyword(job.article.title);
       simulateFocus(searchInput);
-      simulateType(searchInput, keyword);
-      // CSDN 管理页搜索通常需要点放大镜图标触发，Enter 不一定生效
+      simulateType(searchInput, '');
       pressEnter(searchInput);
       const icon =
         (searchInput.parentElement?.querySelector('img') as HTMLElement | null) ||
@@ -391,12 +389,11 @@ async function stageDetectLogin(): Promise<void> {
   currentStage = 'detectLogin';
   await report({ status: 'running', stage: 'detectLogin', userMessage: getMessage('v3MsgDetectingLogin') });
 
-  const url = String(location.href || '').toLowerCase();
-  const hasLoginUrl = /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i.test(url);
-  const hasPassword = !!document.querySelector('input[type="password"],input[name*="password" i]');
-  const text = document.body?.innerText || '';
-  const hasLoginText = text.includes('登录') || text.toLowerCase().includes('sign in');
-  if (hasLoginUrl || (hasPassword && hasLoginText)) {
+  const loginState = detectPageLoginState({
+    loginUrlPattern: /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i,
+    loggedInPattern: /发布文章|文章管理|创作中心|写文章|草稿箱|退出登录|个人中心|我的博客/i,
+  });
+  if (loginState.status === 'not_logged_in') {
     await report({
       status: 'not_logged_in',
       stage: 'detectLogin',
@@ -528,6 +525,132 @@ async function stageEnsureOneTag(): Promise<void> {
   pressEscape();
 }
 
+function findVisibleCsdnImageToolbarButton(): HTMLElement | null {
+  const candidates = Array.from(document.querySelectorAll<HTMLElement>('button,a,span,div,[role="button"]'));
+  for (const node of candidates) {
+    if (!isElementDisplayed(node)) continue;
+    const txt = (node.textContent || '').trim();
+    const title = (node.getAttribute('title') || '').trim();
+    const aria = (node.getAttribute('aria-label') || '').trim();
+    if (txt === '图像' || title === '图像' || aria === '图像' || txt === '图片' || title === '图片' || aria === '图片') {
+      return node;
+    }
+  }
+  return null;
+}
+
+function findOpenCsdnImageDrawer(): HTMLElement | null {
+  const drawers = Array.from(document.querySelectorAll<HTMLElement>('.el_mcm-drawer.open, .el_mcm-drawer.rtl.open, [class*="drawer"][class*="open"]'));
+  for (const drawer of drawers) {
+    const text = (drawer.innerText || '').trim();
+    if (text.includes('选择图片') || text.includes('图片上传') || text.includes('链接添加')) {
+      return drawer;
+    }
+  }
+  return null;
+}
+
+function findCsdnDrawerUploadInput(drawer: HTMLElement): HTMLInputElement | null {
+  const inDrawer = Array.from(drawer.querySelectorAll<HTMLInputElement>('input[type="file"]'));
+  const exact = inDrawer.find((input) => {
+    const accept = (input.accept || '').toLowerCase();
+    return accept.includes('webp') || accept.includes('bmp') || accept.includes('image');
+  });
+  if (exact) return exact;
+  return inDrawer[0] || null;
+}
+
+function isCsdnEditorPlaceholderImage(src: string): boolean {
+  const s = String(src || '').trim();
+  if (!s) return true;
+  if (s.startsWith('data:image/gif;base64,R0lGODlhAQAB')) return true;
+  if (s.includes('img-home.csdnimg.cn/images/20230724024159.png')) return true;
+  return false;
+}
+
+function findCsdnDrawerInsertButton(drawer: HTMLElement): HTMLElement | null {
+  const nodes = Array.from(drawer.querySelectorAll<HTMLElement>('button,[role="button"],a,div,span'));
+  for (const node of nodes) {
+    if (!isElementDisplayed(node)) continue;
+    const txt = (node.textContent || '').trim();
+    if (!txt) continue;
+    if (txt === '确定' || txt === '完成' || txt === '添加' || txt.includes('插入') || txt.includes('使用') || txt.includes('确认')) {
+      return node;
+    }
+  }
+  return null;
+}
+
+async function insertCsdnImageViaDrawer(params: { jobId: string; imageUrl: string; editorRoot: HTMLElement }): Promise<void> {
+  const { jobId, imageUrl, editorRoot } = params;
+  const file = await fetchImageAsFile(jobId, imageUrl);
+  const beforeSources = new Set(
+    Array.from(editorRoot.querySelectorAll<HTMLImageElement>('img'))
+      .map((img) => String(img.getAttribute('src') || '').trim())
+      .filter((src) => src && !isCsdnEditorPlaceholderImage(src))
+  );
+
+  const toolbarBtn = findVisibleCsdnImageToolbarButton();
+  if (!toolbarBtn) throw new Error('csdn image toolbar button not found');
+
+  try {
+    simulateClick(toolbarBtn);
+  } catch {
+    toolbarBtn.click();
+  }
+
+  const drawer = await retryUntil(
+    async () => {
+      const d = findOpenCsdnImageDrawer();
+      if (!d) throw new Error('csdn image drawer not opened');
+      return d;
+    },
+    { timeoutMs: 12_000, intervalMs: 300 }
+  );
+
+  try {
+    const tab = Array.from(drawer.querySelectorAll<HTMLElement>('div,span,button,a')).find((n) => (n.textContent || '').trim() === '图片上传');
+    if (tab) simulateClick(tab);
+  } catch {
+    // ignore
+  }
+
+  const input = await retryUntil(
+    async () => {
+      const target = findCsdnDrawerUploadInput(drawer);
+      if (!target) throw new Error('csdn drawer upload input not found');
+      return target;
+    },
+    { timeoutMs: 10_000, intervalMs: 250 }
+  );
+
+  setFilesToInput(input, [file]);
+
+  await retryUntil(
+    async () => {
+      const insertBtn = findCsdnDrawerInsertButton(drawer);
+      if (insertBtn) {
+        try {
+          simulateClick(insertBtn);
+        } catch {
+          // ignore
+        }
+      }
+
+      const current = Array.from(editorRoot.querySelectorAll<HTMLImageElement>('img'))
+        .map((img) => String(img.getAttribute('src') || '').trim())
+        .filter((src) => src && !isCsdnEditorPlaceholderImage(src));
+      if (!current.length) throw new Error('no valid img found');
+
+      const hasNew = current.some((src) => !beforeSources.has(src));
+      if (!hasNew) throw new Error('new image not inserted yet');
+
+      return true;
+    },
+    { timeoutMs: 45_000, intervalMs: 700 }
+  );
+}
+
 async function stageFillContent(contentHtml: string, sourceUrl: string): Promise<void> {
   currentStage = 'fillContent';
   await report({
@@ -551,7 +674,14 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
   }
 
   const jobTokens = currentJob?.article?.contentTokens;
-  const tokens = Array.isArray(jobTokens) ? jobTokens : buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
+  const baseTokens = Array.isArray(jobTokens) ? jobTokens : buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
+  const tokens = baseTokens.filter((token) => {
+    if (!token || token.kind !== 'image') return true;
+    const src = String(token.src || '').toLowerCase();
+    if (!src) return false;
+    if (src.includes('res.wx.qq.com/t/wx_fed/we-emoji')) return false;
+    return true;
+  });
 
   // CSDN 富文本编辑器（CKEditor）通常使用 iframe 承载可编辑 body
   const ckIframe = (await (async () => {
@@ -601,7 +731,16 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
         jobId: currentJob?.jobId || '',
         tokens,
         editorRoot,
-        writeMode: 'html',
+        writeMode: 'text',
+        insertImageAtCursorOverride: async ({ jobId, imageUrl, editorRoot: root }) => {
+          try {
+            await insertImageAtCursor({ jobId, imageUrl, editorRoot: root });
+            return;
+          } catch {
+            // fallback to CSDN drawer uploader
+          }
+          await insertCsdnImageViaDrawer({ jobId, imageUrl, editorRoot: root });
+        },
         onImageProgress: async (current, total) => {
           await report({
             status: 'running',

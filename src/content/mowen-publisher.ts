@@ -80,12 +80,12 @@ async function stageDetectLogin(): Promise<void> {
   currentStage = 'detectLogin';
   await report({ status: 'running', stage: 'detectLogin', userMessage: getMessage('v3MsgDetectingLogin') });
 
-  const url = String(location.href || '').toLowerCase();
-  const hasLoginUrl = /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i.test(url);
-  const hasPassword = !!document.querySelector('input[type="password"],input[name*="password" i]');
-  const text = document.body?.innerText || '';
-  const hasLoginText = text.includes('登录') || text.toLowerCase().includes('sign in');
-  if (hasLoginUrl || (hasPassword && hasLoginText) || text.includes('请登录')) {
+  const loginState = detectPageLoginState({
+    loginUrlPattern: /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i,
+    strictLoginPattern: /请登录|请先登录|登录后继续|未登录|手机号登录|验证码登录|sign in|log in/i,
+    loggedInPattern: /新建|编辑器|我的笔记|工作台|账号设置|退出登录|发布/i,
+  });
+  if (loginState.status === 'not_logged_in') {
     await report({
       status: 'not_logged_in',
       stage: 'detectLogin',

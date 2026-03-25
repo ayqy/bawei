@@ -11,7 +11,8 @@
   ],
   "host_permissions": [
     "https://*.qpic.cn/*",
-    "https://*.qlogo.cn/*"
+    "https://*.qlogo.cn/*",
+    "https://read.useai.online/*"
   ],
   "action": {
     "default_title": "__MSG_appName__",
@@ -75,6 +76,7 @@
     },
     {
       "matches": [
+        "https://www.oschina.net/*",
         "https://www.oschina.net/blog/write*",
         "https://my.oschina.net/*/blog/write*",
         "https://my.oschina.net/*"

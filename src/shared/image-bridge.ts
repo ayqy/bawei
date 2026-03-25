@@ -11,6 +11,93 @@ type BridgeRichContentToken =
 
 type BridgeView = Window & typeof globalThis;
 
+const IMAGE_FETCH_MESSAGE_TIMEOUT_MS = 45_000;
+const IMAGE_FETCH_MAX_ATTEMPTS = 2;
+const IMAGE_FALLBACK_CLICK_MAX = 12;
+const IMAGE_PROXY_ENDPOINT = 'https://read.useai.online/api/image-proxy?url=';
+const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+
+function normalizeProxyImageUrl(raw: string): string {
+  const value = String(raw || '').trim();
+  if (!value) return '';
+  try {
+    const outer = new URL(value);
+    const isProxy = outer.hostname.toLowerCase() === 'read.useai.online' && outer.pathname.startsWith('/api/image-proxy');
+    if (!isProxy) return outer.toString();
+    const innerRaw = String(outer.searchParams.get('url') || '').trim();
+    if (!innerRaw) return outer.toString();
+    try {
+      const inner = new URL(innerRaw);
+      if (inner.hash) inner.hash = '';
+      outer.searchParams.set('url', inner.toString());
+      return outer.toString();
+    } catch {
+      return outer.toString();
+    }
+  } catch {
+    return value;
+  }
+}
+
+function buildDirectFetchCandidates(rawUrl: string): string[] {
+  const input = normalizeProxyImageUrl(rawUrl);
+  if (!input) return [];
+  const out: string[] = [];
+
+  const push = (url: string) => {
+    const v = String(url || '').trim();
+    if (!v) return;
+    if (!out.includes(v)) out.push(v);
+  };
+
+  push(input);
+
+  try {
+    const u = new URL(input);
+    const isProxy = u.hostname.toLowerCase() === 'read.useai.online' && u.pathname.startsWith('/api/image-proxy');
+    if (!isProxy && (u.protocol === 'https:' || u.protocol === 'http:')) {
+      push(normalizeProxyImageUrl(`${IMAGE_PROXY_ENDPOINT}${encodeURIComponent(u.toString())}`));
+    }
+  } catch {
+    // ignore
+  }
+
+  return out;
+}
+
+async function fetchImageAsFileByDirectFetch(url: string): Promise<File> {
+  const candidate = String(url || '').trim();
+  if (!candidate) throw new Error('empty image url');
+
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), IMAGE_FETCH_MESSAGE_TIMEOUT_MS);
+  try {
+    const res = await fetch(candidate, { credentials: 'omit', signal: controller.signal, cache: 'no-store' });
+    if (!res.ok) throw new Error(`direct fetch failed: ${res.status}`);
+
+    const mimeType = String(res.headers.get('content-type') || '')
+      .split(';')[0]
+      .trim()
+      .toLowerCase();
+    if (!mimeType.startsWith('image/')) throw new Error(`direct fetch unexpected content-type: ${mimeType || 'empty'}`);
+
+    const buffer = await res.arrayBuffer();
+    const size = Number(buffer?.byteLength || 0);
+    if (!size) throw new Error('direct fetch empty image');
+    if (size > IMAGE_MAX_BYTES) throw new Error(`direct fetch image too large: ${size}`);
+
+    const ext = pickFileExtension(mimeType);
+    return new File([buffer], `image.${ext}`, { type: mimeType });
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error('direct fetch timeout');
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 function bridgeViewOf(node: unknown): BridgeView {
   try {
     const n = node as { ownerDocument?: Document | null } | null;
@@ -32,44 +119,149 @@ function pickFileExtension(mimeType: string): string {
 }
 
 export async function fetchImageAsFile(jobId: string, url: string): Promise<File> {
-  const res = await chrome.runtime.sendMessage({
-    type: V3_FETCH_IMAGE,
-    jobId,
-    url,
-  });
-  if (!res?.success) throw new Error(res?.error || 'fetch image failed');
-  const mimeType = String(res.mimeType || 'image/png');
-  const buffer = res.buffer as ArrayBuffer;
-  const size = Number(res.size || 0);
-  if (!buffer || !size) throw new Error('empty image buffer');
-  const ext = pickFileExtension(mimeType);
-  return new File([buffer], `image.${ext}`, { type: mimeType });
-}
+  let lastError: unknown = null;
+  const normalizedInput = normalizeProxyImageUrl(url);
 
-function isWeChatCdnUrl(url: string): boolean {
-  try {
-    const u = new URL(url);
-    return /(^|\.)qpic\.cn$/i.test(u.hostname) || /(^|\.)qlogo\.cn$/i.test(u.hostname);
-  } catch {
-    return false;
+  for (let attempt = 1; attempt <= IMAGE_FETCH_MAX_ATTEMPTS; attempt += 1) {
+    try {
+      const res = (await Promise.race([
+        chrome.runtime.sendMessage({
+          type: V3_FETCH_IMAGE,
+          jobId,
+          url: normalizedInput,
+        }),
+        new Promise<never>((_, reject) => {
+          setTimeout(() => reject(new Error('fetch image message timeout')), IMAGE_FETCH_MESSAGE_TIMEOUT_MS);
+        }),
+      ])) as {
+        success?: boolean;
+        error?: string;
+        mimeType?: string;
+        buffer?: ArrayBuffer;
+        size?: number;
+      };
+
+      if (!res?.success) {
+        const reason = String(res?.error || 'fetch image failed');
+        throw new Error(`${reason} | imageUrl=${String(normalizedInput || url).slice(0, 320)}`);
+      }
+      const mimeType = String(res.mimeType || 'image/png');
+      const buffer = res.buffer as ArrayBuffer;
+      const size = Number(res.size || 0);
+      if (!buffer || !size) throw new Error('empty image buffer');
+      const ext = pickFileExtension(mimeType);
+      return new File([buffer], `image.${ext}`, { type: mimeType });
+    } catch (error) {
+      lastError = error;
+      if (attempt < IMAGE_FETCH_MAX_ATTEMPTS) {
+        await new Promise((r) => setTimeout(r, 450));
+      }
+    }
   }
+
+  const fallbackCandidates = buildDirectFetchCandidates(normalizedInput || url);
+  for (const candidate of fallbackCandidates) {
+    try {
+      return await fetchImageAsFileByDirectFetch(candidate);
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error('fetch image failed');
 }
 
-function findImageFileInputNear(doc: Document): HTMLInputElement | null {
+function scoreImageFileInput(input: HTMLInputElement, index: number): number {
+  const accept = String(input.getAttribute('accept') || '').toLowerCase();
+  const name = String(input.getAttribute('name') || '').toLowerCase();
+  const id = String(input.id || '').toLowerCase();
+  const cls = String(input.className || '').toLowerCase();
+  const parentText = String(input.closest('form,section,article,div')?.textContent || '').slice(0, 200).toLowerCase();
+
+  const isImageAccept = accept.includes('image') || accept.includes('png') || accept.includes('jpg') || accept.includes('jpeg') || accept.includes('webp');
+  const looksImage = name.includes('image') || id.includes('image') || cls.includes('image') || cls.includes('upload');
+  const inImageDialog = parentText.includes('选择图片') || parentText.includes('上传图片') || parentText.includes('插图') || parentText.includes('image');
+  const inCoverArea = parentText.includes('封面') || parentText.includes('cover');
+
+  let score = 0;
+  if (isImageAccept) score += 10;
+  if (looksImage) score += 4;
+  if (inImageDialog) score += 6;
+  if (inCoverArea) score -= 6;
+  score += Math.min(index, 30) * 0.1;
+  return score;
+}
+
+function findImageFileInputsNear(doc: Document): HTMLInputElement[] {
   const inputs = Array.from(doc.querySelectorAll<HTMLInputElement>('input[type="file"]'));
-  const scored = inputs
-    .map((input) => {
-      const accept = String(input.getAttribute('accept') || '').toLowerCase();
-      const name = String(input.getAttribute('name') || '').toLowerCase();
-      const id = String(input.id || '').toLowerCase();
-      const cls = String(input.className || '').toLowerCase();
-      const isImageAccept = accept.includes('image') || accept.includes('png') || accept.includes('jpg') || accept.includes('jpeg') || accept.includes('webp');
-      const looksImage = name.includes('image') || id.includes('image') || cls.includes('image') || cls.includes('upload');
-      const score = (isImageAccept ? 10 : 0) + (looksImage ? 3 : 0);
-      return { input, score };
+  return inputs
+    .map((input, index) => ({ input, score: scoreImageFileInput(input, index) }))
+    .sort((a, b) => b.score - a.score)
+    .map((it) => it.input);
+}
+
+async function tryInputsAndWaitInserted(
+  inputs: HTMLInputElement[],
+  file: File,
+  waitInserted: () => Promise<void>
+): Promise<boolean> {
+  for (const input of inputs) {
+    try {
+      setFilesToInput(input, [file]);
+      await waitInserted();
+      return true;
+    } catch {
+      // try next
+    }
+  }
+  return false;
+}
+
+function isVisibleElement(node: Element | null): node is HTMLElement {
+  if (!(node instanceof HTMLElement)) return false;
+  const style = window.getComputedStyle(node);
+  if (style.display === 'none' || style.visibility === 'hidden') return false;
+  const rect = node.getBoundingClientRect();
+  return rect.width > 1 && rect.height > 1;
+}
+
+function findToolbarImageButtons(doc: Document): HTMLElement[] {
+  const selectors = [
+    'button[aria-label*="图片" i]',
+    'button[title*="图片" i]',
+    'button[aria-label*="image" i]',
+    'button[title*="image" i]',
+    'button[aria-label*="上传" i]',
+    'button[title*="上传" i]',
+    '[role="button"][aria-label*="图片" i]',
+    '[role="button"][title*="图片" i]',
+    '[role="button"][aria-label*="image" i]',
+    '[role="button"][title*="image" i]',
+  ];
+
+  const out: HTMLElement[] = [];
+  for (const selector of selectors) {
+    const nodes = Array.from(doc.querySelectorAll(selector)).filter(isVisibleElement);
+    for (const node of nodes) {
+      if (!out.includes(node)) out.push(node);
+      if (out.length >= IMAGE_FALLBACK_CLICK_MAX) return out;
+    }
+  }
+
+  const fuzzy = Array.from(doc.querySelectorAll<HTMLElement>('button,[role="button"],a,span,div'))
+    .filter((node) => {
+      if (!isVisibleElement(node)) return false;
+      const txt = `${node.textContent || ''} ${node.getAttribute('title') || ''} ${node.getAttribute('aria-label') || ''}`.toLowerCase();
+      return txt.includes('图片') || txt.includes('插图') || txt.includes('上传') || txt.includes('image') || txt.includes('upload');
     })
-    .sort((a, b) => b.score - a.score);
-  return scored[0]?.input || null;
+    .slice(0, IMAGE_FALLBACK_CLICK_MAX);
+
+  for (const node of fuzzy) {
+    if (!out.includes(node)) out.push(node);
+    if (out.length >= IMAGE_FALLBACK_CLICK_MAX) break;
+  }
+
+  return out;
 }
 
 export async function insertImageAtCursor(params: {
@@ -79,14 +271,26 @@ export async function insertImageAtCursor(params: {
 }): Promise<void> {
   const editorRoot = params.editorRoot;
   const doc = editorRoot.ownerDocument;
+  const topDoc = document;
 
   const file = await fetchImageAsFile(params.jobId, params.imageUrl);
 
-  const before = (() => {
+  const beforeCount = (() => {
     try {
       return editorRoot.querySelectorAll('img').length;
     } catch {
       return 0;
+    }
+  })();
+  const beforeSources = (() => {
+    try {
+      return new Set(
+        Array.from(editorRoot.querySelectorAll<HTMLImageElement>('img'))
+          .map((img) => String(img.getAttribute('src') || '').trim())
+          .filter(Boolean)
+      );
+    } catch {
+      return new Set<string>();
     }
   })();
 
@@ -94,15 +298,10 @@ export async function insertImageAtCursor(params: {
     await retryUntil(
       async () => {
         const imgs = Array.from(editorRoot.querySelectorAll<HTMLImageElement>('img'));
-        if (imgs.length <= before) throw new Error('img count not increased');
-        const ok = imgs.some((img) => {
-          const src = String(img.getAttribute('src') || '').trim();
-          if (!src) return false;
-          if (src.startsWith('blob:') || src.startsWith('data:')) return true;
-          return !isWeChatCdnUrl(src);
-        });
-        if (!ok) throw new Error('img src not updated yet');
-        return true;
+        const sources = imgs.map((img) => String(img.getAttribute('src') || '').trim()).filter(Boolean);
+        const hasNewSource = sources.some((src) => src && !beforeSources.has(src));
+        if (hasNewSource || imgs.length > beforeCount) return true;
+        throw new Error('img not inserted yet');
       },
       { timeoutMs: 45_000, intervalMs: 600 }
     );
@@ -140,21 +339,75 @@ export async function insertImageAtCursor(params: {
 
   // Method C: file input
   try {
-    const input = findImageFileInputNear(doc);
-    if (input) {
-      setFilesToInput(input, [file]);
-      await waitInserted();
-      return;
+    const inputs = findImageFileInputsNear(doc);
+    if (inputs.length) {
+      const ok = await tryInputsAndWaitInserted(inputs, file, waitInserted);
+      if (ok) return;
     }
   } catch {
     // ignore
   }
 
-  // Last resort: try dispatch paste on document (some editors listen at document level)
+  // Method D: file input from top-level document (iframe editor toolbar often lives in parent document)
+  try {
+    if (topDoc !== doc) {
+      const inputs = findImageFileInputsNear(topDoc);
+      if (inputs.length) {
+        const ok = await tryInputsAndWaitInserted(inputs, file, waitInserted);
+        if (ok) return;
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  // Method E: click toolbar "image/upload" button then inject file to latest/new input
+  try {
+    const docs = topDoc === doc ? [doc] : [doc, topDoc];
+    for (const docCandidate of docs) {
+      const beforeInputs = new Set(Array.from(docCandidate.querySelectorAll<HTMLInputElement>('input[type="file"]')));
+      const buttons = findToolbarImageButtons(docCandidate);
+      for (const btn of buttons) {
+        try {
+          simulateClick(btn);
+        } catch {
+          // ignore
+        }
+        await new Promise((r) => setTimeout(r, 220));
+
+        const nowInputs = Array.from(docCandidate.querySelectorAll<HTMLInputElement>('input[type="file"]'));
+        const newInputs = nowInputs.filter((input) => !beforeInputs.has(input));
+        const candidateInputs = newInputs.length ? newInputs : nowInputs;
+        const scored = candidateInputs
+          .map((input, index) => ({ input, score: scoreImageFileInput(input, index + 100) }))
+          .sort((a, b) => b.score - a.score)
+          .map((it) => it.input);
+
+        const fallback = docCandidate === topDoc ? [] : findImageFileInputsNear(topDoc);
+        const ok = await tryInputsAndWaitInserted([...scored, ...fallback], file, waitInserted);
+        if (ok) {
+          return;
+        }
+      }
+    }
+  } catch {
+    // ignore
+  }
+
+  // Last resort: try dispatch paste on editor body / top-level body
   try {
     simulatePasteFiles(doc.body as HTMLElement, [file]);
     await waitInserted();
     return;
+  } catch {
+    // ignore
+  }
+  try {
+    if (topDoc !== doc && topDoc.body) {
+      simulatePasteFiles(topDoc.body, [file]);
+      await waitInserted();
+      return;
+    }
   } catch {
     // ignore
   }
@@ -168,6 +421,7 @@ export async function fillEditorByTokens(params: {
   editorRoot: HTMLElement;
   writeMode: 'html' | 'text';
   onImageProgress?: (current: number, total: number, imageUrl: string) => Promise<void> | void;
+  insertImageAtCursorOverride?: (args: { jobId: string; imageUrl: string; editorRoot: HTMLElement }) => Promise<void>;
 }): Promise<void> {
   const editorRoot = params.editorRoot;
   const doc = editorRoot.ownerDocument;
@@ -265,7 +519,8 @@ export async function fillEditorByTokens(params: {
       } catch {
         // ignore
       }
-      await insertImageAtCursor({ jobId: params.jobId, imageUrl: token.src, editorRoot });
+      const insertFn = params.insertImageAtCursorOverride || insertImageAtCursor;
+      await insertFn({ jobId: params.jobId, imageUrl: token.src, editorRoot });
       continue;
     }
   }

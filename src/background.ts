@@ -426,18 +426,65 @@ async function handleV2FocusChannelTab(message: FocusChannelTabRequest, sendResp
 }
 
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+const IMAGE_FETCH_TIMEOUT_MS = 20_000;
 const imageCache = new Map<string, { mimeType: string; buffer: ArrayBuffer; size: number; fetchedAt: number }>();
 const imageInFlight = new Map<string, Promise<{ mimeType: string; buffer: ArrayBuffer; size: number; fetchedAt: number }>>();
 const jobIdToImageUrls = new Map<string, Set<string>>();
+const IMAGE_PROXY_ENDPOINT = 'https://read.useai.online/api/image-proxy?url=';
+
+function normalizeProxyImageUrl(raw: string): string {
+  const value = String(raw || '').trim();
+  if (!value) return '';
+
+  try {
+    const outer = new URL(value);
+    const host = outer.hostname.toLowerCase();
+    const isProxy = host === 'read.useai.online' && outer.pathname.startsWith('/api/image-proxy');
+    if (!isProxy) return outer.toString();
+
+    const innerRaw = String(outer.searchParams.get('url') || '').trim();
+    if (!innerRaw) return outer.toString();
+
+    try {
+      const inner = new URL(innerRaw);
+      if (inner.protocol !== 'https:' && inner.protocol !== 'http:') return outer.toString();
+      if (inner.hash) inner.hash = '';
+      outer.searchParams.set('url', inner.toString());
+      return outer.toString();
+    } catch {
+      return outer.toString();
+    }
+  } catch {
+    return value;
+  }
+}
 
 function isAllowedImageUrl(raw: string): boolean {
   try {
-    const u = new URL(raw);
+    const normalized = normalizeProxyImageUrl(raw);
+    const u = new URL(normalized);
     if (u.protocol !== 'https:' && u.protocol !== 'http:') return false;
     const host = u.hostname.toLowerCase();
-    if (host === 'qpic.cn' || host.endsWith('.qpic.cn')) return true;
-    if (host === 'qlogo.cn' || host.endsWith('.qlogo.cn')) return true;
+    if (host === 'read.useai.online' && u.pathname.startsWith('/api/image-proxy')) {
+      const target = String(u.searchParams.get('url') || '').trim();
+      if (!target) return false;
+      try {
+        const inner = new URL(target);
+        return inner.protocol === 'https:' || inner.protocol === 'http:';
+      } catch {
+        return false;
+      }
+    }
+    return true;
+  } catch {
     return false;
+  }
+}
+
+function isProxyImageUrl(raw: string): boolean {
+  try {
+    const u = new URL(String(raw || '').trim());
+    return u.hostname.toLowerCase() === 'read.useai.online' && u.pathname.startsWith('/api/image-proxy');
   } catch {
     return false;
   }
@@ -453,6 +500,42 @@ function cleanupImagesForJob(jobId: string): void {
   jobIdToImageUrls.delete(jobId);
 }
 
+function stringifyError(err: unknown): string {
+  if (err instanceof Error) return err.message || String(err);
+  return String(err);
+}
+
+async function fetchImageBinary(url: string, source: 'direct' | 'proxy'): Promise<{ mimeType: string; buffer: ArrayBuffer; size: number; fetchedAt: number }> {
+  const ac = new AbortController();
+  const timer = setTimeout(() => ac.abort(), IMAGE_FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      credentials: 'omit',
+      signal: ac.signal,
+    });
+    if (!res.ok) throw new Error(`${source} fetch failed: ${res.status}`);
+
+    const ct = res.headers.get('content-type') || '';
+    const mimeType = ct.split(';')[0].trim() || 'application/octet-stream';
+    if (!mimeType.toLowerCase().startsWith('image/')) {
+      throw new Error(`${source} unexpected content-type: ${mimeType || 'empty'}`);
+    }
+
+    const buffer = await res.arrayBuffer();
+    const size = buffer?.byteLength || 0;
+    if (!size) throw new Error(`${source} empty image`);
+    if (size > IMAGE_MAX_BYTES) throw new Error(`${source} image too large: ${size}`);
+    return { mimeType, buffer, size, fetchedAt: Date.now() };
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') {
+      throw new Error(`${source} fetch timeout`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function fetchImageCached(url: string): Promise<{ mimeType: string; buffer: ArrayBuffer; size: number; fetchedAt: number }> {
   const cached = imageCache.get(url);
   if (cached) return cached;
@@ -461,17 +544,30 @@ async function fetchImageCached(url: string): Promise<{ mimeType: string; buffer
   if (inFlight) return await inFlight;
 
   const task = (async () => {
-    const res = await fetch(url, { credentials: 'omit' });
-    if (!res.ok) throw new Error(`fetch failed: ${res.status}`);
-    const ct = res.headers.get('content-type') || '';
-    const mimeType = ct.split(';')[0].trim() || 'application/octet-stream';
-    const buffer = await res.arrayBuffer();
-    const size = buffer?.byteLength || 0;
-    if (!size) throw new Error('empty image');
-    if (size > IMAGE_MAX_BYTES) throw new Error(`image too large: ${size}`);
-    const out = { mimeType, buffer, size, fetchedAt: Date.now() };
-    imageCache.set(url, out);
-    return out;
+    const errors: string[] = [];
+
+    try {
+      const out = await fetchImageBinary(url, 'direct');
+      imageCache.set(url, out);
+      return out;
+    } catch (error) {
+      errors.push(stringifyError(error));
+    }
+
+    if (isProxyImageUrl(url)) {
+      throw new Error(`fetch image failed: ${errors.join(' | ')}`);
+    }
+
+    const proxyUrl = `https://read.useai.online/api/image-proxy?url=${encodeURIComponent(url)}`;
+    try {
+      const out = await fetchImageBinary(proxyUrl, 'proxy');
+      imageCache.set(url, out);
+      return out;
+    } catch (error) {
+      errors.push(stringifyError(error));
+    }
+
+    throw new Error(`fetch image failed: ${errors.join(' | ')}`);
   })();
 
   imageInFlight.set(url, task);
@@ -487,15 +583,29 @@ async function handleV3FetchImage(message: FetchImageRequest, sendResponse: (res
     const jobId = message.jobId;
     const url = message.url;
     if (!jobId || !url) throw new Error('Missing jobId/url');
-    if (!isAllowedImageUrl(url)) throw new Error('Image URL is not allowed');
 
-    const data = await fetchImageCached(url);
+    let effectiveUrl = normalizeProxyImageUrl(url);
+    if (!isAllowedImageUrl(effectiveUrl)) {
+      try {
+        const u = new URL(effectiveUrl);
+        if (u.protocol === 'https:' || u.protocol === 'http:') {
+          effectiveUrl = normalizeProxyImageUrl(`${IMAGE_PROXY_ENDPOINT}${encodeURIComponent(u.toString())}`);
+        }
+      } catch {
+        // keep original and fail below
+      }
+    }
+    if (!isAllowedImageUrl(effectiveUrl)) {
+      throw new Error(`Image URL is not allowed: ${String(url).slice(0, 280)} | effective=${String(effectiveUrl).slice(0, 280)}`);
+    }
+
+    const data = await fetchImageCached(effectiveUrl);
     let set = jobIdToImageUrls.get(jobId);
     if (!set) {
       set = new Set();
       jobIdToImageUrls.set(jobId, set);
     }
-    set.add(url);
+    set.add(effectiveUrl);
 
     sendResponse({ success: true, mimeType: data.mimeType, buffer: data.buffer, size: data.size });
   } catch (error) {
@@ -624,5 +734,64 @@ chrome.storage.onChanged.addListener((changes, namespace) => {
     console.debug('Settings synced from another device');
   }
 });
+
+async function dispatchDirectMessage(message: unknown): Promise<unknown> {
+  const msg = message as { type?: unknown };
+  const type = typeof msg.type === 'string' ? msg.type : '';
+
+  if (type === V2_START_JOB) {
+    return await new Promise<StartJobResponse>((resolve) => {
+      handleV2StartJob(message as StartJobRequest, {} as chrome.runtime.MessageSender, resolve);
+    });
+  }
+
+  if (type === V2_REQUEST_CONTINUE || type === V2_REQUEST_RETRY) {
+    return await new Promise<{ success: boolean; error?: string }>((resolve) => {
+      handleV2Control(message as ContinueRequest | RetryRequest, resolve);
+    });
+  }
+
+  if (type === V2_REQUEST_STOP) {
+    return await new Promise<StopJobResponse>((resolve) => {
+      handleV2StopJob(message as StopJobRequest, resolve);
+    });
+  }
+
+  if (type === V2_FOCUS_CHANNEL_TAB) {
+    return await new Promise<FocusChannelTabResponse>((resolve) => {
+      handleV2FocusChannelTab(message as FocusChannelTabRequest, resolve);
+    });
+  }
+
+  return { success: false, error: `Unknown direct type: ${type || 'empty'}` };
+}
+
+const directDispatchRef = dispatchDirectMessage;
+
+(
+  globalThis as unknown as {
+    __BAWEI_V2_DISPATCH_DIRECT?: (message: unknown) => Promise<unknown>;
+  }
+).__BAWEI_V2_DISPATCH_DIRECT = directDispatchRef;
+
+try {
+  (
+    chrome.runtime as unknown as {
+      __BAWEI_V2_DISPATCH_DIRECT?: (message: unknown) => Promise<unknown>;
+    }
+  ).__BAWEI_V2_DISPATCH_DIRECT = directDispatchRef;
+} catch {
+  // ignore
+}
+
+try {
+  (
+    chrome as unknown as {
+      __BAWEI_V2_DISPATCH_DIRECT?: (message: unknown) => Promise<unknown>;
+    }
+  ).__BAWEI_V2_DISPATCH_DIRECT = directDispatchRef;
+} catch {
+  // ignore
+}
 
 console.log('bawei V2 background script loaded');

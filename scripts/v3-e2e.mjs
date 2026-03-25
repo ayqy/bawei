@@ -725,7 +725,8 @@ async function main() {
   }
 
   let currentRun = null;
-  let imageFetchCount = 0;
+  let serviceWorkerImageFetchCount = 0;
+  let proxyFetchCount = 0;
 
   const context = await chromium.launchPersistentContext(profileDir, {
     headless: false,
@@ -759,13 +760,26 @@ async function main() {
 
     // 1) Mock image CDN for V3_FETCH_IMAGE.
     if (u.hostname.endsWith('.qpic.cn') || u.hostname.endsWith('.qlogo.cn')) {
-      if (currentRun && url.includes(currentRun.runId)) {
-        imageFetchCount += 1;
+      if (currentRun && url.includes(currentRun.runId) && req.resourceType() === 'fetch') {
+        serviceWorkerImageFetchCount += 1;
       }
       await route.fulfill({
         status: 200,
         headers: { 'content-type': 'image/png' },
         body: PNG_1x1,
+      });
+      return;
+    }
+
+    // 1.5) Track proxy usage for image fetch fallback.
+    if (u.hostname === 'read.useai.online' && u.pathname.startsWith('/api/image-proxy')) {
+      if (currentRun && url.includes(currentRun.runId) && req.resourceType() === 'fetch') {
+        proxyFetchCount += 1;
+      }
+      await route.fulfill({
+        status: 502,
+        headers: { 'content-type': 'application/json; charset=utf-8' },
+        body: JSON.stringify({ error: 'proxy disabled in v3 e2e mock' }),
       });
       return;
     }
@@ -1144,7 +1158,8 @@ async function main() {
 
   async function runOne(channelId, action) {
     currentRun = null;
-    imageFetchCount = 0;
+    serviceWorkerImageFetchCount = 0;
+    proxyFetchCount = 0;
 
     const runId = `${channelId}_${action}_${Date.now()}`;
     const title = `E2E ${channelId} ${action} ${runId}`;
@@ -1199,7 +1214,8 @@ async function main() {
     await waitForBadgeText(wechatPage, channelId, '成功', 60_000);
 
     // 每次运行必须真实触发一次图片下载（证明 V3_FETCH_IMAGE 全链路走通）
-    assert(imageFetchCount > 0, `未触发图片下载：channel=${channelId} action=${action}`);
+    assert(serviceWorkerImageFetchCount > 0, `未触发 service-worker 图片下载：channel=${channelId} action=${action}`);
+    assert(proxyFetchCount === 0, `检测到代理回退请求：channel=${channelId} action=${action} proxyFetchCount=${proxyFetchCount}`);
 
     // 验证：点击 badge 可跳转聚焦到渠道 tab
     await clickChannelBadge(wechatPage, channelId);

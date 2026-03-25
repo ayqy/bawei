@@ -15,6 +15,7 @@
 - 输入：允许域名（如 `mmbiz.qpic.cn`）图片 URL
 - 断言：
   - 返回 `mimeType` 与 `ArrayBuffer` 非空
+  - `content-type` 必须为 `image/*`（拒绝 HTML/JSON 误判为图片）
   - 超过大小上限/非白名单域名时返回明确错误
 
 ## 2. E2E（Playwright，可重复跑）
@@ -49,10 +50,19 @@
 - 断言（E2E 脚本对所有渠道都做）：
   - 编辑器区域内 `img` 数量相较写入前增加
   - 面板诊断出现“上传图片（x/y）”进度文案
-  - 至少触发 1 次 `*.qpic.cn/*.qlogo.cn` 图片下载请求（等价于 `V3_FETCH_IMAGE` 全链路跑通）
+  - 至少触发 1 次 `resourceType=fetch` 的 `*.qpic.cn/*.qlogo.cn` 图片下载请求（等价于 `V3_FETCH_IMAGE` 全链路跑通）
+  - `read.useai.online/api/image-proxy` 回退请求计数应为 0（直连成功路径）
 
 ## 3. 人工回归清单（发布前必须）
 - 任意含图文章：10 个渠道全选并发跑一遍
 - 任意无图文章：10 个渠道全选并发跑一遍
 - 关闭任一渠道 Tab：面板能提示并允许点击状态重开
 - publish 动作下：每个渠道不需要额外确认即可触发发布（除登录/实名/验证码/必填项等客观限制）
+
+## 4. 真实发布长跑脚本（CDP）
+> 运行：`KEEP_BROWSER_OPEN=1 node scripts/live-publish-chrome-cdp.mjs`
+
+- 断言：
+  - 首轮登录审计会写入 `tmp/mcp-login-audit.json`（明确标记未登录渠道）
+  - 发布进度持续写入 `tmp/mcp-publish-progress.json`（`success` 渠道不会重复发）
+  - 脚本重启后读取同一 profile 目录，已登录渠道状态应保持，不应整批掉线
