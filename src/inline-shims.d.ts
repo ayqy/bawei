@@ -53,6 +53,7 @@ declare function buildRichContentTokens(params: {
   contentHtml: string;
   baseUrl: string;
   sourceUrl: string;
+  htmlMode?: 'plain' | 'raw';
 }): Array<
   | {
       kind: 'html';
@@ -76,6 +77,7 @@ declare function fillEditorByTokens(params: {
   editorRoot: HTMLElement;
   writeMode: 'html' | 'text';
   onImageProgress?: (current: number, total: number, imageUrl: string) => Promise<void> | void;
+  insertImageAtCursorOverride?: (args: { jobId: string; imageUrl: string; editorRoot: HTMLElement }) => Promise<void>;
 }): Promise<void>;
 
 declare const V2_START_JOB: string;

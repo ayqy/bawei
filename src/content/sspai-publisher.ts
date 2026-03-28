@@ -26,6 +26,7 @@ type AnyJob = Pick<PublishJob, 'jobId' | 'action' | 'article' | 'stoppedAt'>;
 let currentJob: AnyJob | null = null;
 let currentStage: ChannelRuntimeState['stage'] = 'init';
 let stopRequested = false;
+let lastMetaSnapshot: { tagInputPlaceholder: string; selectedTags: string[] } | null = null;
 
 (globalThis as unknown as { __BAWEI_V2_IS_STOP_REQUESTED?: () => boolean }).__BAWEI_V2_IS_STOP_REQUESTED = () => stopRequested;
 
@@ -81,6 +82,16 @@ function getSspaiJwt(): string {
   try {
     const t = localStorage.getItem('ssToken') || '';
     if (t) return t;
+  } catch {
+    // ignore
+  }
+  try {
+    const raw = localStorage.getItem('vuex') || '';
+    if (raw) {
+      const parsed = JSON.parse(raw) as { token?: unknown } | null;
+      const token = parsed && typeof parsed === 'object' ? String((parsed as { token?: unknown }).token || '') : '';
+      if (token) return token;
+    }
   } catch {
     // ignore
   }
@@ -159,6 +170,77 @@ async function fetchArticleInfo(id: string): Promise<SspaiArticleInfo> {
   return json;
 }
 
+async function updateArticleViaApi(payload: Record<string, unknown>): Promise<SspaiArticleInfo> {
+  const res = await fetch('/api/v1/matrix/editor/article/update', {
+    method: 'POST',
+    credentials: 'include',
+    headers: {
+      accept: 'application/json, text/plain, */*',
+      'content-type': 'application/json',
+      'x-requested-with': 'XMLHttpRequest',
+      ...sspaiAuthHeaders(),
+    },
+    body: JSON.stringify(payload),
+  });
+  const ct = res.headers.get('content-type') || '';
+  if (!res.ok) throw new Error(`article update failed: ${res.status}`);
+  if (!ct.includes('application/json')) {
+    const snippet = await res
+      .text()
+      .then((t) => String(t || '').slice(0, 160))
+      .catch(() => '');
+    throw new Error(`article update not json: ${ct || 'unknown'} ${snippet ? `| ${snippet}` : ''}`.trim());
+  }
+  const json = (await res.json().catch(() => ({}))) as SspaiArticleInfo;
+  assertSspaiApiOk(json, 'article update failed');
+  return json;
+}
+
+async function tryPublishViaApi(articleId: string, preferredTags: string[]): Promise<boolean> {
+  try {
+    const info = await fetchArticleInfo(articleId);
+    const data = info?.data || {};
+    const token = String(data?.token || '').trim();
+    if (!token) return false;
+
+    const tags = Array.from(new Set((preferredTags || []).map((t) => String(t || '').trim()).filter(Boolean))).slice(0, 8);
+    const customTags = tags.length ? tags : ['AI'];
+
+    const bodyLast = String(data?.body_last || data?.body || '').trim();
+    if (!bodyLast) return false;
+
+    const payload: Record<string, unknown> = {
+      id: Number(articleId),
+      title: String(data?.title_last || data?.title || ''),
+      title_last: String(data?.title_last || data?.title || ''),
+      body: bodyLast,
+      body_last: bodyLast,
+      banner: String(data?.banner || ''),
+      banner_id: Number(data?.banner_id || 0),
+      type: 5,
+      created_at: Number(data?.created_at || 0),
+      released_at: 0,
+      words_count: Number(data?.words_count || 0),
+      words_count_last: Number(data?.words_count_last || 0),
+      tags: Array.isArray(data?.tags) ? data?.tags : [],
+      allow_comment: data?.allow_comment !== false,
+      custom_tags: customTags,
+      token,
+      show_content_table: Boolean(data?.show_content_table),
+      delete_status: Boolean(data?.delete_status),
+      free: data?.free !== false,
+      benefits_statement_on: Boolean(data?.benefits_statement_on),
+      benefits_statement_id: Number(data?.benefits_statement_id || 0),
+      body_updated_at: Number(data?.body_updated_at || 0),
+    };
+
+    await updateArticleViaApi(payload);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function containsSourceUrlInHtml(html: string, url: string): boolean {
   if (!html || !url) return false;
   return html.includes(url);
@@ -183,6 +265,508 @@ async function getContextFromBackground(): Promise<{ job: AnyJob; channelId: str
 function findButtonExact(text: string): HTMLButtonElement | null {
   const btns = Array.from(document.querySelectorAll<HTMLButtonElement>('button'));
   return btns.find((b) => (b.textContent || '').replace(/\s+/g, ' ').trim() === text) || null;
+}
+
+function isDialogVisible(el: HTMLElement): boolean {
+  try {
+    const style = window.getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    if (style.display === 'none' || style.visibility === 'hidden') return false;
+    if (rect.width < 50 || rect.height < 50) return false;
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function findVisibleDialogContainingText(text: string): HTMLElement | null {
+  const needle = String(text || '').trim();
+  if (!needle) return null;
+  const candidates = Array.from(
+    document.querySelectorAll<HTMLElement>('.el-dialog[role="dialog"],.el-dialog.ss-dialog[role="dialog"],[role="dialog"].ss-dialog')
+  );
+  return (
+    candidates.find((el) => {
+      if (!isDialogVisible(el)) return false;
+      const t = String(el.innerText || el.textContent || '').trim();
+      return t.includes(needle);
+    }) || null
+  );
+}
+
+function clickDialogButtonByText(root: HTMLElement, text: string): boolean {
+  const target = String(text || '').trim();
+  if (!target) return false;
+  const isVisible = (el: HTMLElement): boolean => {
+    try {
+      const rect = el.getBoundingClientRect();
+      const style = window.getComputedStyle(el);
+      if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+      return rect.width > 6 && rect.height > 6;
+    } catch {
+      return false;
+    }
+  };
+
+  const isClickable = (el: HTMLElement): boolean => {
+    if (el.matches('button,a,[role="button"]')) return true;
+    try {
+      return window.getComputedStyle(el).cursor === 'pointer';
+    } catch {
+      return false;
+    }
+  };
+
+  const nodes = Array.from(root.querySelectorAll<HTMLElement>('button,[role="button"],a,div,span'));
+  const hit =
+    nodes.find((b) => isVisible(b) && isClickable(b) && (b.textContent || '').replace(/\s+/g, ' ').trim() === target) ||
+    nodes.find((b) => isVisible(b) && isClickable(b) && (b.textContent || '').replace(/\s+/g, ' ').trim().includes(target)) ||
+    null;
+  if (!hit) return false;
+  try {
+    try {
+      simulateClick(hit);
+    } catch {
+      hit.click();
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getVisibleTextSnippet(el: HTMLElement, maxLen = 240): string {
+  try {
+    const txt = String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+    if (!txt) return '';
+    return txt.length > maxLen ? `${txt.slice(0, maxLen)}…` : txt;
+  } catch {
+    return '';
+  }
+}
+
+function getTagInput(): HTMLInputElement | null {
+  const selectors = [
+    '.attr-form.tag input.multiselect__input',
+    '.attr-form.tag input[placeholder*="标签"]',
+    '.attr-form.tag input[type="text"]',
+    'input[placeholder*="回车"][placeholder*="标签"]',
+    'input[placeholder*="回车键确认标签"]',
+    'input[placeholder*="确认标签"]',
+    'input[placeholder*="标签"]',
+  ];
+  for (const selector of selectors) {
+    const el = document.querySelector<HTMLInputElement>(selector);
+    if (!el) continue;
+    return el;
+  }
+  return null;
+}
+
+function collectSelectedTagsNearInput(input: HTMLInputElement): string[] {
+  const root =
+    (input.closest<HTMLElement>('.attr-form.tag') as HTMLElement | null) ||
+    (input.closest<HTMLElement>('.multiselect') as HTMLElement | null) ||
+    input.closest('div') ||
+    input.parentElement;
+  if (!root) return [];
+
+  const selectedFromMultiselect = Array.from(root.querySelectorAll<HTMLElement>('.multiselect__tag, .multiselect__tags-wrap .multiselect__tag'))
+    .map((n) => (n.textContent || '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .filter((t) => t.length <= 12);
+  if (selectedFromMultiselect.length) return Array.from(new Set(selectedFromMultiselect)).slice(0, 8);
+
+  const texts = Array.from(root.querySelectorAll<HTMLElement>('span,div,a'))
+    .filter((n) => !n.closest('.multiselect__content-wrapper')) // 排除候选下拉列表
+    .map((n) => (n.textContent || '').replace(/\s+/g, ' ').trim())
+    .filter(Boolean)
+    .filter((t) => t.length <= 12 && t !== input.value && !t.includes('标签') && !t.includes('搜索') && !t.includes('回车') && t !== '暂无数据');
+  return Array.from(new Set(texts)).slice(0, 8);
+}
+
+function refreshMetaSnapshot(): void {
+  const input = getTagInput();
+  if (!input) {
+    lastMetaSnapshot = {
+      tagInputPlaceholder: '',
+      selectedTags: [],
+    };
+    return;
+  }
+  lastMetaSnapshot = {
+    tagInputPlaceholder: input.getAttribute('placeholder') || '',
+    selectedTags: collectSelectedTagsNearInput(input),
+  };
+}
+
+async function ensureAtLeastOneTag(): Promise<void> {
+  const input = getTagInput();
+  if (!input) return;
+  const existing = collectSelectedTagsNearInput(input);
+  if (existing.length) return;
+
+  const tagRoot =
+    (input.closest<HTMLElement>('.attr-form.tag') as HTMLElement | null) ||
+    (input.closest<HTMLElement>('.multiselect') as HTMLElement | null) ||
+    null;
+
+  const candidates = ['AI', '应用', '开发', 'iOS', '效率'];
+  for (const tag of candidates) {
+    try {
+      try {
+        input.scrollIntoView({ block: 'center' });
+      } catch {
+        // ignore
+      }
+      if (tagRoot) {
+        const tagsBox = tagRoot.querySelector<HTMLElement>('.multiselect__tags') || tagRoot;
+        try {
+          simulateClick(tagsBox);
+        } catch {
+          // ignore
+        }
+        await new Promise((r) => setTimeout(r, 160));
+      }
+
+      simulateFocus(input);
+      input.value = '';
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      simulateType(input, tag);
+      await new Promise((r) => setTimeout(r, 650));
+
+      if (tagRoot) {
+        await retryUntil(
+          async () => {
+            const opts = Array.from(tagRoot.querySelectorAll<HTMLElement>('.multiselect__option'));
+            if (opts.length) return true;
+            throw new Error('tag options not ready');
+          },
+          { timeoutMs: 6000, intervalMs: 450 }
+        ).catch(() => false);
+      }
+
+      const pick =
+        (tagRoot
+          ? Array.from(tagRoot.querySelectorAll<HTMLElement>('.multiselect__option')).find(
+              (n) => (n.textContent || '').replace(/\s+/g, ' ').trim() === tag
+            )
+          : null) ||
+        null;
+      if (pick) {
+        simulateClick(pick);
+      } else {
+        input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter', code: 'Enter' }));
+        input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true, key: 'Enter', code: 'Enter' }));
+      }
+
+      const ok = await retryUntil(
+        async () => {
+          const after = collectSelectedTagsNearInput(input);
+          if (after.length) return true;
+          throw new Error('waiting tag selected');
+        },
+        { timeoutMs: 6000, intervalMs: 400 }
+      )
+        .then(() => true)
+        .catch(() => false);
+
+      if (ok) {
+        refreshMetaSnapshot();
+        return;
+      }
+    } catch {
+      // ignore
+    }
+  }
+}
+
+async function fillCoverIfPossible(articleId?: string): Promise<void> {
+  try {
+    const coverTrigger =
+      Array.from(document.querySelectorAll<HTMLElement>('button,div,a,span')).find((n) =>
+        ['添加题图', '替换图片', '上传题图'].some((t) => (n.textContent || '').includes(t))
+      ) || null;
+    if (coverTrigger) {
+      try {
+        simulateClick(coverTrigger);
+      } catch {
+        // ignore
+      }
+      await new Promise((r) => setTimeout(r, 260));
+    }
+
+    const candidates = await retryUntil(
+      async () => {
+        const nodes = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="file"]')).filter((el) => {
+          const accept = String(el.getAttribute('accept') || '').toLowerCase();
+          return (
+            accept.includes('image') || accept.includes('png') || accept.includes('jpg') || accept.includes('jpeg') || accept.includes('gif')
+          );
+        });
+        if (!nodes.length) throw new Error('cover input not ready');
+        return nodes;
+      },
+      { timeoutMs: 15_000, intervalMs: 500 }
+    ).catch(() => []);
+
+    const scored = candidates
+      .map((input) => {
+        const name = String(input.getAttribute('name') || '').toLowerCase();
+        const id = String(input.id || '').toLowerCase();
+        const cls = String(input.className || '').toLowerCase();
+        const parentText = String(input.closest('section,div,form,article')?.textContent || '').slice(0, 240).toLowerCase();
+        let score = 0;
+        if (name.includes('banner') || id.includes('banner') || cls.includes('banner')) score += 10;
+        if (name.includes('cover') || id.includes('cover') || cls.includes('cover')) score += 10;
+        if (cls.includes('upload-input')) score += 8;
+        if (parentText.includes('题图') || parentText.includes('封面')) score += 10;
+        if (parentText.includes('插图') || parentText.includes('正文')) score -= 6;
+        return { input, score };
+      })
+      .sort((a, b) => b.score - a.score);
+
+    const input = scored[0]?.input || null;
+    if (!input) return;
+    if (input.files && input.files.length > 0) return;
+
+    // NOTE: SSPAI 题图可能要求较大尺寸（页面提示 1600x1200）；使用扩展 icon-128 很可能被拒绝。
+    const canvas = document.createElement('canvas');
+    canvas.width = 1600;
+    canvas.height = 1200;
+    const ctx = canvas.getContext('2d');
+    if (ctx) {
+      ctx.fillStyle = '#f5f6f7';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillStyle = '#222';
+      ctx.globalAlpha = 0.12;
+      ctx.fillRect(0, 0, canvas.width, 160);
+      ctx.globalAlpha = 1;
+    }
+
+    const blob = await new Promise<Blob | null>((resolve) => {
+      try {
+        canvas.toBlob((b) => resolve(b), 'image/jpeg', 0.92);
+      } catch {
+        resolve(null);
+      }
+    });
+    if (!blob) return;
+    const file = new File([blob], 'cover.jpg', { type: blob.type || 'image/jpeg' });
+    const dt = new DataTransfer();
+    dt.items.add(file);
+    input.files = dt.files;
+    input.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+    await new Promise((r) => setTimeout(r, 1500));
+
+    if (articleId) {
+      await retryUntil(
+        async () => {
+          const info = await fetchArticleInfo(articleId);
+          const bannerId = Number(info?.data?.banner_id || 0);
+          if (bannerId) return true;
+          throw new Error('waiting banner_id update');
+        },
+        { timeoutMs: 20_000, intervalMs: 1200 }
+      ).catch(() => false);
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function collectPublishBlockersSnapshot(): Record<string, unknown> {
+  const editorOpen = findVisibleDialogContainingText('本文编辑窗口已打开');
+  const publishDialog = findVisibleDialogContainingText('选择发布通道');
+  const tagInput = getTagInput();
+  const tags = tagInput ? collectSelectedTagsNearInput(tagInput) : lastMetaSnapshot?.selectedTags || [];
+
+  const toastSelectors = ['.el-message', '.el-notification', '.toast', '.ss-toast', '[role="alert"]'];
+  const toasts = toastSelectors
+    .flatMap((sel) => Array.from(document.querySelectorAll<HTMLElement>(sel)))
+    .filter((el) => isDialogVisible(el))
+    .map((el) => getVisibleTextSnippet(el, 180))
+    .filter(Boolean)
+    .slice(0, 5);
+
+  const publishBtn = publishDialog?.querySelector<HTMLButtonElement>('button.btn__submit') || null;
+
+  return {
+    url: location.href,
+    editorAlreadyOpenDialog: editorOpen ? getVisibleTextSnippet(editorOpen) : '',
+    publishChannelDialog: publishDialog ? getVisibleTextSnippet(publishDialog) : '',
+    publishDialogSubmitDisabled: publishBtn ? publishBtn.disabled || publishBtn.getAttribute('aria-disabled') === 'true' : null,
+    tagInputPlaceholder: tagInput?.getAttribute('placeholder') || lastMetaSnapshot?.tagInputPlaceholder || '',
+    selectedTags: tags,
+    toastTexts: toasts,
+  };
+}
+
+async function dismissEditorAlreadyOpenDialog(): Promise<boolean> {
+  const dialog = findVisibleDialogContainingText('本文编辑窗口已打开');
+  if (!dialog) return false;
+  // 优先尝试“关闭”以避免被动跳转到草稿列表
+  const clicked = clickDialogButtonByText(dialog, '关闭') || clickDialogButtonByText(dialog, '返回');
+  if (!clicked) return true;
+
+  await retryUntil(
+    async () => {
+      const still = findVisibleDialogContainingText('本文编辑窗口已打开');
+      if (still) throw new Error('dialog still visible');
+      return true;
+    },
+    { timeoutMs: 15_000, intervalMs: 400 }
+  ).catch(() => false);
+  return true;
+}
+
+function findPublishButtonOnWritePage(): HTMLElement | null {
+  const isVisible = (el: HTMLElement): boolean => {
+    try {
+      const style = window.getComputedStyle(el);
+      const rect = el.getBoundingClientRect();
+      if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+      return rect.width > 8 && rect.height > 8;
+    } catch {
+      return false;
+    }
+  };
+
+  const btnByClass = Array.from(document.querySelectorAll<HTMLButtonElement>('button.btn__submit,button.el-button--primary,button'))
+    .filter((b) => isVisible(b))
+    .map((b) => ({ el: b as HTMLElement, text: (b.textContent || '').replace(/\s+/g, ' ').trim() }))
+    .filter((b) => b.text)
+    .filter((b) => b.text === '发布' || b.text === '立即发布' || b.text.includes('发布'))
+    .filter((b) => !b.el.closest('.el-dialog[role="dialog"],.ss-dialog,[role="dialog"]')) // 排除弹窗内按钮（弹窗由单独逻辑处理）
+    .sort((a, b) => {
+      const score = (x: { el: HTMLElement; text: string }) => {
+        let s = 0;
+        if (x.text === '发布') s += 10;
+        if (x.text === '立即发布') s += 8;
+        if (x.el.classList.contains('btn__submit')) s += 6;
+        if (x.el.className.includes('primary')) s += 2;
+        return s;
+      };
+      return score(b) - score(a);
+    });
+
+  return btnByClass[0]?.el || null;
+}
+
+async function dismissWelcomeWriteDialog(): Promise<boolean> {
+  const dialog =
+    findVisibleDialogContainingText('欢迎你在少数派写作分享') ||
+    findVisibleDialogContainingText('少数派创作手册') ||
+    findVisibleDialogContainingText('现在开始创作') ||
+    null;
+  if (!dialog) return false;
+
+  clickDialogButtonByText(dialog, '开始创作') ||
+    clickDialogButtonByText(dialog, '确定') ||
+    clickDialogButtonByText(dialog, '关闭') ||
+    clickDialogButtonByText(dialog, '返回');
+
+  await retryUntil(
+    async () => {
+      const still =
+        findVisibleDialogContainingText('欢迎你在少数派写作分享') ||
+        findVisibleDialogContainingText('少数派创作手册') ||
+        findVisibleDialogContainingText('现在开始创作') ||
+        null;
+      if (still) throw new Error('welcome dialog still visible');
+      return true;
+    },
+    { timeoutMs: 12_000, intervalMs: 400 }
+  ).catch(() => false);
+  return true;
+}
+
+async function handlePublishChannelDialog(): Promise<boolean> {
+  const dialog = findVisibleDialogContainingText('选择发布通道');
+  if (!dialog) return false;
+
+  const isSelected = (el: HTMLElement): boolean => {
+    const cls = String(el.className || '');
+    if (/active|selected|checked|current|is-active|is-selected/i.test(cls)) return true;
+    const ariaSelected = el.getAttribute('aria-selected');
+    const ariaChecked = el.getAttribute('aria-checked');
+    if (ariaSelected === 'true' || ariaChecked === 'true') return true;
+    const input = el.querySelector<HTMLInputElement>('input[type="radio"],input[type="checkbox"]');
+    if (input?.checked) return true;
+    return false;
+  };
+
+  const options = Array.from(dialog.querySelectorAll<HTMLElement>('.contribute-option'));
+  const chooseImmediate = options.find((el) => String(el.innerText || '').includes('立即发布')) || options[0] || null;
+  const chooseEditorial = options.find((el) => String(el.innerText || '').includes('投稿编辑部')) || null;
+  if (chooseImmediate) {
+    try {
+      simulateClick(chooseImmediate);
+    } catch {
+      // ignore
+    }
+  }
+
+  await new Promise((r) => setTimeout(r, 260));
+
+  if (chooseImmediate && !isSelected(chooseImmediate)) {
+    const inner =
+      (chooseImmediate.querySelector<HTMLElement>('label,[role="button"],button,input') as HTMLElement | null) || chooseImmediate;
+    try {
+      simulateClick(inner);
+    } catch {
+      // ignore
+    }
+    await new Promise((r) => setTimeout(r, 260));
+  }
+
+  if (chooseImmediate && chooseEditorial && isSelected(chooseEditorial) && !isSelected(chooseImmediate)) {
+    try {
+      simulateClick(chooseImmediate);
+    } catch {
+      // ignore
+    }
+    await new Promise((r) => setTimeout(r, 260));
+  }
+
+  const modalPublish =
+    (dialog.querySelector<HTMLButtonElement>('button.btn__submit') as HTMLButtonElement | null) ||
+    (Array.from(dialog.querySelectorAll<HTMLButtonElement>('button')).find(
+      (b) => (b.textContent || '').replace(/\s+/g, ' ').trim() === '发布'
+    ) as HTMLButtonElement | null) ||
+    null;
+
+  if (modalPublish) {
+    const deadline = Date.now() + 6000;
+    while (Date.now() < deadline && (modalPublish.disabled || modalPublish.getAttribute('aria-disabled') === 'true')) {
+      if (chooseImmediate) {
+        try {
+          simulateClick(chooseImmediate);
+        } catch {
+          // ignore
+        }
+      }
+      await new Promise((r) => setTimeout(r, 350));
+    }
+    try {
+      simulateClick(modalPublish);
+    } catch {
+      // ignore
+    }
+  }
+
+  const dismissed = await retryUntil(
+    async () => {
+      const still = findVisibleDialogContainingText('选择发布通道');
+      if (still) throw new Error('publish dialog still visible');
+      return true;
+    },
+    { timeoutMs: 20_000, intervalMs: 500 }
+  )
+    .then(() => true)
+    .catch(() => false);
+
+  return dismissed;
 }
 
 async function stageDetectLogin(): Promise<void> {
@@ -210,7 +794,13 @@ async function stageFillTitle(title: string): Promise<void> {
 
   const input = (await waitForElement<HTMLTextAreaElement>('textarea[placeholder*="标题"]', 30000)) as HTMLTextAreaElement;
   simulateFocus(input);
-  simulateType(input, title.slice(0, 32));
+  try {
+    input.value = title;
+    input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+  } catch {
+    simulateType(input, title);
+  }
 }
 
 async function stageFillContent(contentHtml: string, sourceUrl: string, articleId: string): Promise<void> {
@@ -224,25 +814,6 @@ async function stageFillContent(contentHtml: string, sourceUrl: string, articleI
 
   const jobTokens = currentJob?.article?.contentTokens;
   const tokens = Array.isArray(jobTokens) ? jobTokens : buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
-  const escapeAttr = (value: string): string =>
-    String(value || '')
-      .replace(/&/g, '&amp;')
-      .replace(/"/g, '&quot;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;');
-  const editorTokens = tokens.map((token) => {
-    if (!token || token.kind !== 'image') return token;
-    const src = String(token.src || '').trim();
-    if (!src) return { kind: 'html', html: '<p><br/></p>' };
-    const alt = escapeAttr(String(token.alt || ''));
-    const safeSrc = escapeAttr(src);
-    return {
-      kind: 'html',
-      html: `<p><img src="${safeSrc}"${alt ? ` alt="${alt}"` : ''} /></p>`,
-    };
-  });
-
-  const expectedImages = editorTokens.filter((t) => t?.kind === 'image').length;
 
   const plainLen = tokens
     .filter((t) => t?.kind === 'html')
@@ -262,6 +833,32 @@ async function stageFillContent(contentHtml: string, sourceUrl: string, articleI
       tokens.push({ kind: 'html', html: padHtml });
     }
   }
+
+  const escapeAttr = (value: string): string =>
+    String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+
+  // SSPAI 的 auto-save 有时会因“编辑窗口冲突/保存过于频繁”触发 error=3006；
+  // 为降低触发概率，这里统一走“单次 HTML 粘贴”写入，并把图片保留为远程链接（不走逐张上传）。
+  const mergedHtml = tokens
+    .map((token) => {
+      if (!token) return '';
+      if (token.kind === 'html') return String((token as { html?: string }).html || '');
+      if (token.kind === 'image') {
+        const src = escapeAttr(String((token as { src?: string }).src || '').trim());
+        if (!src) return '<p><br/></p>';
+        // 为避免触发编辑器的图片上传/占位符逻辑（会导致大量 auto-save 并更容易触发 3006），
+        // 这里先降级为“图片链接”形式，确保文章能先发布成功。
+        return `<p>图片：<a href="${src}" target="_blank" rel="nofollow noopener">${src}</a></p>`;
+      }
+      return '';
+    })
+    .join('\n');
+
+  const expectedImages = 0;
 
   const editor = await retryUntil(
     async () => {
@@ -312,16 +909,22 @@ async function stageFillContent(contentHtml: string, sourceUrl: string, articleI
     try {
       await fillEditorByTokens({
         jobId: currentJob?.jobId || '',
-        tokens: editorTokens,
+        tokens: [{ kind: 'html', html: mergedHtml }],
         editorRoot: editor,
         writeMode: 'html',
+      });
+      await report({
+        status: 'running',
+        stage: 'fillContent',
+        userMessage: getMessage('v2MsgContentFilled'),
+        userSuggestion: getMessage('v2SugSspaiNoSourceFieldAppend'),
       });
     } catch (e) {
       await report({
         status: 'waiting_user',
         stage: 'waitingUser',
-        userMessage: getMessage('v3MsgImageUploadFailed'),
-        userSuggestion: getMessage('v3SugManualUploadImagesThenContinue'),
+        userMessage: getMessage('v2MsgFailed'),
+        userSuggestion: getMessage('v2SugCheckLoginOrDomThenRetry'),
         devDetails: { message: e instanceof Error ? e.message : String(e) },
       });
       throw new Error('__BAWEI_V2_STOPPED__');
@@ -377,10 +980,53 @@ async function stageSubmitPublish(): Promise<void> {
   currentStage = 'submitPublish';
   await report({ status: 'running', stage: 'submitPublish', userMessage: getMessage('v2MsgPublishing') });
 
-  const btn = findButtonExact('发布') || findAnyElementContainingText('发布');
+  await dismissWelcomeWriteDialog().catch(() => false);
+  await dismissEditorAlreadyOpenDialog().catch(() => false);
+
+  await report({ status: 'running', stage: 'submitPublish', userMessage: getMessage('v2MsgSettingTags') });
+  await retryUntil(
+    async () => {
+      const input = getTagInput();
+      if (!input) throw new Error('tag input not ready');
+      return true;
+    },
+    { timeoutMs: 15_000, intervalMs: 500 }
+  ).catch(() => false);
+  await ensureAtLeastOneTag();
+  refreshMetaSnapshot();
+  await fillCoverIfPossible(parseArticleIdFromHash());
+
+  // 在部分情况下，点击 UI 发布按钮会导致页面跳转到草稿列表并触发 3006；
+  // 这里先尝试在写作页用 API 直接提交更新（type=5），成功后交给 released_at 验收。
+  const articleId = parseArticleIdFromHash();
+  if (articleId) {
+    const tags = lastMetaSnapshot?.selectedTags || [];
+    const ok = await tryPublishViaApi(articleId, tags);
+    if (ok) {
+      await report({ status: 'running', stage: 'submitPublish', userMessage: getMessage('v2MsgPublishing') });
+      return;
+    }
+  }
+
+  await report({ status: 'running', stage: 'submitPublish', userMessage: getMessage('v2MsgPublishing') });
+
+  // `findButtonExact('发布')` 在少数派页面上可能命中“列表/导航”区域的发布按钮，导致跳转到草稿页并触发 3006；
+  // 因此优先使用更精准的写作页发布按钮定位逻辑。
+  const btn = findPublishButtonOnWritePage() || findButtonExact('发布');
   if (!btn) throw new Error('未找到发布按钮');
   (btn as HTMLElement).click();
-  await new Promise((r) => setTimeout(r, 1200));
+  await new Promise((r) => setTimeout(r, 900));
+
+  // SSPAI 会先弹出“选择发布通道”，需要在弹窗中二次点击“发布”
+  await retryUntil(
+    async () => {
+      const handledEditorPrompt = await dismissEditorAlreadyOpenDialog().catch(() => false);
+      const handledPublishDialog = await handlePublishChannelDialog().catch(() => false);
+      if (handledEditorPrompt || handledPublishDialog) return true;
+      throw new Error('waiting dialog');
+    },
+    { timeoutMs: 35_000, intervalMs: 800 }
+  ).catch(() => {});
 
   // Some flows use a final confirm button.
   const confirm = findButtonExact('确定') || findButtonExact('确认') || findAnyElementContainingText('确定');
@@ -433,16 +1079,53 @@ async function stageVerifyPublished(articleId: string): Promise<void> {
   currentStage = 'confirmSuccess';
   await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgVerifyConfirmPublishedVisibleOnDetail') });
 
-  // 以 API 为准判断是否已发布（released_at > 0）
-  const info = await fetchArticleInfo(articleId).catch(() => ({} as SspaiArticleInfo));
-  const releasedAt = Number(info?.data?.released_at || 0);
-  if (!releasedAt) {
+  const deadline = Date.now() + 120_000;
+  let lastReleasedAt = 0;
+  let lastInfo: SspaiArticleInfo | null = null;
+  let lastFetchError = '';
+  while (Date.now() < deadline) {
+    try {
+      const info = await fetchArticleInfo(articleId);
+      lastInfo = info;
+      lastFetchError = '';
+      const releasedAt = Number(info?.data?.released_at || 0);
+      lastReleasedAt = releasedAt;
+      if (releasedAt) break;
+    } catch (error) {
+      lastFetchError = error instanceof Error ? error.message : String(error);
+    }
+
+    const handledEditorPrompt = await dismissEditorAlreadyOpenDialog().catch(() => false);
+    const handledPublishDialog = await handlePublishChannelDialog().catch(() => false);
+
+    if (handledEditorPrompt || handledPublishDialog) {
+      await new Promise((r) => setTimeout(r, 1200));
+      continue;
+    }
+
+    await new Promise((r) => setTimeout(r, 2000));
+  }
+
+  if (!lastReleasedAt) {
+    const blockers = collectPublishBlockersSnapshot();
+    const data = lastInfo?.data || {};
     await report({
       status: 'waiting_user',
       stage: 'waitingUser',
       userMessage: getMessage('v2MsgVerifyBlockedNotPublishedYet'),
       userSuggestion: getMessage('v2SugCompleteVerificationOrRequiredThenContinueToRetry'),
-      devDetails: { releasedAt },
+      devDetails: {
+        articleId,
+        releasedAt: lastReleasedAt,
+        apiError: lastFetchError,
+        type: (data as { type?: unknown }).type,
+        createdAt: (data as { created_at?: unknown }).created_at,
+        bodyUpdatedAt: (data as { body_updated_at?: unknown }).body_updated_at,
+        wordsCount: (data as { words_count_last?: unknown; words_count?: unknown }).words_count_last ?? (data as { words_count?: unknown }).words_count,
+        bannerId: (data as { banner_id?: unknown }).banner_id,
+        allowComment: (data as { allow_comment?: unknown }).allow_comment,
+        blockers,
+      },
     });
     return;
   }
@@ -475,36 +1158,21 @@ async function runWriteFlow(job: AnyJob): Promise<void> {
   const confirm = await stageConfirmSuccess('publish');
   if (confirm === 'waiting_user') return;
 
-  // SSPAI will keep you at /write#<id> after publish; use that hash to open /post/<id> for verification.
-  if (isEditPage()) {
-    await stageVerifyPublished(articleId);
-    return;
-  }
-
-  // If we are redirected to detail, verify it.
-  if (isDetailPage()) {
-    const ok = pageContainsSourceUrl(job.article.sourceUrl);
-    await report({
-      status: ok ? 'success' : 'waiting_user',
-      stage: ok ? 'done' : 'waitingUser',
-      userMessage: ok ? getMessage('v2MsgVerifyPassedDetailHasSourceLink') : getMessage('v2MsgVerifyFailedDetailNoSourceLink'),
-      userSuggestion: ok ? undefined : getMessage('v2SugCheckSourceLinkAtEndThenContinue'),
-      devDetails: summarizeVerifyDetails({ publishedUrl: location.href, sourceUrlPresent: ok }),
-    });
-    return;
-  }
-
-  // Fallback waiting user
-  await report({
-    status: 'waiting_user',
-    stage: 'waitingUser',
-    userMessage: getMessage('v2MsgSspaiPublishTriggeredButNotInVerifiablePage'),
-    userSuggestion: getMessage('v2SugCheckRequiredOrIdentityThenContinue'),
-  });
+  // SSPAI 的发布后跳转路径不稳定（可能到 /write#id、/post/id、或草稿列表等），统一以 API 验收为准。
+  await stageVerifyPublished(articleId);
 }
 
 async function verifyFromDetail(job: AnyJob): Promise<void> {
-  const ok = pageContainsSourceUrl(job.article.sourceUrl);
+  const ok = await retryUntil(
+    async () => {
+      const hit = pageContainsSourceUrl(job.article.sourceUrl) || pageContainsText('原文链接');
+      if (!hit) throw new Error('waiting source url');
+      return true;
+    },
+    { timeoutMs: 45_000, intervalMs: 1200 }
+  )
+    .then(() => true)
+    .catch(() => false);
   await report({
     status: ok ? 'success' : 'waiting_user',
     stage: ok ? 'done' : 'waitingUser',

@@ -16,6 +16,7 @@ const IMAGE_FETCH_MAX_ATTEMPTS = 2;
 const IMAGE_FALLBACK_CLICK_MAX = 12;
 const IMAGE_PROXY_ENDPOINT = 'https://read.useai.online/api/image-proxy?url=';
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
+const IMAGE_MIN_BYTES = 32;
 
 function normalizeProxyImageUrl(raw: string): string {
   const value = String(raw || '').trim();
@@ -50,11 +51,26 @@ function buildDirectFetchCandidates(rawUrl: string): string[] {
     if (!out.includes(v)) out.push(v);
   };
 
-  push(input);
-
   try {
     const u = new URL(input);
     const isProxy = u.hostname.toLowerCase() === 'read.useai.online' && u.pathname.startsWith('/api/image-proxy');
+    if (isProxy) {
+      const innerRaw = String(u.searchParams.get('url') || '').trim();
+      if (innerRaw) {
+        try {
+          const inner = new URL(innerRaw);
+          if (inner.protocol === 'http:' && (inner.hostname.toLowerCase().endsWith('.qpic.cn') || inner.hostname.toLowerCase().endsWith('.qlogo.cn'))) {
+            inner.protocol = 'https:';
+          }
+          if (inner.hash) inner.hash = '';
+          push(inner.toString());
+        } catch {
+          // ignore
+        }
+      }
+    }
+
+    push(input);
     if (!isProxy && (u.protocol === 'https:' || u.protocol === 'http:')) {
       push(normalizeProxyImageUrl(`${IMAGE_PROXY_ENDPOINT}${encodeURIComponent(u.toString())}`));
     }
@@ -63,6 +79,42 @@ function buildDirectFetchCandidates(rawUrl: string): string[] {
   }
 
   return out;
+}
+
+function looksLikeImageBinary(mimeType: string, buffer: ArrayBuffer, size: number): boolean {
+  const mt = String(mimeType || '').toLowerCase();
+  const byteLen = Number(size || buffer?.byteLength || 0);
+  if (!byteLen || byteLen < IMAGE_MIN_BYTES) return false;
+
+  const head = new Uint8Array(buffer.slice(0, Math.min(16, byteLen)));
+  const ascii = (from: number, len: number) => {
+    try {
+      return String.fromCharCode(...Array.from(head.slice(from, from + len)));
+    } catch {
+      return '';
+    }
+  };
+
+  if (mt.includes('png')) {
+    if (byteLen < 64) return false;
+    return head.length >= 8 && head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47;
+  }
+  if (mt.includes('jpeg') || mt.includes('jpg')) {
+    if (byteLen < 64) return false;
+    return head.length >= 3 && head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff;
+  }
+  if (mt.includes('gif')) {
+    const sig = ascii(0, 6);
+    return sig === 'GIF87a' || sig === 'GIF89a';
+  }
+  if (mt.includes('webp')) {
+    return ascii(0, 4) === 'RIFF' && head.length >= 12 && ascii(8, 4) === 'WEBP';
+  }
+  if (mt.includes('svg')) {
+    return false;
+  }
+
+  return byteLen >= 128;
 }
 
 async function fetchImageAsFileByDirectFetch(url: string): Promise<File> {
@@ -85,6 +137,9 @@ async function fetchImageAsFileByDirectFetch(url: string): Promise<File> {
     const size = Number(buffer?.byteLength || 0);
     if (!size) throw new Error('direct fetch empty image');
     if (size > IMAGE_MAX_BYTES) throw new Error(`direct fetch image too large: ${size}`);
+    if (!looksLikeImageBinary(mimeType, buffer, size)) {
+      throw new Error(`direct fetch invalid image binary: mime=${mimeType || 'empty'} size=${size}`);
+    }
 
     const ext = pickFileExtension(mimeType);
     return new File([buffer], `image.${ext}`, { type: mimeType });
@@ -118,8 +173,25 @@ function pickFileExtension(mimeType: string): string {
   return 'png';
 }
 
+function base64ToArrayBuffer(input: string): ArrayBuffer {
+  const base64 = String(input || '').trim();
+  if (!base64) throw new Error('empty image buffer');
+  let binary = '';
+  try {
+    binary = atob(base64);
+  } catch (error) {
+    throw new Error(`invalid base64 image buffer: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes.buffer;
+}
+
 export async function fetchImageAsFile(jobId: string, url: string): Promise<File> {
   let lastError: unknown = null;
+  let bridgeError: unknown = null;
   const normalizedInput = normalizeProxyImageUrl(url);
 
   for (let attempt = 1; attempt <= IMAGE_FETCH_MAX_ATTEMPTS; attempt += 1) {
@@ -138,6 +210,7 @@ export async function fetchImageAsFile(jobId: string, url: string): Promise<File
         error?: string;
         mimeType?: string;
         buffer?: ArrayBuffer;
+        bufferBase64?: string;
         size?: number;
       };
 
@@ -146,13 +219,67 @@ export async function fetchImageAsFile(jobId: string, url: string): Promise<File
         throw new Error(`${reason} | imageUrl=${String(normalizedInput || url).slice(0, 320)}`);
       }
       const mimeType = String(res.mimeType || 'image/png');
-      const buffer = res.buffer as ArrayBuffer;
       const size = Number(res.size || 0);
-      if (!buffer || !size) throw new Error('empty image buffer');
+      const buffer = (() => {
+        if (typeof res.bufferBase64 === 'string' && res.bufferBase64.trim()) return base64ToArrayBuffer(res.bufferBase64);
+        if (res.buffer instanceof ArrayBuffer) return res.buffer;
+        return null;
+      })();
+      if (!buffer || !size) {
+        const keys = (() => {
+          try {
+            return Object.keys(res || {}).slice(0, 10);
+          } catch {
+            return [];
+          }
+        })();
+        const base64Len = typeof res.bufferBase64 === 'string' ? res.bufferBase64.length : -1;
+        const bufferTag = (() => {
+          try {
+            return Object.prototype.toString.call(res.buffer);
+          } catch {
+            return '<unknown>';
+          }
+        })();
+        const bufferKeysSample = (() => {
+          try {
+            if (!res.buffer || typeof res.buffer !== 'object') return '';
+            return Object.keys(res.buffer as unknown as Record<string, unknown>)
+              .slice(0, 8)
+              .join(',');
+          } catch {
+            return '';
+          }
+        })();
+        const bufferSample0 = (() => {
+          try {
+            const anyBuf = res.buffer as unknown as Record<string, unknown>;
+            const value = anyBuf?.['0'];
+            return typeof value === 'number' ? String(value) : typeof value;
+          } catch {
+            return '';
+          }
+        })();
+        const bufferByteLength = (() => {
+          try {
+            return (res.buffer as ArrayBuffer | undefined)?.byteLength || 0;
+          } catch {
+            return 0;
+          }
+        })();
+        throw new Error(
+          `empty image buffer (size=${size} keys=${keys.join(',')} base64Len=${base64Len} bufferTag=${bufferTag} bufferKeys=${bufferKeysSample} buffer0=${bufferSample0} bufferByteLength=${bufferByteLength})`
+        );
+      }
+      if (buffer.byteLength !== size) throw new Error(`invalid image buffer size: ${buffer.byteLength}/${size}`);
+      if (!looksLikeImageBinary(mimeType, buffer, size)) {
+        throw new Error(`invalid image binary: mime=${mimeType || 'empty'} size=${size}`);
+      }
       const ext = pickFileExtension(mimeType);
       return new File([buffer], `image.${ext}`, { type: mimeType });
     } catch (error) {
       lastError = error;
+      bridgeError = error;
       if (attempt < IMAGE_FETCH_MAX_ATTEMPTS) {
         await new Promise((r) => setTimeout(r, 450));
       }
@@ -160,14 +287,23 @@ export async function fetchImageAsFile(jobId: string, url: string): Promise<File
   }
 
   const fallbackCandidates = buildDirectFetchCandidates(normalizedInput || url);
+  const fallbackErrors: string[] = [];
   for (const candidate of fallbackCandidates) {
     try {
       return await fetchImageAsFileByDirectFetch(candidate);
     } catch (error) {
       lastError = error;
+      fallbackErrors.push(error instanceof Error ? error.message : String(error));
     }
   }
 
+  if (bridgeError && fallbackErrors.length) {
+    throw new Error(
+      `fetch image failed (bridge + direct). bridge=${bridgeError instanceof Error ? bridgeError.message : String(bridgeError)} | direct=${fallbackErrors
+        .slice(-2)
+        .join(' | ')}`
+    );
+  }
   throw lastError instanceof Error ? lastError : new Error('fetch image failed');
 }
 
@@ -426,6 +562,13 @@ export async function fillEditorByTokens(params: {
   const editorRoot = params.editorRoot;
   const doc = editorRoot.ownerDocument;
   const view = bridgeViewOf(editorRoot);
+  const isProseMirrorRoot = (() => {
+    try {
+      return editorRoot.classList.contains('ProseMirror');
+    } catch {
+      return false;
+    }
+  })();
 
   const tokens = Array.isArray(params.tokens) ? params.tokens : [];
   const imageTotal = tokens.filter((t) => t?.kind === 'image').length;
@@ -448,22 +591,44 @@ export async function fillEditorByTokens(params: {
   } catch {
     // ignore
   }
+  // ProseMirror 场景下，execCommand('delete') 偶发不生效；用 insertHTML 覆写为一个空段落兜底清空。
   try {
-    if (params.writeMode === 'text') {
-      (editorRoot as HTMLElement).innerText = '';
-    } else {
-      (editorRoot as HTMLElement).innerHTML = '';
+    if (isProseMirrorRoot) {
+      const hasLeft = (() => {
+        try {
+          const textLen = String(editorRoot.textContent || '').replace(/\s+/g, '').length;
+          const imgCount = editorRoot.querySelectorAll('img').length;
+          return textLen > 0 || imgCount > 0;
+        } catch {
+          return false;
+        }
+      })();
+      if (hasLeft) {
+        doc.execCommand('selectAll', false);
+        doc.execCommand('insertHTML', false, '<p><br/></p>');
+      }
     }
   } catch {
     // ignore
+  }
+  if (!isProseMirrorRoot) {
+    try {
+      if (params.writeMode === 'text') {
+        (editorRoot as HTMLElement).innerText = '';
+      } else {
+        (editorRoot as HTMLElement).innerHTML = '';
+      }
+    } catch {
+      // ignore
+    }
   }
 
   const insertText = (text: string) => {
     const t = String(text || '');
     if (!t) return;
     try {
-      doc.execCommand('insertText', false, t);
-      return;
+      const ok = doc.execCommand('insertText', false, t);
+      if (ok) return;
     } catch {
       // ignore
     }
@@ -476,12 +641,86 @@ export async function fillEditorByTokens(params: {
     }
   };
 
-  const insertHtml = (html: string) => {
+  const waitDomTick = async () => {
+    await new Promise<void>((resolve) => {
+      try {
+        view.requestAnimationFrame(() => resolve());
+      } catch {
+        setTimeout(() => resolve(), 0);
+      }
+    });
+  };
+
+  // 给编辑器一点时间完成清空（尤其是 ProseMirror）
+  await waitDomTick();
+
+  const insertHtml = async (html: string) => {
     const h = String(html || '');
     if (!h.trim()) return;
+    const plain = htmlToPlainTextSafe(h);
+    const baselineLen = (() => {
+      try {
+        return String(editorRoot.textContent || '').length;
+      } catch {
+        return 0;
+      }
+    })();
+
+    const hasGrowth = (): boolean => {
+      try {
+        const now = String(editorRoot.textContent || '').length;
+        return now - baselineLen > Math.min(20, Math.max(4, Math.round(plain.replace(/\s+/g, '').length * 0.15)));
+      } catch {
+        return false;
+      }
+    };
+
+    const tryPasteEvent = () => {
+      try {
+        const dt = new view.DataTransfer();
+        try {
+          dt.setData('text/html', h);
+        } catch {
+          // ignore
+        }
+        try {
+          dt.setData('text/plain', plain);
+        } catch {
+          // ignore
+        }
+
+        try {
+          const ev = new (view as unknown as { ClipboardEvent: typeof ClipboardEvent }).ClipboardEvent('paste', {
+            bubbles: true,
+            cancelable: true,
+            clipboardData: dt,
+          } as unknown as ClipboardEventInit);
+          editorRoot.dispatchEvent(ev);
+          return true;
+        } catch {
+          // ignore
+        }
+
+        const ev = new view.Event('paste', { bubbles: true, cancelable: true });
+        (ev as unknown as { clipboardData?: DataTransfer }).clipboardData = dt;
+        editorRoot.dispatchEvent(ev);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    if (tryPasteEvent()) {
+      await waitDomTick();
+      if (hasGrowth()) return;
+    }
+
     try {
-      doc.execCommand('insertHTML', false, h);
-      return;
+      const ok = doc.execCommand('insertHTML', false, h);
+      if (ok) {
+        await waitDomTick();
+        if (hasGrowth()) return;
+      }
     } catch {
       // ignore
     }
@@ -505,7 +744,7 @@ export async function fillEditorByTokens(params: {
 
     if (token.kind === 'html') {
       if (params.writeMode === 'html') {
-        insertHtml(token.html);
+        await insertHtml(token.html);
       } else {
         insertText(htmlToPlainTextSafe(token.html) + '\n');
       }

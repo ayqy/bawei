@@ -60,7 +60,11 @@
 - publish 动作下：每个渠道不需要额外确认即可触发发布（除登录/实名/验证码/必填项等客观限制）
 
 ## 4. 真实发布长跑脚本（CDP）
-> 运行：`KEEP_BROWSER_OPEN=1 node scripts/live-publish-chrome-cdp.mjs`
+> 推荐两步运行（复用同一浏览器，便于先登录/过验证码）：
+> 1) `npm run live:open`
+> 2) `npm run live:publish -- <微信文章URL>`
+>
+> 兼容旧用法（单次发布）：`npm run publish:live -- <微信文章URL>`
 
 - 断言：
   - 首轮登录审计会写入 `tmp/mcp-login-audit.json`（明确标记未登录渠道）

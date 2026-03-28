@@ -327,8 +327,16 @@
     "message": "验收未通过：详情页未检测到原文链接",
     "description": "V2 runtime message"
   },
+  "v2MsgVerifyFailedDetailImageCountInsufficient": {
+    "message": "验收未通过：详情页图片数量不足（$1/$2）",
+    "description": "V2 runtime message"
+  },
   "v2MsgFillingContent": {
     "message": "正在填充正文",
+    "description": "V2 runtime message"
+  },
+  "v2MsgContentFilled": {
+    "message": "正文已写入",
     "description": "V2 runtime message"
   },
   "v2MsgConfirmingResult": {

@@ -102,7 +102,7 @@ export type FetchImageResponse =
   | {
       success: true;
       mimeType: string;
-      buffer: ArrayBuffer;
+      bufferBase64: string;
       size: number;
     }
   | {

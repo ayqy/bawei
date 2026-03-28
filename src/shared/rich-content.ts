@@ -15,6 +15,33 @@ function rcEscapeAttr(value: string): string {
   return value.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
 }
 
+function rcShouldSkipImageUrl(rawUrl: string): boolean {
+  const value = String(rawUrl || '').trim();
+  if (!value) return true;
+
+  const candidate = (() => {
+    if (rcIsProxyUrl(value)) {
+      const target = rcDecodeProxyTarget(value);
+      if (target) return target;
+    }
+    return value;
+  })();
+
+  try {
+    const u = new URL(candidate);
+    const host = u.hostname.toLowerCase();
+    const pathname = u.pathname.toLowerCase();
+    if (host === 'res.wx.qq.com') return true;
+    if (pathname.includes('pic_blank.gif')) return true;
+    return false;
+  } catch {
+    const low = candidate.toLowerCase();
+    if (low.includes('res.wx.qq.com/')) return true;
+    if (low.includes('pic_blank.gif')) return true;
+    return false;
+  }
+}
+
 function rcNormalizeImageUrl(raw: string, baseUrl: string): string {
   const v = String(raw || '').trim();
   if (!v) return '';
@@ -63,6 +90,7 @@ export function toProxyImageUrl(raw: string, baseUrl: string): string {
   if (!normalized) return '';
 
   if (normalized.startsWith('data:') || normalized.startsWith('blob:')) return '';
+  if (rcShouldSkipImageUrl(normalized)) return '';
   if (rcIsProxyUrl(normalized)) return normalized;
 
   try {
@@ -79,10 +107,14 @@ export function toTokenImageUrl(raw: string, baseUrl: string): string {
   const normalized = rcNormalizeImageUrl(raw, baseUrl);
   if (!normalized) return '';
   if (normalized.startsWith('data:') || normalized.startsWith('blob:')) return '';
+  if (rcShouldSkipImageUrl(normalized)) return '';
 
   if (rcIsProxyUrl(normalized)) {
     const target = rcDecodeProxyTarget(normalized);
-    if (target) return `${RC_IMAGE_PROXY_ENDPOINT}${encodeURIComponent(target)}`;
+    if (target) {
+      if (rcShouldSkipImageUrl(target)) return '';
+      return `${RC_IMAGE_PROXY_ENDPOINT}${encodeURIComponent(target)}`;
+    }
     return rcStripHash(normalized);
   }
 
@@ -138,10 +170,12 @@ export function buildRichContentTokens(params: {
   contentHtml: string;
   baseUrl: string;
   sourceUrl: string;
+  htmlMode?: 'plain' | 'raw';
 }): RcRichContentToken[] {
   const contentHtml = String(params?.contentHtml || '');
   const baseUrl = String(params?.baseUrl || '');
   const sourceUrl = String(params?.sourceUrl || '');
+  const htmlMode = params?.htmlMode === 'raw' ? 'raw' : 'plain';
 
   const container = document.createElement('div');
   container.innerHTML = contentHtml;
@@ -153,9 +187,29 @@ export function buildRichContentTokens(params: {
     const h = String(html || '').trim();
     if (!h) return;
     if (/<img\b/i.test(h)) return; // safety: html token must not include img
-    const plain = htmlToPlainTextSafe(h);
-    if (!plain) return;
-    tokens.push({ kind: 'html', html: `<p>${rcEscapeAttr(plain)}</p>` });
+
+    if (htmlMode === 'plain') {
+      const plain = htmlToPlainTextSafe(h);
+      if (!plain) return;
+      tokens.push({ kind: 'html', html: `<p>${rcEscapeAttr(plain)}</p>` });
+      return;
+    }
+
+    try {
+      const tmp = document.createElement('div');
+      tmp.innerHTML = h;
+      for (const node of Array.from(tmp.querySelectorAll('img,script,style,iframe'))) {
+        node.remove();
+      }
+      const cleaned = String(tmp.innerHTML || '').trim();
+      if (!cleaned) return;
+      const plain = htmlToPlainTextSafe(cleaned);
+      const hasBreak = !!tmp.querySelector('br,hr');
+      if (!plain && !hasBreak) return;
+      tokens.push({ kind: 'html', html: cleaned });
+    } catch {
+      // ignore
+    }
   };
 
   let startNode: Node = container;

@@ -163,6 +163,40 @@ const ALL_CHANNELS: ChannelId[] = [
   'feishu-docs',
 ];
 
+function urlPrefix(url: string): string {
+  try {
+    const parsed = new URL(url);
+    return `${parsed.origin}${parsed.pathname}`;
+  } catch {
+    return url;
+  }
+}
+
+async function openOrReuseChannelTab(channelId: ChannelId, options: { active: boolean }): Promise<chrome.tabs.Tab> {
+  const url = CHANNEL_ENTRY_URLS[channelId];
+  const prefix = urlPrefix(url);
+  try {
+    const tabs = await chrome.tabs.query({});
+    const matches = tabs.filter((t) => t.id && typeof t.url === 'string' && t.url.startsWith(prefix));
+    const sorted = matches
+      .slice()
+      .sort((a, b) => Number((b as { lastAccessed?: unknown }).lastAccessed || 0) - Number((a as { lastAccessed?: unknown }).lastAccessed || 0));
+
+    const keep = sorted[0] || null;
+    const toClose = sorted.slice(1).map((t) => t.id).filter((id): id is number => typeof id === 'number');
+    if (toClose.length) {
+      await chrome.tabs.remove(toClose).catch(() => {});
+    }
+    if (keep?.id) {
+      return await chrome.tabs.update(keep.id, { url, active: options.active });
+    }
+  } catch {
+    // ignore and fallback create
+  }
+
+  return await chrome.tabs.create({ url, active: options.active });
+}
+
 function newJobId(): string {
   try {
     return crypto.randomUUID();
@@ -274,7 +308,7 @@ async function handleV2StartJob(message: StartJobRequest, sender: chrome.runtime
       channelsToRun.map(async (channelId) => {
         // Ensure the focus channel is opened in the foreground so that sites with strict
         // user-gesture requirements (e.g. modal dialogs / AI cover pickers) can proceed.
-        const tab = await chrome.tabs.create({ url: CHANNEL_ENTRY_URLS[channelId], active: channelId === message.focusChannel });
+        const tab = await openOrReuseChannelTab(channelId, { active: channelId === message.focusChannel });
         if (!tab.id) return;
         tabIdToContext.set(tab.id, { jobId, channelId });
         const next: ChannelRuntimeState = {
@@ -427,6 +461,7 @@ async function handleV2FocusChannelTab(message: FocusChannelTabRequest, sendResp
 
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 const IMAGE_FETCH_TIMEOUT_MS = 20_000;
+const IMAGE_MIN_BYTES = 32;
 const imageCache = new Map<string, { mimeType: string; buffer: ArrayBuffer; size: number; fetchedAt: number }>();
 const imageInFlight = new Map<string, Promise<{ mimeType: string; buffer: ArrayBuffer; size: number; fetchedAt: number }>>();
 const jobIdToImageUrls = new Map<string, Set<string>>();
@@ -440,7 +475,12 @@ function normalizeProxyImageUrl(raw: string): string {
     const outer = new URL(value);
     const host = outer.hostname.toLowerCase();
     const isProxy = host === 'read.useai.online' && outer.pathname.startsWith('/api/image-proxy');
-    if (!isProxy) return outer.toString();
+    if (!isProxy) {
+      if (outer.protocol === 'http:' && (host.endsWith('.qpic.cn') || host.endsWith('.qlogo.cn'))) {
+        outer.protocol = 'https:';
+      }
+      return outer.toString();
+    }
 
     const innerRaw = String(outer.searchParams.get('url') || '').trim();
     if (!innerRaw) return outer.toString();
@@ -448,6 +488,9 @@ function normalizeProxyImageUrl(raw: string): string {
     try {
       const inner = new URL(innerRaw);
       if (inner.protocol !== 'https:' && inner.protocol !== 'http:') return outer.toString();
+      if (inner.protocol === 'http:' && (inner.hostname.toLowerCase().endsWith('.qpic.cn') || inner.hostname.toLowerCase().endsWith('.qlogo.cn'))) {
+        inner.protocol = 'https:';
+      }
       if (inner.hash) inner.hash = '';
       outer.searchParams.set('url', inner.toString());
       return outer.toString();
@@ -481,6 +524,61 @@ function isAllowedImageUrl(raw: string): boolean {
   }
 }
 
+function decodeProxyTargetUrl(raw: string): string {
+  try {
+    const outer = new URL(String(raw || '').trim());
+    const host = outer.hostname.toLowerCase();
+    if (!(host === 'read.useai.online' && outer.pathname.startsWith('/api/image-proxy'))) return '';
+    const innerRaw = String(outer.searchParams.get('url') || '').trim();
+    if (!innerRaw) return '';
+    const inner = new URL(innerRaw);
+    if (inner.protocol !== 'https:' && inner.protocol !== 'http:') return '';
+    if (inner.protocol === 'http:' && (inner.hostname.toLowerCase().endsWith('.qpic.cn') || inner.hostname.toLowerCase().endsWith('.qlogo.cn'))) {
+      inner.protocol = 'https:';
+    }
+    if (inner.hash) inner.hash = '';
+    return inner.toString();
+  } catch {
+    return '';
+  }
+}
+
+function looksLikeImageBinary(mimeType: string, buffer: ArrayBuffer, size: number): boolean {
+  const mt = String(mimeType || '').toLowerCase();
+  const byteLen = Number(size || buffer?.byteLength || 0);
+  if (!byteLen || byteLen < IMAGE_MIN_BYTES) return false;
+
+  const head = new Uint8Array(buffer.slice(0, Math.min(16, byteLen)));
+  const ascii = (from: number, len: number) => {
+    try {
+      return String.fromCharCode(...Array.from(head.slice(from, from + len)));
+    } catch {
+      return '';
+    }
+  };
+
+  if (mt.includes('png')) {
+    if (byteLen < 64) return false;
+    return head.length >= 8 && head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47;
+  }
+  if (mt.includes('jpeg') || mt.includes('jpg')) {
+    if (byteLen < 64) return false;
+    return head.length >= 3 && head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff;
+  }
+  if (mt.includes('gif')) {
+    const sig = ascii(0, 6);
+    return sig === 'GIF87a' || sig === 'GIF89a';
+  }
+  if (mt.includes('webp')) {
+    return ascii(0, 4) === 'RIFF' && head.length >= 12 && ascii(8, 4) === 'WEBP';
+  }
+  if (mt.includes('svg')) {
+    return false;
+  }
+
+  return byteLen >= 128;
+}
+
 function isProxyImageUrl(raw: string): boolean {
   try {
     const u = new URL(String(raw || '').trim());
@@ -503,6 +601,19 @@ function cleanupImagesForJob(jobId: string): void {
 function stringifyError(err: unknown): string {
   if (err instanceof Error) return err.message || String(err);
   return String(err);
+}
+
+function arrayBufferToBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  const chunkSize = 0x8000;
+  const parts: string[] = [];
+
+  for (let offset = 0; offset < bytes.length; offset += chunkSize) {
+    const chunk = bytes.subarray(offset, Math.min(offset + chunkSize, bytes.length));
+    parts.push(String.fromCharCode(...Array.from(chunk)));
+  }
+
+  return btoa(parts.join(''));
 }
 
 async function fetchImageBinary(url: string, source: 'direct' | 'proxy'): Promise<{ mimeType: string; buffer: ArrayBuffer; size: number; fetchedAt: number }> {
@@ -546,22 +657,54 @@ async function fetchImageCached(url: string): Promise<{ mimeType: string; buffer
   const task = (async () => {
     const errors: string[] = [];
 
+    if (isProxyImageUrl(url)) {
+      const inner = decodeProxyTargetUrl(url);
+      if (inner) {
+        try {
+          const out = await fetchImageBinary(inner, 'direct');
+          if (!looksLikeImageBinary(out.mimeType, out.buffer, out.size)) {
+            throw new Error(`direct(inner) invalid image binary: mime=${out.mimeType} size=${out.size}`);
+          }
+          imageCache.set(url, out);
+          imageCache.set(inner, out);
+          return out;
+        } catch (error) {
+          errors.push(stringifyError(error));
+        }
+      }
+      try {
+        const out = await fetchImageBinary(url, 'proxy');
+        if (!looksLikeImageBinary(out.mimeType, out.buffer, out.size)) {
+          throw new Error(`proxy invalid image binary: mime=${out.mimeType} size=${out.size}`);
+        }
+        imageCache.set(url, out);
+        return out;
+      } catch (error) {
+        errors.push(stringifyError(error));
+      }
+
+      throw new Error(`fetch image failed: ${errors.join(' | ')}`);
+    }
+
     try {
       const out = await fetchImageBinary(url, 'direct');
+      if (!looksLikeImageBinary(out.mimeType, out.buffer, out.size)) {
+        throw new Error(`direct invalid image binary: mime=${out.mimeType} size=${out.size}`);
+      }
       imageCache.set(url, out);
       return out;
     } catch (error) {
       errors.push(stringifyError(error));
     }
 
-    if (isProxyImageUrl(url)) {
-      throw new Error(`fetch image failed: ${errors.join(' | ')}`);
-    }
-
     const proxyUrl = `https://read.useai.online/api/image-proxy?url=${encodeURIComponent(url)}`;
     try {
       const out = await fetchImageBinary(proxyUrl, 'proxy');
+      if (!looksLikeImageBinary(out.mimeType, out.buffer, out.size)) {
+        throw new Error(`proxy invalid image binary: mime=${out.mimeType} size=${out.size}`);
+      }
       imageCache.set(url, out);
+      imageCache.set(proxyUrl, out);
       return out;
     } catch (error) {
       errors.push(stringifyError(error));
@@ -607,7 +750,8 @@ async function handleV3FetchImage(message: FetchImageRequest, sendResponse: (res
     }
     set.add(effectiveUrl);
 
-    sendResponse({ success: true, mimeType: data.mimeType, buffer: data.buffer, size: data.size });
+    const bufferBase64 = arrayBufferToBase64(data.buffer);
+    sendResponse({ success: true, mimeType: data.mimeType, bufferBase64, size: data.size, debugMarker: 'v3-image-base64' } as FetchImageResponse & { debugMarker: string });
   } catch (error) {
     sendResponse({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
   }

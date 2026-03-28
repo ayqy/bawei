@@ -26,6 +26,7 @@ dist-ssr
 .env
 .tmp_build/
 tmp/
+artifacts/
 
 # Build artifacts from publish script
 plugin-*.zip

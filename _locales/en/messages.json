@@ -327,8 +327,16 @@
     "message": "Verification failed: source link not detected on the details page.",
     "description": "V2 runtime message"
   },
+  "v2MsgVerifyFailedDetailImageCountInsufficient": {
+    "message": "Verification failed: insufficient images on the details page ($1/$2).",
+    "description": "V2 runtime message"
+  },
   "v2MsgFillingContent": {
     "message": "Filling content…",
+    "description": "V2 runtime message"
+  },
+  "v2MsgContentFilled": {
+    "message": "Content filled.",
     "description": "V2 runtime message"
   },
   "v2MsgConfirmingResult": {
