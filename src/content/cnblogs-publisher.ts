@@ -39,8 +39,14 @@ function isEditorPage(): boolean {
   return location.hostname === 'i.cnblogs.com' && location.pathname.startsWith('/posts/edit');
 }
 
+function isDraftDonePage(): boolean {
+  if (location.hostname !== 'i.cnblogs.com') return false;
+  if (!location.pathname.startsWith('/posts/edit-done')) return false;
+  return /(?:^|[;?&#])isPublished=false(?:[;?&#]|$)/i.test(`${location.pathname}${location.search}${location.hash}`);
+}
+
 function isListPage(): boolean {
-  return location.hostname === 'i.cnblogs.com' && location.pathname.startsWith('/posts');
+  return location.hostname === 'i.cnblogs.com' && (location.pathname === '/posts' || location.pathname === '/posts/');
 }
 
 function isDetailPage(): boolean {
@@ -284,7 +290,7 @@ async function stageSubmitPublish(): Promise<void> {
   (btn as HTMLButtonElement).click();
 }
 
-async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
+async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<boolean> {
   currentStage = 'confirmSuccess';
   await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgConfirmingResult') });
 
@@ -298,7 +304,7 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
     const text = document.body?.innerText || '';
     if (okTexts.some((t) => text.includes(t))) {
       await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgSuccessDetectedStartVerify') });
-      return;
+      return true;
     }
     await new Promise((r) => setTimeout(r, 300));
   }
@@ -310,6 +316,7 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
       action === 'draft' ? getMessage('v2MsgPleaseConfirmDraftSaved') : getMessage('v2MsgPleaseConfirmPublishCompleted'),
     userSuggestion: getMessage('v2SugHandleModalRequiredThenContinueOrRetry'),
   });
+  return false;
 }
 
 async function runFlow(job: AnyJob): Promise<void> {
@@ -319,10 +326,18 @@ async function runFlow(job: AnyJob): Promise<void> {
   await stageFillContent(job.article.contentHtml, job.article.sourceUrl);
   if (job.action === 'draft') {
     await stageSaveDraft();
-    await stageConfirmSuccess('draft');
+    const confirmed = await stageConfirmSuccess('draft');
+    if (!confirmed) return;
+    await report({
+      status: 'success',
+      stage: 'done',
+      userMessage: getMessage('v2MsgDraftSavedVerifyDone'),
+      devDetails: summarizeVerifyDetails({ draftUrl: location.href, mode: 'same-page-confirm' }),
+    });
   } else {
     await stageSubmitPublish();
-    await stageConfirmSuccess('publish');
+    const confirmed = await stageConfirmSuccess('publish');
+    if (!confirmed) return;
     await report({
       status: 'running',
       stage: 'confirmSuccess',
@@ -344,6 +359,17 @@ async function bootstrap(): Promise<void> {
 
     if (isEditorPage()) {
       await runFlow(currentJob);
+      return;
+    }
+
+    if (isDraftDonePage()) {
+      currentStage = 'confirmSuccess';
+      await report({
+        status: 'success',
+        stage: 'done',
+        userMessage: getMessage('v2MsgDraftSavedVerifyDone'),
+        devDetails: summarizeVerifyDetails({ draftUrl: location.href, isPublished: false }),
+      });
       return;
     }
 

@@ -10,6 +10,7 @@
     "scripting"
   ],
   "host_permissions": [
+    "https://baijiahao.baidu.com/*",
     "https://*.qpic.cn/*",
     "https://*.qlogo.cn/*",
     "https://read.useai.online/*"

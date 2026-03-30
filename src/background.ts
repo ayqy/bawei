@@ -774,14 +774,68 @@ async function handleV3ExecuteMainWorld(
   sendResponse: (response: ExecuteMainWorldResponse) => void
 ) {
   try {
-    const tabId = sender.tab?.id;
+    const tabId = sender.tab?.id || message.tabId;
     if (!tabId) throw new Error('Missing sender tab id');
+
+    if (message.action.startsWith('weixin-')) {
+      const response = await chrome.tabs.sendMessage(tabId, message);
+      sendResponse((response || { success: false, error: 'Empty weixin content-script response' }) as ExecuteMainWorldResponse);
+      return;
+    }
 
     const injected = await chrome.scripting.executeScript({
       target: { tabId },
       world: 'MAIN',
-      func: (action: string, payload: Record<string, unknown>) => {
+      func: async (action: string, payload: Record<string, unknown>) => {
         const bodyText = () => String(document.body?.innerText || '');
+        const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+        const parseRuntime = () => {
+          try {
+            const raw = String(document.querySelector('#bawei-v2-runtime-state')?.textContent || '').trim();
+            if (!raw) return null;
+            return JSON.parse(raw);
+          } catch {
+            return null;
+          }
+        };
+        const panelVisible = () => {
+          const panel = document.querySelector('#bawei-v2-panel');
+          if (!(panel instanceof HTMLElement)) return false;
+          const rect = panel.getBoundingClientRect();
+          if (rect.width <= 0 || rect.height <= 0) return false;
+          const style = getComputedStyle(panel);
+          return !(style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0');
+        };
+        const collectUiState = () => {
+          const runtime = parseRuntime();
+          const checkedChannels = Array.from(document.querySelectorAll('input[id^="bawei-v2-run-"]'))
+            .filter((node): node is HTMLInputElement => node instanceof HTMLInputElement && node.checked)
+            .map((node) => String(node.id || '').replace(/^bawei-v2-run-/, ''))
+            .filter(Boolean);
+          const selectedAction =
+            (document.querySelector('input[name="bawei_v2_action"]:checked') as HTMLInputElement | null)?.value || '';
+          const startButton = document.querySelector('#bawei-v2-start') as HTMLButtonElement | null;
+          return {
+            url: location.href,
+            title: document.title,
+            hasLauncher: !!document.querySelector('#bawei-v2-launcher'),
+            hasPanel: !!document.querySelector('#bawei-v2-panel'),
+            hasMirror: !!document.querySelector('#bawei-v2-runtime-state'),
+            panelVisible: panelVisible(),
+            selectedAction,
+            checkedChannels,
+            startButtonText: String(startButton?.textContent || '').trim(),
+            startButtonDisabled: !!startButton?.disabled,
+            runtime,
+            diagnosisText: String(document.querySelector('#bawei-v2-diagnosis')?.textContent || '').trim(),
+          };
+        };
+        const dispatchCheckbox = (input: HTMLInputElement, checked: boolean) => {
+          if (input.checked === checked) return;
+          input.checked = checked;
+          input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+        };
 
         if (action === 'tencent-set-title') {
           const input = document.querySelector('textarea.article-title') as HTMLTextAreaElement | null;
@@ -851,6 +905,152 @@ async function handleV3ExecuteMainWorld(
             pick.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, buttons: 1 }));
           });
           return { ok: true, picked: (pick.textContent || '').trim() };
+        }
+
+        if (action === 'baijiahao-set-content') {
+          const html = String(payload?.html || '').trim();
+          const sourceUrl = String(payload?.sourceUrl || '').trim();
+          if (!html) return { ok: false, error: 'content-html-empty' };
+
+          let editor: Record<string, unknown> | null = null;
+          let body: HTMLElement | null = null;
+          for (let i = 0; i < 40; i += 1) {
+            editor =
+              (window as unknown as { editor?: Record<string, unknown> }).editor ||
+              ((window as unknown as { UE_V2?: { getEditor?: (id: string) => Record<string, unknown> | null } }).UE_V2?.getEditor?.(
+                'ueditor_0'
+              ) as Record<string, unknown> | null) ||
+              null;
+            const iframe = document.querySelector('iframe#ueditor_0') as HTMLIFrameElement | null;
+            body = (iframe?.contentDocument?.body as HTMLElement | null) || null;
+            if (editor && body) break;
+            await wait(200);
+          }
+          if (!editor) return { ok: false, error: 'editor-not-found' };
+          if (!body) return { ok: false, error: 'editor-body-not-ready' };
+
+          const execCommand = typeof editor.execCommand === 'function' ? editor.execCommand.bind(editor) : null;
+          const setContent = typeof editor.setContent === 'function' ? editor.setContent.bind(editor) : null;
+          const sync = typeof editor.sync === 'function' ? editor.sync.bind(editor) : null;
+          const focus = typeof editor.focus === 'function' ? editor.focus.bind(editor) : null;
+
+          if (focus) {
+            try {
+              focus(true);
+            } catch {
+              // ignore
+            }
+          }
+
+          if (setContent) {
+            setContent(html);
+          } else if (execCommand) {
+            try {
+              execCommand('cleardoc');
+            } catch {
+              // ignore
+            }
+            execCommand('inserthtml', html);
+          } else {
+            return { ok: false, error: 'editor-write-api-unavailable' };
+          }
+
+          for (let i = 0; i < 20; i += 1) {
+            const bodyHtml = String(body.innerHTML || '');
+            const bodyText = String(body.innerText || body.textContent || '');
+            const hasSource = !sourceUrl || bodyHtml.includes(sourceUrl) || bodyText.includes(sourceUrl);
+            if (bodyHtml.trim() && hasSource) break;
+            await wait(150);
+          }
+
+          const sourceHtml = sourceUrl
+            ? `<p><br></p><p>原文链接：<a href="${sourceUrl}" target="_blank" rel="noreferrer noopener">${sourceUrl}</a></p>`
+            : '';
+          let finalHtml = String(body.innerHTML || '');
+          let finalText = String(body.innerText || body.textContent || '');
+          const hasSource = !sourceUrl || finalHtml.includes(sourceUrl) || finalText.includes(sourceUrl);
+          if (!hasSource && sourceHtml && execCommand) {
+            execCommand('inserthtml', sourceHtml);
+            await wait(150);
+            finalHtml = String(body.innerHTML || '');
+            finalText = String(body.innerText || body.textContent || '');
+          }
+
+          if (sync) {
+            try {
+              sync();
+            } catch {
+              // ignore
+            }
+          }
+
+          const ok = !!finalHtml.trim() && (!sourceUrl || finalHtml.includes(sourceUrl) || finalText.includes(sourceUrl));
+          return {
+            ok,
+            error: ok ? '' : !finalHtml.trim() ? 'editor-body-empty-after-set-content' : 'source-url-missing-after-set-content',
+            finalHtmlLength: finalHtml.length,
+            finalTextLength: finalText.length,
+            hasSourceUrl: !sourceUrl || finalHtml.includes(sourceUrl) || finalText.includes(sourceUrl),
+          };
+        }
+
+        if (action === 'weixin-probe-ui') {
+          return { ok: true, ...(collectUiState() as Record<string, unknown>) };
+        }
+
+        if (action === 'weixin-open-panel') {
+          const launcher = document.querySelector('#bawei-v2-launcher') as HTMLElement | null;
+          if (launcher) {
+            launcher.click();
+          } else {
+            window.dispatchEvent(new CustomEvent('bawei-v2-ensure-panel', { detail: { action: 'show' } }));
+          }
+          for (let i = 0; i < 10; i += 1) {
+            if (panelVisible()) break;
+            await wait(200);
+          }
+          return { ok: true, ...(collectUiState() as Record<string, unknown>) };
+        }
+
+        if (action === 'weixin-set-action') {
+          const value = String(payload?.value || '').trim();
+          const input = document.querySelector(`input[name="bawei_v2_action"][value="${value}"]`) as HTMLInputElement | null;
+          if (!input) return { ok: false, reason: 'action-input-not-found', value };
+          input.click();
+          input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+          input.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+          await wait(100);
+          return { ok: true, ...(collectUiState() as Record<string, unknown>) };
+        }
+
+        if (action === 'weixin-set-channels') {
+          const wanted = new Set(
+            Array.isArray(payload?.channelIds)
+              ? payload.channelIds.map((item) => String(item || '').trim()).filter(Boolean)
+              : []
+          );
+          const inputs = Array.from(document.querySelectorAll('input[id^="bawei-v2-run-"]')).filter(
+            (node): node is HTMLInputElement => node instanceof HTMLInputElement
+          );
+          for (const input of inputs) {
+            const id = String(input.id || '').replace(/^bawei-v2-run-/, '');
+            dispatchCheckbox(input, wanted.has(id));
+          }
+          await wait(100);
+          return { ok: true, ...(collectUiState() as Record<string, unknown>) };
+        }
+
+        if (action === 'weixin-start') {
+          const startButton = document.querySelector('#bawei-v2-start') as HTMLButtonElement | null;
+          if (!startButton) return { ok: false, reason: 'start-button-not-found' };
+          if (startButton.disabled) return { ok: false, reason: 'start-button-disabled', ...(collectUiState() as Record<string, unknown>) };
+          startButton.click();
+          await wait(200);
+          return { ok: true, ...(collectUiState() as Record<string, unknown>) };
+        }
+
+        if (action === 'weixin-read-runtime') {
+          return { ok: true, ...(collectUiState() as Record<string, unknown>) };
         }
 
         throw new Error(`Unsupported main-world action: ${action}`);
@@ -1011,6 +1211,12 @@ async function dispatchDirectMessage(message: unknown): Promise<unknown> {
   if (type === V2_FOCUS_CHANNEL_TAB) {
     return await new Promise<FocusChannelTabResponse>((resolve) => {
       handleV2FocusChannelTab(message as FocusChannelTabRequest, resolve);
+    });
+  }
+
+  if (type === V3_EXECUTE_MAIN_WORLD) {
+    return await new Promise<ExecuteMainWorldResponse>((resolve) => {
+      handleV3ExecuteMainWorld(message as ExecuteMainWorldRequest, {} as chrome.runtime.MessageSender, resolve);
     });
   }
 

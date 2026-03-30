@@ -447,9 +447,16 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
 async function stageSaveDraft(): Promise<void> {
   currentStage = 'saveDraft';
   await report({ status: 'running', stage: 'saveDraft', userMessage: getMessage('v2MsgSavingDraft') });
-  const el = Array.from(document.querySelectorAll<HTMLElement>('a, button, div')).find(
-    (n) => (n.textContent || '').trim() === '保存草稿'
-  );
+  const el = Array.from(document.querySelectorAll<HTMLElement>('a, button, div, span'))
+    .filter((n) => {
+      const style = window.getComputedStyle(n);
+      const rect = n.getBoundingClientRect();
+      return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0;
+    })
+    .find((n) => {
+      const text = (n.textContent || '').replace(/\s+/g, '');
+      return text === '保存草稿' || text === '存为草稿' || text === '存草稿' || /(?:保存|存为|存入)?草稿/.test(text);
+    });
   if (!el) throw new Error('未找到保存草稿按钮');
   (el as HTMLElement).click();
 }
@@ -497,7 +504,7 @@ async function stageSubmitPublish(): Promise<void> {
   }
 }
 
-async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
+async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<boolean> {
   currentStage = 'confirmSuccess';
   await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgConfirmingResult') });
 
@@ -511,7 +518,7 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
     if (action === 'publish') {
       if (location.hostname === 'my.oschina.net' && /\/blog\/\d+/.test(location.pathname)) {
         await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgSuccessDetectedStartVerify') });
-        return;
+        return true;
       }
 
       const text = document.body?.innerText || '';
@@ -522,7 +529,7 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
           continue;
         }
         await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgSuccessDetectedStartVerify') });
-        return;
+        return true;
       }
 
       await new Promise((r) => setTimeout(r, 300));
@@ -532,7 +539,7 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
     const text = document.body?.innerText || '';
     if (okTexts.some((t) => text.includes(t))) {
       await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgSuccessDetectedStartVerify') });
-      return;
+      return true;
     }
     await new Promise((r) => setTimeout(r, 300));
   }
@@ -543,6 +550,7 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
     userMessage: action === 'draft' ? getMessage('v2MsgPleaseConfirmDraftSaved') : getMessage('v2MsgPleaseConfirmPublishCompleted'),
     userSuggestion: getMessage('v2SugHandleModalRiskRequiredThenContinueOrRetry'),
   });
+  return false;
 }
 
 async function runFlow(job: AnyJob): Promise<void> {
@@ -580,10 +588,19 @@ async function runFlow(job: AnyJob): Promise<void> {
   await stageFillContent(job.article.contentHtml, job.article.sourceUrl);
   if (job.action === 'draft') {
     await stageSaveDraft();
-    await stageConfirmSuccess('draft');
+    const confirmed = await stageConfirmSuccess('draft');
+    if (!confirmed) return;
+    await report({
+      status: 'success',
+      stage: 'done',
+      userMessage: getMessage('v2MsgDraftSavedVerifyDone'),
+      devDetails: summarizeVerifyDetails({ draftUrl: location.href }),
+    });
+    return;
   } else {
     await stageSubmitPublish();
-    await stageConfirmSuccess('publish');
+    const confirmed = await stageConfirmSuccess('publish');
+    if (!confirmed) return;
     // 若已跳到详情页（/blog/<id>），优先留在详情页直接验收原文链接
     if (location.hostname === 'my.oschina.net' && /\/blog\/\d+/.test(location.pathname)) {
       await report({
@@ -628,7 +645,7 @@ async function bootstrap(): Promise<void> {
       if (isDetailPage) {
         await retryUntil(
           async () => {
-            if (pageContainsSourceUrlLoose(currentJob.article.sourceUrl)) return true;
+            if (currentJob && pageContainsSourceUrlLoose(currentJob.article.sourceUrl)) return true;
             const text = document.body?.innerText || '';
             if (/待审核|正在审核中|重新编辑|原文链接/.test(text)) return true;
             throw new Error('detail not ready');

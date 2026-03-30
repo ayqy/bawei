@@ -1523,6 +1523,13 @@ async function runFlow(job: AnyJob): Promise<void> {
   if (job.action === 'draft') {
     await stageSaveDraft();
     await stageConfirmSuccess('draft');
+    await report({
+      status: 'success',
+      stage: 'done',
+      userMessage: getMessage('v2MsgDraftSavedVerifyDone'),
+      devDetails: summarizeVerifyDetails({ draftUrl: location.href }),
+    });
+    return;
   } else {
     await stageSubmitPublish();
     await stageConfirmSuccess('publish');

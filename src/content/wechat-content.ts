@@ -141,14 +141,20 @@ function rewriteOneArticleImage(img: HTMLImageElement): void {
   const proxied = toProxyImageUrl(raw, window.location.href);
   if (!proxied) return;
 
+  let hasTrackedAttr = false;
   for (const key of attrs) {
-    if (img.hasAttribute(key)) img.setAttribute(key, proxied);
+    if (!img.hasAttribute(key)) continue;
+    hasTrackedAttr = true;
+    if (img.getAttribute(key) !== proxied) {
+      img.setAttribute(key, proxied);
+    }
   }
-  if (!attrs.some((key) => img.hasAttribute(key))) {
+
+  if (!hasTrackedAttr && img.getAttribute('src') !== proxied) {
     img.setAttribute('src', proxied);
   }
 
-  if (img.hasAttribute('srcset')) {
+  if (img.hasAttribute('srcset') && img.getAttribute('srcset') !== proxied) {
     img.setAttribute('srcset', proxied);
   }
 }
@@ -259,7 +265,7 @@ function writeRuntimeStateMirror(): void {
       const s = latestState?.[ch.id];
       state[ch.id] = {
         status: s?.status || 'not_started',
-        stage: s?.stage || '',
+        stage: s?.stage,
         userMessage: s?.userMessage || '',
         userSuggestion: s?.userSuggestion || '',
       };
@@ -362,6 +368,170 @@ function showPanel(): void {
   renderDiagnosis();
   refreshPanelControls();
   writeRuntimeStateMirror();
+}
+
+function collectUiState(): Record<string, unknown> {
+  const runtime = (() => {
+    try {
+      const raw = String(document.querySelector('#bawei-v2-runtime-state')?.textContent || '').trim();
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  })();
+
+  const panel = document.querySelector('#bawei-v2-panel') as HTMLElement | null;
+  const launcher = document.querySelector('#bawei-v2-launcher') as HTMLElement | null;
+  const panelVisible = (() => {
+    if (!panel) return false;
+    const rect = panel.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return false;
+    const style = getComputedStyle(panel);
+    return !(style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0');
+  })();
+
+  const checkedChannels = Array.from(document.querySelectorAll('input[id^="bawei-v2-run-"]'))
+    .filter((node): node is HTMLInputElement => node instanceof HTMLInputElement && node.checked)
+    .map((node) => String(node.id || '').replace(/^bawei-v2-run-/, ''))
+    .filter(Boolean);
+
+  const selectedActionValue =
+    (document.querySelector('input[name="bawei_v2_action"]:checked') as HTMLInputElement | null)?.value || '';
+  const startButton = document.querySelector('#bawei-v2-start') as HTMLButtonElement | null;
+
+  return {
+    url: window.location.href,
+    title: document.title,
+    hasLauncher: !!launcher,
+    hasPanel: !!panel,
+    hasMirror: !!document.querySelector('#bawei-v2-runtime-state'),
+    panelVisible,
+    selectedAction: selectedActionValue,
+    checkedChannels,
+    startButtonText: String(startButton?.textContent || '').trim(),
+    startButtonDisabled: !!startButton?.disabled,
+    diagnosisText: String(document.querySelector('#bawei-v2-diagnosis')?.textContent || '').trim(),
+    runtime,
+  };
+}
+
+function dispatchCheckbox(input: HTMLInputElement, checked: boolean): void {
+  if (input.checked === checked) return;
+  input.checked = checked;
+  input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+  input.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+}
+
+async function handleWeixinPanelRemoteAction(
+  action: string,
+  payload?: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  if (action === 'weixin-probe-ui') {
+    return { ok: true, ...collectUiState() };
+  }
+
+  if (action === 'weixin-open-panel') {
+    ensurePanelArtifacts();
+    showPanel();
+    return { ok: true, ...collectUiState() };
+  }
+
+  if (action === 'weixin-set-action') {
+    ensurePanelArtifacts();
+    showPanel();
+    const value = String(payload?.value || '').trim();
+    const input = document.querySelector(`input[name="bawei_v2_action"][value="${value}"]`) as HTMLInputElement | null;
+    if (!input) {
+      return { ok: false, reason: 'action-input-not-found', value, ...collectUiState() };
+    }
+    input.click();
+    input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    return { ok: true, ...collectUiState() };
+  }
+
+  if (action === 'weixin-set-channels') {
+    ensurePanelArtifacts();
+    showPanel();
+    const wanted = new Set(
+      Array.isArray(payload?.channelIds) ? payload.channelIds.map((item) => String(item || '').trim()).filter(Boolean) : []
+    );
+    const inputs = Array.from(document.querySelectorAll('input[id^="bawei-v2-run-"]')).filter(
+      (node): node is HTMLInputElement => node instanceof HTMLInputElement
+    );
+    for (const input of inputs) {
+      const id = String(input.id || '').replace(/^bawei-v2-run-/, '');
+      dispatchCheckbox(input, wanted.has(id));
+    }
+    await new Promise((resolve) => setTimeout(resolve, 80));
+    return { ok: true, ...collectUiState() };
+  }
+
+  if (action === 'weixin-start') {
+    ensurePanelArtifacts();
+    showPanel();
+    const startButton = document.querySelector('#bawei-v2-start') as HTMLButtonElement | null;
+    if (!startButton) {
+      return { ok: false, reason: 'start-button-not-found', ...collectUiState() };
+    }
+    if (startButton.disabled) {
+      return { ok: false, reason: 'start-button-disabled', ...collectUiState() };
+    }
+    void handleStartClick();
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    return { ok: true, ...collectUiState() };
+  }
+
+  if (action === 'weixin-start-job') {
+    ensurePanelArtifacts();
+    showPanel();
+
+    const nextAction = String(payload?.action || '').trim();
+    if (nextAction === 'draft' || nextAction === 'publish') {
+      selectedAction = nextAction as PublishAction;
+      const radio = document.querySelector(`input[name="bawei_v2_action"][value="${nextAction}"]`) as HTMLInputElement | null;
+      if (radio) {
+        radio.checked = true;
+        radio.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+        radio.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+      }
+    }
+
+    if (Array.isArray(payload?.channelIds)) {
+      runChannels = new Set(payload.channelIds.map((item) => String(item || '').trim()).filter(Boolean) as ChannelId[]);
+      renderStatusList();
+      refreshPanelControls();
+      writeRuntimeStateMirror();
+    }
+
+    const startButton = document.querySelector('#bawei-v2-start') as HTMLButtonElement | null;
+    if (!startButton) {
+      return { ok: false, reason: 'start-button-not-found', ...collectUiState() };
+    }
+    if (startButton.disabled) {
+      return { ok: false, reason: 'start-button-disabled', ...collectUiState() };
+    }
+
+    void handleStartClick();
+
+    const deadline = Date.now() + 10_000;
+    while (Date.now() < deadline) {
+      if (currentJobId || isStartingJob || isAwaitingFirstBroadcast || isExecutingNow()) {
+        break;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    }
+
+    return { ok: true, ...collectUiState() };
+  }
+
+  if (action === 'weixin-read-runtime') {
+    return { ok: true, ...collectUiState() };
+  }
+
+  return { ok: false, reason: `unsupported-weixin-action:${action}` };
 }
 
 function createLauncherIcon(): void {
@@ -757,8 +927,8 @@ async function initialize(): Promise<void> {
         document.addEventListener('DOMContentLoaded', resolve, { once: true });
       });
     }
-    
-    // Additional wait for dynamic content
+
+    ensurePanelArtifacts();
     setTimeout(() => {
       ensurePanelArtifacts();
     }, 1000);
@@ -985,7 +1155,14 @@ if (shouldRun()) {
   console.log('WeChat content script not running - not a WeChat article page');
 }
 
-chrome.runtime.onMessage.addListener((message) => {
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === V3_EXECUTE_MAIN_WORLD && typeof message?.action === 'string' && message.action.startsWith('weixin-')) {
+    handleWeixinPanelRemoteAction(message.action, (message as { payload?: Record<string, unknown> }).payload)
+      .then((result) => sendResponse({ success: true, result }))
+      .catch((error) => sendResponse({ success: false, error: error instanceof Error ? error.message : String(error) }));
+    return true;
+  }
+
   if (message?.type === V2_JOB_BROADCAST) {
     if (currentJobId && message.jobId !== currentJobId) return;
     currentJobId = message.jobId;

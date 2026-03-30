@@ -111,11 +111,23 @@ export type FetchImageResponse =
       error: string;
     };
 
-export type ExecuteMainWorldAction = 'tencent-set-title' | 'tencent-set-tag-input' | 'tencent-click-tag-suggestion';
+export type ExecuteMainWorldAction =
+  | 'baijiahao-set-content'
+  | 'tencent-set-title'
+  | 'tencent-set-tag-input'
+  | 'tencent-click-tag-suggestion'
+  | 'weixin-probe-ui'
+  | 'weixin-open-panel'
+  | 'weixin-set-action'
+  | 'weixin-set-channels'
+  | 'weixin-start'
+  | 'weixin-start-job'
+  | 'weixin-read-runtime';
 
 export type ExecuteMainWorldRequest = {
   type: typeof V3_EXECUTE_MAIN_WORLD;
   action: ExecuteMainWorldAction;
+  tabId?: number;
   payload?: Record<string, unknown>;
 };
 

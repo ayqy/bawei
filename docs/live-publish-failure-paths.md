@@ -6,6 +6,24 @@
 
 记录真实站点发布过程中已经验证过的失败路径、低收益路径和稳定成功经验，避免后续在同一类问题上重复消耗。
 
+## 本轮最终回归（2026-03-30）
+
+1. **本轮 10 渠道成功的定义**
+   - 已用固定发布 profile `~/.bawei-live-profile`，在**插件页面面板链路**下完成真实回归。
+   - 本轮执行时显式设置了 `USE_BACKGROUND_DIRECT=0`，因此不是 background 直连捷径，而是走微信公众号文章页右上角悬浮入口 `#bawei-v2-launcher` 打开的发布面板。
+   - 这一定义对应“插件一键发布成功”；但它是**微信文章页内悬浮面板 UI**，不是 Chrome 工具栏里的浏览器 action popup。
+
+2. **本轮实际回归结果**
+   - 目标文章：`https://mp.weixin.qq.com/s/NBlnaBCThLQGV1aYUP2O8g`
+   - 草稿：10/10 全部成功
+   - 发布：10/10 全部成功
+   - 渠道：`cnblogs / oschina / woshipm / mowen / sspai / baijiahao / toutiao / feishu-docs / tencent-cloud-dev / csdn`
+
+3. **对“插件 UI 实测”的边界说明**
+   - 本轮已经验证的是：微信公众号文章页内的插件悬浮入口 + 发布面板 UI 可用，并可驱动 10 个渠道完成草稿/发布。
+   - `src/popup/` 对应的 Chrome 工具栏 popup，本轮**没有单独作为 10 渠道回归入口再做一轮独立验证**。
+   - 若后续要单独声明“popup 也 10/10 可用”，应再补一轮仅从工具栏 popup 发起的独立回归。
+
 ## 通用结论
 
 1. **不要做常驻无限重试**
@@ -76,6 +94,20 @@
    - 不能只验“有无原文链接”或“发布按钮是否可点”；还要同时核对编辑器落地态和最终详情页的正文结构。
    - 后续处理剩余渠道时，正文至少要检查：标题、段落、图片、原文链接四项。
    - 若站点侧点击发布时报出选择器/HTML 语法类错误（例如 `Syntax error, unrecognized expression: }<h1 ...`），应优先回查编辑器 DOM 是否混入了非法前导字符或脏富文本片段，而不是继续重试发布按钮。
+
+16. **CFT 的 `live:open` 只打开渠道页，不会自动唤醒微信页面板**
+   - 2026-03-30 本轮已确认：即使 CFT 进程命令行已经带上 `--load-extension=dist`，如果这次会话里只打开了各渠道编辑页、没有在同一会话里真正进入目标微信公众号文章页，那么 `chrome-extension://.../src/background.js` 的 worker 可能不会出现在 CDP target 列表里，用户也会误以为“测试版浏览器没加载插件”。
+   - 修复方式不是覆盖 profile，而是**复用同一份已登录 profile 重启 CFT**，然后在该会话里显式打开/刷新目标微信文章页，让 `wechat-content` 真实注入一次。
+   - 因此做插件 UI 真测时，检查顺序应改成：
+     1. 用固定 `CHROME_PROFILE_DIR` 启动/重启 CFT；
+     2. 打开目标微信文章页；
+     3. 再确认右上角悬浮入口与 `chrome-extension://.../src/background.js` worker 是否出现；
+     4. 之后才进入草稿 / 发布真测。
+
+17. **微信页图片代理改写不能对同值属性反复 `setAttribute`**
+   - 2026-03-30 本轮新增确认：`wechat-content` 在文章图上做代理 URL 改写时，如果对已经是目标值的 `src/data-src/...` 继续重复 `setAttribute`，会反复触发自己监听的 `MutationObserver(attributes)`。
+   - 结果表现为：微信文章页控制台能看到内容脚本初始化成功，但随后页面主线程被持续属性变更拖慢，`page.evaluate`、`chrome.tabs.sendMessage`、面板探针都会超时，看起来像“插件 UI 没注入”或“content script 不响应”。
+   - 修复原则：只有在属性值确实变化时才写回；`srcset` 同理，避免自触发的属性抖动循环。
 
 ## 观测依据
 
@@ -176,12 +208,15 @@
 - 已验证失败/低收益路径：
   - 只改 TinyMCE iframe body、只改隐藏 `textarea`、或只调 `editor.save()` 中任何一层，都可能出现“编辑页里看到了原文链接，但发布详情页最终没有原文链接”。
   - 正文填充后如果不在“发布前”再做一次底层同步，博客园会用旧内容提交。
+  - 草稿保存后页面会跳到 `https://i.cnblogs.com/posts/edit-done;postId=...;isPublished=false`；如果仍按 `/posts*` 统一当列表页处理，流程会卡在 `confirmSuccess`，草稿其实已成功但状态永远不收敛。
 - 稳定成功经验：
   - 填充结束后与点击“发布”前，都强制同步三层状态：TinyMCE 实例、`#Editor_Edit_EditorBody`、`#Editor_Edit_EditorBody_ifr` 的 `body.innerHTML`。
   - 原文链接不要只依赖富文本 DOM 已可见，必须确保隐藏 `textarea` 里的最终 HTML 也包含该链接。
+  - 对 `edit-done;...isPublished=false` 要单独识别为“草稿成功页”，直接上报 `success/done`，不要再走列表验收分支。
+  - 若草稿成功信号已在当前编辑页内被识别到，`draft` 分支本身也必须立即上报最终 `success/done`；不能只停在“已检测到成功提示，准备验收”。
 - 当前状态：
   - 2026-03-29 用用户真实 `Default` profile 克隆回归后，仍直接落到 `https://account.cnblogs.com/signin?...`；说明 `.cnblogs.com / i.cnblogs.com` cookie 记录存在，也不等于编辑页仍可用。
-  - 已补强发布前同步链路；当前剩余阻塞是登录态，不是正文同步逻辑。
+  - 2026-03-30 已补强发布前同步链路，并修复草稿成功页 `edit-done` 被误判成列表页的问题；当前 `cnblogs` 草稿流不再应卡在“已检测到成功提示，准备验收”。
 
 ### `oschina`
 

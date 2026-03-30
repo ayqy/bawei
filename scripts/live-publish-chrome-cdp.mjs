@@ -23,6 +23,7 @@ const LIVE_PUBLISH_CHANNELS_RAW = String(process.env.LIVE_PUBLISH_CHANNELS || ''
 const LIVE_PUBLISH_FORCE_CHANNELS_RAW = String(process.env.LIVE_PUBLISH_FORCE_CHANNELS || '').trim();
 const LIVE_PUBLISH_REQUIRE_EXISTING_CHROME = String(process.env.LIVE_PUBLISH_REQUIRE_EXISTING_CHROME || '0') === '1';
 const LIVE_PUBLISH_PRESERVE_EXISTING_PAGES = String(process.env.LIVE_PUBLISH_PRESERVE_EXISTING_PAGES || '0') === '1';
+const LIVE_PUBLISH_ACTION_RAW = String(process.env.LIVE_PUBLISH_ACTION || 'publish').trim().toLowerCase();
 
 function parseActiveChannels(raw) {
   const text = String(raw || '').trim();
@@ -43,9 +44,18 @@ function parseOptionalChannels(raw) {
   return uniq.filter((id) => ALL_CHANNELS.includes(id));
 }
 
+function parseLivePublishAction(raw) {
+  if (raw === 'draft' || raw === 'publish') return raw;
+  throw new Error(`LIVE_PUBLISH_ACTION 非法（raw=${raw || 'empty'}），可用值：draft, publish`);
+}
+
 const ACTIVE_CHANNELS = parseActiveChannels(LIVE_PUBLISH_CHANNELS_RAW);
 const FORCE_RERUN_CHANNELS = parseOptionalChannels(LIVE_PUBLISH_FORCE_CHANNELS_RAW);
+const LIVE_PUBLISH_ACTION = parseLivePublishAction(LIVE_PUBLISH_ACTION_RAW);
 const OSCHINA_DIRECT_WRITE_ENTRY_URL = 'https://my.oschina.net/u/1/blog/write';
+const LIVE_ACTION_LABEL = LIVE_PUBLISH_ACTION === 'draft' ? 'draft' : 'publish';
+const LIVE_ACTION_TEXT = LIVE_PUBLISH_ACTION === 'draft' ? '草稿' : '发布';
+const LIVE_ACTION_SUCCESS_TEXT = LIVE_PUBLISH_ACTION === 'draft' ? '草稿保存成功' : '发布成功';
 
 const CHANNEL_ENTRY_URLS = {
   csdn: 'https://mp.csdn.net/mp_blog/creation/editor',
@@ -1465,16 +1475,16 @@ async function sendBackgroundMessage(bridge, message) {
 async function startSingleChannelJobDirect(bridge, channelId, article) {
   const response = await sendBackgroundMessage(bridge, {
     type: 'V2_START_JOB',
-    action: 'publish',
+    action: LIVE_PUBLISH_ACTION,
     focusChannel: channelId,
     channels: [channelId],
     article,
   });
   if (!response?.success || !response?.jobId) {
-    console.log(`[publish:${channelId}] direct start response=`, response);
+    console.log(`[${LIVE_ACTION_LABEL}:${channelId}] direct start response=`, response);
     throw new Error(response?.error || `V2_START_JOB failed: ${channelId}`);
   }
-  console.log(`[publish:${channelId}] direct started jobId=${response.jobId}`);
+  console.log(`[${LIVE_ACTION_LABEL}:${channelId}] direct started jobId=${response.jobId}`);
   return String(response.jobId);
 }
 
@@ -1529,7 +1539,7 @@ async function waitSingleChannelResultDirect({ bridge, jobId, channelId, progres
         saveProgress(progressPath, progress);
         return { status: 'failed', notes: failNotes };
       } else {
-        updateChannelProgress(progress, channelId, 'success', `发布成功 | ${progressText}`);
+        updateChannelProgress(progress, channelId, 'success', `${LIVE_ACTION_SUCCESS_TEXT} | ${progressText}`);
         saveProgress(progressPath, progress);
         return { status: 'success' };
       }
@@ -1557,8 +1567,8 @@ async function setFocusChannel(page, channelId) {
   }, channelId);
 }
 
-async function setActionPublish(page) {
-  await page.check('input[name="bawei_v2_action"][value="publish"]').catch(() => {});
+async function setActionMode(page, action) {
+  await page.check(`input[name="bawei_v2_action"][value="${action}"]`).catch(() => {});
 }
 
 async function setChannelSelection(page, wantedSet) {
@@ -1837,11 +1847,11 @@ async function ensureLoginPageOpen(context, loginPages, channelId) {
 }
 
 async function startSingleChannelJob(page, channelId) {
-  console.log(`[publish:${channelId}] start job prepare`);
+  console.log(`[${LIVE_ACTION_LABEL}:${channelId}] start job prepare`);
   await withTimeout(waitForPanel(page), 13 * 60_000, `waitForPanel:${channelId}`);
   await withTimeout(stopIfExecuting(page), 45_000, `stopIfExecuting:${channelId}`);
   await withTimeout(waitStartReady(page), 90_000, `waitStartReady:${channelId}`);
-  await withTimeout(setActionPublish(page), 10_000, `setActionPublish:${channelId}`);
+  await withTimeout(setActionMode(page, LIVE_PUBLISH_ACTION), 10_000, `setActionMode:${channelId}`);
   await withTimeout(setFocusChannel(page, channelId), 10_000, `setFocusChannel:${channelId}`);
   await withTimeout(setChannelSelection(page, new Set([channelId])), 12_000, `setChannelSelection:${channelId}`);
   await withTimeout(
@@ -1859,7 +1869,7 @@ async function startSingleChannelJob(page, channelId) {
     10_000,
     `clickStart:${channelId}`
   );
-  console.log(`[publish:${channelId}] start clicked`);
+  console.log(`[${LIVE_ACTION_LABEL}:${channelId}] start clicked`);
   await sleep(1200);
 }
 
@@ -1908,7 +1918,7 @@ async function waitSingleChannelResult({ page, channelId, progress, progressPath
         saveProgress(progressPath, progress);
         return { status: 'failed', notes: failNotes };
       } else {
-        updateChannelProgress(progress, channelId, 'success', `发布成功 | ${row.progress || ''}`);
+        updateChannelProgress(progress, channelId, 'success', `${LIVE_ACTION_SUCCESS_TEXT} | ${row.progress || ''}`);
         saveProgress(progressPath, progress);
         return { status: 'success' };
       }
@@ -2080,7 +2090,11 @@ async function runPublishOnce(articleUrl, options) {
       }
     }
 
-    const wechatPage = await context.newPage();
+    const existingWechatPage = options?.preserveExistingPages
+      ? context.pages().find((p) => canonicalUrlKey(p.url()) === canonicalUrlKey(articleUrl)) ||
+        context.pages().find((p) => /mp\.weixin\.qq\.com\/s\//i.test(String(p.url() || '')))
+      : null;
+    const wechatPage = existingWechatPage || (await context.newPage());
     wechatPage.on('console', (msg) => {
       try {
         const type = msg.type();
@@ -2104,8 +2118,13 @@ async function runPublishOnce(articleUrl, options) {
       }
     });
 
-    console.log('[main] open article', articleUrl);
-    await gotoWithRetry(wechatPage, articleUrl).catch(() => {});
+    await wechatPage.bringToFront().catch(() => {});
+    if (existingWechatPage) {
+      console.log('[main] reuse article page', wechatPage.url());
+    } else {
+      console.log('[main] open article', articleUrl);
+      await gotoWithRetry(wechatPage, articleUrl).catch(() => {});
+    }
 
     let directMode = USE_BACKGROUND_DIRECT;
     if (!directMode) {
@@ -2201,7 +2220,7 @@ async function runPublishOnce(articleUrl, options) {
       console.log(`[main] 登录审计阻塞渠道（本轮直接失败）: ${blockedByLogin.join(', ')}`);
     }
 
-    console.log('[main] start single-pass publish（仅执行 pending 渠道）');
+    console.log(`[main] start single-pass ${LIVE_ACTION_TEXT}（仅执行 pending 渠道）`);
     const pending = ACTIVE_CHANNELS.filter((id) => progress.channels[id].status === 'pending').sort((a, b) => {
       const score = (id) => {
         if (id === 'sspai') return 3;
@@ -2216,7 +2235,7 @@ async function runPublishOnce(articleUrl, options) {
       const successCount = ACTIVE_CHANNELS.filter((id) => progress.channels[id].status === 'success').length;
       saveProgress(progressPath, progress);
       if (successCount === ACTIVE_CHANNELS.length) {
-        console.log(`\n✅ 全部渠道发布成功（${successCount}/${ACTIVE_CHANNELS.length}）`);
+        console.log(`\n✅ 全部渠道${LIVE_ACTION_SUCCESS_TEXT}（${successCount}/${ACTIVE_CHANNELS.length}）`);
         return;
       }
       const failedChannels = ACTIVE_CHANNELS.filter((id) => progress.channels[id].status !== 'success');
@@ -2224,7 +2243,7 @@ async function runPublishOnce(articleUrl, options) {
       throw new Error(`单次运行未达成 ${successCount}/${ACTIVE_CHANNELS.length}：${failedChannels.join(', ')}`);
     }
 
-    console.log(`\n===== publish-single-pass =====`);
+    console.log(`\n===== ${LIVE_ACTION_LABEL}-single-pass =====`);
     console.log(`pending(${pending.length}): ${pending.join(', ')}`);
 
     for (const channelId of pending) {
@@ -2232,9 +2251,9 @@ async function runPublishOnce(articleUrl, options) {
       if (current === 'success') continue;
 
       incAttempt(progress, channelId);
-      updateChannelProgress(progress, channelId, 'running', `开始第 ${progress.channels[channelId].attempts} 次发布尝试`);
+      updateChannelProgress(progress, channelId, 'running', `开始第 ${progress.channels[channelId].attempts} 次${LIVE_ACTION_TEXT}尝试`);
       saveProgress(progressPath, progress);
-      console.log(`[publish] ${channelId}: attempt=${progress.channels[channelId].attempts}`);
+      console.log(`[${LIVE_ACTION_LABEL}] ${channelId}: attempt=${progress.channels[channelId].attempts}`);
 
       let jobIdForChannel = '';
       try {
@@ -2254,7 +2273,7 @@ async function runPublishOnce(articleUrl, options) {
           await startSingleChannelJob(wechatPage, channelId);
         }
       } catch (error) {
-        updateChannelProgress(progress, channelId, 'failed', `启动发布失败：${error instanceof Error ? error.message : String(error)}`);
+        updateChannelProgress(progress, channelId, 'failed', `启动${LIVE_ACTION_TEXT}失败：${error instanceof Error ? error.message : String(error)}`);
         saveProgress(progressPath, progress);
         continue;
       }
@@ -2275,7 +2294,7 @@ async function runPublishOnce(articleUrl, options) {
           });
 
       if (result.status === 'success') {
-        console.log(`[publish] ${channelId}: success`);
+        console.log(`[${LIVE_ACTION_LABEL}] ${channelId}: success`);
         continue;
       }
 
@@ -2315,16 +2334,16 @@ async function runPublishOnce(articleUrl, options) {
 
       if (isBlockingRuntimeResult(result.status)) {
         const reasonMap = {
-          not_logged_in: '发布中检测到未登录（阻塞）',
-          waiting_user: '发布中进入 waiting_user（阻塞）',
+          not_logged_in: `${LIVE_ACTION_TEXT}中检测到未登录（阻塞）`,
+          waiting_user: `${LIVE_ACTION_TEXT}中进入 waiting_user（阻塞）`,
           failed: '渠道返回 failed（阻塞）',
-          timeout: '发布超时（阻塞）',
-          stalled: '发布无进度超时（阻塞）',
+          timeout: `${LIVE_ACTION_TEXT}超时（阻塞）`,
+          stalled: `${LIVE_ACTION_TEXT}无进度超时（阻塞）`,
         };
         const head = reasonMap[result.status] || `阻塞状态：${result.status}`;
         updateChannelProgress(progress, channelId, 'failed', `${head}\n${result.notes || ''}`);
         saveProgress(progressPath, progress);
-        console.log(`[publish] ${channelId}: blocking -> failed`);
+        console.log(`[${LIVE_ACTION_LABEL}] ${channelId}: blocking -> failed`);
         continue;
       }
     }
@@ -2332,7 +2351,7 @@ async function runPublishOnce(articleUrl, options) {
     const successCount = ACTIVE_CHANNELS.filter((id) => progress.channels[id].status === 'success').length;
     saveProgress(progressPath, progress);
     if (successCount === ACTIVE_CHANNELS.length) {
-      console.log(`\n✅ 全部渠道发布成功（${successCount}/${ACTIVE_CHANNELS.length}）`);
+      console.log(`\n✅ 全部渠道${LIVE_ACTION_SUCCESS_TEXT}（${successCount}/${ACTIVE_CHANNELS.length}）`);
     } else {
       const failedChannels = ACTIVE_CHANNELS.filter((id) => progress.channels[id].status !== 'success');
       console.log(`\n❌ 单次运行结束：成功 ${successCount}/${ACTIVE_CHANNELS.length}，失败渠道：${failedChannels.join(', ')}`);

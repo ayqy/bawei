@@ -168,18 +168,36 @@ export function normalizeForSearch(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 
-export function summarizeVerifyDetails(details: {
+export function summarizeVerifyDetails<T extends Record<string, unknown> = Record<string, never>>(details: {
   publishedUrl?: string;
+  draftUrl?: string;
+  editorUrl?: string;
   listUrl?: string;
   listVisible?: boolean;
   sourceUrlPresent?: boolean;
-}): NonNullable<ChannelRuntimeState['devDetails']> {
+  savedToCloud?: boolean;
+} & T): NonNullable<ChannelRuntimeState['devDetails']> {
+  const {
+    publishedUrl,
+    draftUrl,
+    editorUrl,
+    listUrl,
+    listVisible,
+    sourceUrlPresent,
+    savedToCloud,
+    ...rest
+  } = details;
+
   return {
-    publishedUrl: details.publishedUrl,
-    listUrl: details.listUrl,
+    ...rest,
+    publishedUrl,
+    ...(draftUrl ? { draftUrl } : {}),
+    ...(editorUrl ? { editorUrl } : {}),
+    listUrl,
     verified: {
-      listVisible: !!details.listVisible,
-      sourceUrlPresent: !!details.sourceUrlPresent,
+      listVisible: !!listVisible,
+      sourceUrlPresent: !!sourceUrlPresent,
+      ...(typeof savedToCloud === 'boolean' ? { savedToCloud } : {}),
     },
   };
 }

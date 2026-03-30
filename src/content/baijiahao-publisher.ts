@@ -208,85 +208,37 @@ function buildBaijiahaoFinalHtml(contentHtml: string, needPad: boolean): string 
   return String(container.innerHTML || '').trim();
 }
 
+function appendBaijiahaoSourceHtml(html: string, sourceUrl: string): string {
+  const base = String(html || '').trim();
+  const source = String(sourceUrl || '').trim();
+  if (!source || base.includes(source)) return base;
+  return `${base}<p><br></p><p>原文链接：<a href="${source}" target="_blank" rel="noreferrer noopener">${source}</a></p>`;
+}
+
+function setBaijiahaoEditorContentByIframeFallback(body: HTMLBodyElement, contentHtml: string, sourceUrl: string): void {
+  const nextHtml = appendBaijiahaoSourceHtml(contentHtml, sourceUrl);
+  body.innerHTML = nextHtml;
+  try {
+    body.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+    body.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+    body.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true, key: 'End' }));
+    body.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+  } catch {
+    // ignore
+  }
+}
+
 async function setBaijiahaoEditorContent(contentHtml: string, sourceUrl: string): Promise<void> {
   const html = String(contentHtml || '').trim();
   if (!html) throw new Error('baijiahao content html empty');
-
-  const host = document.documentElement || document.body || document.head;
-  if (!host) throw new Error('baijiahao main-world host missing');
-
-  const runId = `bawei-bjh-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
-  const resultNodeId = `bawei-v2-bjh-mainworld-result-${runId}`;
-  const resultNode = document.createElement('script');
-  resultNode.id = resultNodeId;
-  resultNode.type = 'application/json';
-  resultNode.style.display = 'none';
-  resultNode.textContent = '';
-  host.appendChild(resultNode);
-
-  try {
-    const script = document.createElement('script');
-    script.textContent = `(() => {
-      const detail = { ok: false, error: '' };
-      const marker = document.getElementById(${JSON.stringify(resultNodeId)});
-      try {
-        const editor =
-          window.editor ||
-          (window.UE_V2 && typeof window.UE_V2.getEditor === 'function' ? window.UE_V2.getEditor('ueditor_0') : null);
-        if (!editor) throw new Error('editor not found');
-        const html = ${JSON.stringify(html)};
-        const sourceUrl = ${JSON.stringify(String(sourceUrl || ''))};
-        const sourceHtml = sourceUrl
-          ? '<p><br></p><p>原文链接：<a href="' + sourceUrl + '" target="_blank" rel="noreferrer noopener">' + sourceUrl + '</a></p>'
-          : '';
-        if (typeof editor.focus === 'function') editor.focus(true);
-        if (typeof editor.setContent === 'function') {
-          editor.setContent(html);
-        } else if (typeof editor.execCommand === 'function') {
-          try {
-            editor.execCommand('cleardoc');
-          } catch {
-            // ignore
-          }
-          editor.execCommand('inserthtml', html);
-        } else {
-          throw new Error('editor write api unavailable');
-        }
-        const iframe = document.querySelector('iframe#ueditor_0');
-        const body = iframe && iframe.contentDocument && iframe.contentDocument.body;
-        const bodyHtml = body ? String(body.innerHTML || '') : '';
-        const bodyText = body ? String(body.innerText || body.textContent || '') : '';
-        const hasSource = !sourceUrl || bodyHtml.includes(sourceUrl) || bodyText.includes(sourceUrl);
-        if (!hasSource && sourceHtml && typeof editor.execCommand === 'function') {
-          editor.execCommand('inserthtml', sourceHtml);
-        }
-        if (typeof editor.sync === 'function') editor.sync();
-        const finalHtml = body ? String(body.innerHTML || '') : '';
-        const finalText = body ? String(body.innerText || body.textContent || '') : '';
-        detail.ok = !!body && !!finalHtml.trim() && (!sourceUrl || finalHtml.includes(sourceUrl) || finalText.includes(sourceUrl));
-        if (!detail.ok) detail.error = !finalHtml.trim() ? 'editor body empty after setContent' : 'source url missing after setContent';
-      } catch (error) {
-        detail.error = error instanceof Error ? error.message : String(error);
-      }
-      if (marker) marker.textContent = JSON.stringify(detail);
-    })();`;
-
-    host.appendChild(script);
-    script.remove();
-
-    await retryUntil(
-      async () => {
-        const raw = String(resultNode.textContent || '').trim();
-        if (!raw) throw new Error('baijiahao main-world setContent pending');
-        const parsed = JSON.parse(raw) as { ok?: boolean; error?: string };
-        if (!parsed?.ok) throw new Error(String(parsed?.error || 'baijiahao main-world setContent failed'));
-        return true;
-      },
-      { timeoutMs: 8000, intervalMs: 120 }
-    );
-  } finally {
-    resultNode.remove();
-  }
+  const res = await chrome.runtime.sendMessage({
+    type: V3_EXECUTE_MAIN_WORLD,
+    action: 'baijiahao-set-content',
+    payload: { html, sourceUrl: String(sourceUrl || '') },
+  });
+  if (!res?.success) throw new Error(String(res?.error || `baijiahao main-world setContent failed: ${JSON.stringify(res || null)}`));
+  const detail = (res.result || {}) as { ok?: boolean; error?: string };
+  if (!detail?.ok) throw new Error(String(detail?.error || `baijiahao main-world setContent failed: ${JSON.stringify(detail)}`));
 }
 
 function shouldRunOnThisPage(): boolean {
@@ -672,7 +624,8 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
   }
   if (!iframe?.contentDocument?.body) throw new Error('未找到正文编辑器（iframe 未就绪）');
 
-  const body = iframe.contentDocument.body;
+  const body = iframe.contentDocument.body as HTMLBodyElement | null;
+  if (!body) throw new Error('未找到正文编辑器（body 未就绪）');
   const sanitizedContentHtml = sanitizeBaijiahaoRichHtml(contentHtml);
   const needPad = htmlToPlainTextSafe(sanitizedContentHtml).replace(/\s+/g, '').length < 50;
   const finalContentHtml = buildBaijiahaoFinalHtml(sanitizedContentHtml, needPad);
@@ -711,7 +664,11 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
 
   if (!existingOk) {
     try {
-      await setBaijiahaoEditorContent(finalContentHtml, sourceUrl);
+      try {
+        await setBaijiahaoEditorContent(finalContentHtml, sourceUrl);
+      } catch {
+        setBaijiahaoEditorContentByIframeFallback(body, finalContentHtml, sourceUrl);
+      }
       await retryUntil(
         async () => {
           const currentHtml = String(body.innerHTML || '');
@@ -1067,9 +1024,10 @@ async function stageEnsureCoverSelected(): Promise<void> {
   const text = document.body?.innerText || '';
   const hasCoverUi = text.includes('封面') && (text.includes('单图') || text.includes('三图'));
   if (!hasCoverUi) return;
+  const coverApplied = () => !findCoverSelectButton() || !!findAnyElementContainingText('更换封面') || !!findAnyElementContainingText('编辑');
 
   // If cover already chosen, "选择封面" is replaced by "更换封面/编辑" buttons; treat that as ok.
-  if (findAnyElementContainingText('更换封面') || findAnyElementContainingText('编辑')) return;
+  if (coverApplied()) return;
 
   const selectBtn = findCoverSelectButton();
   if (!selectBtn) return;
@@ -1197,7 +1155,7 @@ async function stageEnsureCoverSelected(): Promise<void> {
     async () => {
       await dismissOnboardingBestEffort();
       // If cover is already applied, we are done even if the modal DOM lingers.
-      const applied = !!findAnyElementContainingText('更换封面') || !!findAnyElementContainingText('编辑');
+      const applied = coverApplied();
       if (applied) {
         const dlg = document.querySelector<HTMLElement>('.cheetah-modal[role="dialog"], .cheetah-modal');
         if (dlg) {
@@ -1220,6 +1178,28 @@ async function stageEnsureCoverSelected(): Promise<void> {
                 // ignore
               }
             }
+            const mask =
+              (document.querySelector<HTMLElement>('.cheetah-modal-mask') as HTMLElement | null) ||
+              (dlg.parentElement?.querySelector<HTMLElement>('.cheetah-modal-mask') as HTMLElement | null) ||
+              null;
+            if (mask) {
+              try {
+                simulateClick(mask);
+              } catch {
+                // ignore
+              }
+              try {
+                mask.click();
+              } catch {
+                // ignore
+              }
+            }
+            try {
+              document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Escape', code: 'Escape' }));
+              document.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true, key: 'Escape', code: 'Escape' }));
+            } catch {
+              // ignore
+            }
           }
         }
         return true;
@@ -1238,6 +1218,31 @@ async function stageEnsureCoverSelected(): Promise<void> {
         }
         return true;
       })();
+      if (stillOpen) {
+        const close =
+          (dlg?.querySelector<HTMLElement>('.cheetah-modal-close') as HTMLElement | null) ||
+          (dlg?.querySelector<HTMLElement>('button[aria-label="Close"]') as HTMLElement | null) ||
+          null;
+        if (close) {
+          try {
+            simulateClick(close);
+          } catch {
+            // ignore
+          }
+          try {
+            close.click();
+          } catch {
+            // ignore
+          }
+        }
+        try {
+          document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Escape', code: 'Escape' }));
+          document.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true, key: 'Escape', code: 'Escape' }));
+        } catch {
+          // ignore
+        }
+        if (coverApplied()) return true;
+      }
       if (stillOpen) throw new Error('cover modal still open');
       throw new Error('cover not applied yet');
     },
@@ -1480,7 +1485,9 @@ async function runEditorFlow(job: AnyJob): Promise<void> {
   await stageEnsureCategorySelected();
   await stageEnsureSummaryFilled(job);
   await stageEnsureEventSourceSelected();
-  await stageEnsureCoverSelected();
+  if (job.action === 'publish') {
+    await stageEnsureCoverSelected();
+  }
   if (currentStage === 'waitingUser') return;
 
   if (job.action === 'draft') {

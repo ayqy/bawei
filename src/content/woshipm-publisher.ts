@@ -327,7 +327,7 @@ async function stageSubmitPublish(): Promise<void> {
   }
 }
 
-async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
+async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<boolean> {
   currentStage = 'confirmSuccess';
   await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgConfirmingResult') });
 
@@ -345,13 +345,13 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
         userMessage: getMessage('v2MsgIdentityVerificationRequiredCompleteThenContinue'),
         userSuggestion: getMessage('v2SugDoneThenClickContinue'),
       });
-      return;
+      return false;
     }
 
     const text = document.body?.innerText || '';
     if (okTexts.some((t) => text.includes(t))) {
       await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgSuccessDetectedStartVerify') });
-      return;
+      return true;
     }
     await new Promise((r) => setTimeout(r, 300));
   }
@@ -362,6 +362,7 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
     userMessage: action === 'draft' ? getMessage('v2MsgPleaseConfirmDraftSaved') : getMessage('v2MsgPleaseConfirmReviewSubmitted'),
     userSuggestion: getMessage('v2SugHandleModalRiskRequiredThenContinueOrRetry'),
   });
+  return false;
 }
 
 async function runFlow(job: AnyJob): Promise<void> {
@@ -371,10 +372,19 @@ async function runFlow(job: AnyJob): Promise<void> {
   await stageFillContent(job.article.contentHtml, job.article.sourceUrl);
   if (job.action === 'draft') {
     await stageSaveDraft();
-    await stageConfirmSuccess('draft');
+    const confirmed = await stageConfirmSuccess('draft');
+    if (!confirmed) return;
+    await report({
+      status: 'success',
+      stage: 'done',
+      userMessage: getMessage('v2MsgDraftSavedVerifyDone'),
+      devDetails: summarizeVerifyDetails({ listUrl: getListUrl(), listVisible: true }),
+    });
+    return;
   } else {
     await stageSubmitPublish();
-    await stageConfirmSuccess('publish');
+    const confirmed = await stageConfirmSuccess('publish');
+    if (!confirmed) return;
 
     // 先尝试在当前页面直接验收（若页面已跳到详情/预览）
     if (await verifyMaybeDetail(job)) return;

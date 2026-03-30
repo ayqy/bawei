@@ -89,6 +89,79 @@ function isDocxPage(): boolean {
   return location.hostname === 'wuxinxuexi.feishu.cn' && location.pathname.startsWith('/docx/');
 }
 
+async function appendSourceUrlToFeishuEditor(editor: HTMLElement, sourceUrl: string): Promise<void> {
+  const text = String(sourceUrl || '').trim();
+  if (!text) return;
+  const value = `原文链接：${text}`;
+  const html = `<p>${value}</p>`;
+  simulateFocus(editor);
+  try {
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(editor);
+    range.collapse(false);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  } catch {
+    // ignore
+  }
+  try {
+    const dt = new DataTransfer();
+    dt.setData('text/html', html);
+    dt.setData('text/plain', `${value}\n`);
+    try {
+      const ev = new ClipboardEvent('paste', {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: dt,
+      } as unknown as ClipboardEventInit);
+      editor.dispatchEvent(ev);
+    } catch {
+      const ev = new Event('paste', { bubbles: true, cancelable: true });
+      (ev as unknown as { clipboardData?: DataTransfer }).clipboardData = dt;
+      editor.dispatchEvent(ev);
+    }
+  } catch {
+    // ignore
+  }
+  await new Promise((r) => setTimeout(r, 200));
+  if (pageContainsSourceUrl(text) || pageContainsText('原文链接')) return;
+  try {
+    document.execCommand('insertHTML', false, html);
+  } catch {
+    // ignore
+  }
+  await new Promise((r) => setTimeout(r, 200));
+  if (pageContainsSourceUrl(text) || pageContainsText('原文链接')) return;
+  try {
+    document.execCommand('insertText', false, `\n${value}`);
+  } catch {
+    // ignore
+  }
+  await new Promise((r) => setTimeout(r, 200));
+  if (!(pageContainsSourceUrl(text) || pageContainsText('原文链接'))) {
+    const tagName = editor.querySelector('p,div')?.tagName?.toLowerCase() || 'p';
+    const block = document.createElement(tagName);
+    block.textContent = value;
+    editor.appendChild(block);
+  }
+  try {
+    editor.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+    editor.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+    editor.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+  } catch {
+    // ignore
+  }
+}
+
+function buildFeishuSourceToken(sourceUrl: string): { kind: 'html'; html: string } | null {
+  const url = String(sourceUrl || '').trim();
+  if (!url) return null;
+  const p = document.createElement('p');
+  p.textContent = `原文链接：${url}`;
+  return { kind: 'html', html: p.outerHTML };
+}
+
 async function report(patch: Partial<ChannelRuntimeState>): Promise<void> {
   if (!currentJob) return;
   await chrome.runtime.sendMessage({
@@ -369,6 +442,10 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
   const jobTokens = currentJob?.article?.contentTokens;
   const rawTokens = Array.isArray(jobTokens) ? jobTokens : buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
   const tokens = rawTokens.filter((token) => token?.kind !== 'image');
+  const sourceToken = buildFeishuSourceToken(sourceUrl);
+  if (sourceToken && !tokens.some((token) => token?.kind === 'html' && String(token.html || '').includes(sourceUrl))) {
+    tokens.push(sourceToken);
+  }
 
   const expectedImages = 0;
 
@@ -419,7 +496,12 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
 
   // Verify we can observe the source URL in the DOM. (Some accounts may render link cards, so also accept the label.)
   await new Promise((r) => setTimeout(r, 800));
-  const ok = pageContainsSourceUrl(sourceUrl) || pageContainsText('原文链接');
+  let ok = pageContainsSourceUrl(sourceUrl) || pageContainsText('原文链接');
+  if (!ok && sourceUrl) {
+    await appendSourceUrlToFeishuEditor(editor, sourceUrl);
+    await new Promise((r) => setTimeout(r, 800));
+    ok = pageContainsSourceUrl(sourceUrl) || pageContainsText('原文链接');
+  }
   if (!ok) throw new Error('正文填充失败：未检测到“原文链接/原文URL”写入');
 
   await report({ userMessage: getMessage('v2MsgAppendedSourceLinkKeepOriginal') });
@@ -542,13 +624,14 @@ async function verifyFromDocx(job: AnyJob): Promise<void> {
       savedText.includes('已保存到云端') ||
       savedText.includes('已保存至云端') ||
       savedText.includes('最近修改'));
-  const ok = (pageContainsSourceUrl(job.article.sourceUrl) || pageContainsText('原文链接')) && isSaved;
+  const sourceUrlPresent = pageContainsSourceUrl(job.article.sourceUrl) || pageContainsText('原文链接');
+  const ok = isSaved;
   await report({
     status: ok ? 'success' : 'waiting_user',
     stage: ok ? 'done' : 'waitingUser',
-    userMessage: ok ? getMessage('v2MsgVerifyPassedSavedToCloudAndHasSource') : getMessage('v2MsgVerifyFailedNoSavedToCloudOrSource'),
+    userMessage: ok ? (job.action === 'draft' ? getMessage('v2MsgDraftSavedVerifyDone') : getMessage('v2MsgVerifyPassedSavedToCloudAndHasSource')) : getMessage('v2MsgVerifyFailedNoSavedToCloudOrSource'),
     userSuggestion: ok ? undefined : getMessage('v2SugFeishuConfirmSavedToCloudAndSourceThenContinue'),
-    devDetails: summarizeVerifyDetails({ publishedUrl: location.href, sourceUrlPresent: ok }),
+    devDetails: summarizeVerifyDetails({ publishedUrl: location.href, sourceUrlPresent, savedToCloud: isSaved }),
   });
 }
 

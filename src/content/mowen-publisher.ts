@@ -765,7 +765,7 @@ async function stageSubmitPublish(): Promise<void> {
   el.click();
 }
 
-async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
+async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<boolean> {
   currentStage = 'confirmSuccess';
   await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgConfirmingResult') });
 
@@ -779,7 +779,7 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
     const text = document.body?.innerText || '';
     if (okTexts.some((t) => text.includes(t))) {
       await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgSuccessDetectedStartVerify') });
-      return;
+      return true;
     }
     await new Promise((r) => setTimeout(r, 300));
   }
@@ -790,6 +790,7 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
     userMessage: action === 'draft' ? getMessage('v2MsgPleaseConfirmSaveCompleted') : getMessage('v2MsgPleaseConfirmPublishCompleted'),
     userSuggestion: getMessage('v2SugHandleModalRiskRequiredThenContinueOrRetry'),
   });
+  return false;
 }
 
 async function runFlow(job: AnyJob): Promise<void> {
@@ -798,10 +799,19 @@ async function runFlow(job: AnyJob): Promise<void> {
   await stageFillContent(job.article.title, job.article.contentHtml, job.article.sourceUrl);
   if (job.action === 'draft') {
     await stageSaveDraft();
-    await stageConfirmSuccess('draft');
+    const confirmed = await stageConfirmSuccess('draft');
+    if (!confirmed) return;
+    await report({
+      status: 'success',
+      stage: 'done',
+      userMessage: getMessage('v2MsgDraftSavedVerifyDone'),
+      devDetails: summarizeVerifyDetails({ draftUrl: location.href }),
+    });
+    return;
   } else {
     await stageSubmitPublish();
-    await stageConfirmSuccess('publish');
+    const confirmed = await stageConfirmSuccess('publish');
+    if (!confirmed) return;
 
     // 墨问可能在“发布成功”后延迟通过 SPA 切到 detail，这里额外等待一段时间再决定是否跳列表页。
     const detailWaitDeadline = Date.now() + 30_000;

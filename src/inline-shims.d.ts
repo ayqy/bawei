@@ -37,23 +37,41 @@ declare function pageContainsText(text: string): boolean;
 declare function pageContainsTitle(title: string): boolean;
 declare function titleToken(title: string): string;
 declare function pageContainsSourceUrl(sourceUrl: string): boolean;
+declare function detectPageLoginState(options?: {
+  loginUrlPattern?: RegExp;
+  strictLoginPattern?: RegExp;
+  loggedInPattern?: RegExp;
+}): { status: 'logged_in' | 'not_logged_in' | 'unknown'; reason: string };
 declare function normalizeForSearch(value: string): string;
 declare function findLinkByText(text: string): HTMLAnchorElement | null;
 declare function findAnyElementContainingText(text: string): HTMLElement | null;
 declare function findAnchorContainingText(text: string): HTMLAnchorElement | null;
-declare function summarizeVerifyDetails(details: {
+declare function isElementVisible(element: HTMLElement): boolean;
+declare function summarizeVerifyDetails<T extends Record<string, unknown> = Record<string, never>>(details: {
   publishedUrl?: string;
+  draftUrl?: string;
+  editorUrl?: string;
   listUrl?: string;
   listVisible?: boolean;
   sourceUrlPresent?: boolean;
-}): unknown;
+  savedToCloud?: boolean;
+} & T): {
+  publishedUrl?: string;
+  draftUrl?: string;
+  editorUrl?: string;
+  listUrl?: string;
+  verified?: { listVisible?: boolean; sourceUrlPresent?: boolean; savedToCloud?: boolean };
+} & T;
 
 declare function htmlToPlainTextSafe(html: string): string;
+declare function toProxyImageUrl(raw: string, baseUrl: string): string;
+declare function rewriteHtmlImageUrlsToProxy(contentHtml: string, baseUrl: string): string;
 declare function buildRichContentTokens(params: {
   contentHtml: string;
   baseUrl: string;
   sourceUrl: string;
   htmlMode?: 'plain' | 'raw';
+  splitBlocks?: boolean;
 }): Array<
   | {
       kind: 'html';
@@ -76,6 +94,9 @@ declare function fillEditorByTokens(params: {
   >;
   editorRoot: HTMLElement;
   writeMode: 'html' | 'text';
+  ensureCaretAtEnd?: boolean;
+  directHtmlAppend?: boolean;
+  skipHtmlPasteEvent?: boolean;
   onImageProgress?: (current: number, total: number, imageUrl: string) => Promise<void> | void;
   insertImageAtCursorOverride?: (args: { jobId: string; imageUrl: string; editorRoot: HTMLElement }) => Promise<void>;
 }): Promise<void>;
@@ -90,6 +111,7 @@ declare const V2_REQUEST_STOP: string;
 declare const V2_FOCUS_CHANNEL_TAB: string;
 
 declare const V3_FETCH_IMAGE: string;
+declare const V3_EXECUTE_MAIN_WORLD: string;
 
 declare const process:
   | {

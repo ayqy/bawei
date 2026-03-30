@@ -914,7 +914,7 @@ async function stageSubmitPublish(): Promise<void> {
   }
 }
 
-async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
+async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<boolean> {
   currentStage = 'confirmSuccess';
   await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgConfirmingResult') });
 
@@ -928,7 +928,7 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
     const text = document.body?.innerText || '';
     if (okTexts.some((t) => text.includes(t))) {
       await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgSuccessDetectedStartVerify') });
-      return;
+      return true;
     }
     await new Promise((r) => setTimeout(r, 300));
   }
@@ -939,6 +939,7 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
     userMessage: action === 'draft' ? getMessage('v2MsgPleaseConfirmDraftSaved') : getMessage('v2MsgPleaseConfirmPublishCompleted'),
     userSuggestion: getMessage('v2SugHandleModalRiskRequiredThenContinueOrRetry'),
   });
+  return false;
 }
 
 async function stageEnsureDraftId(job: AnyJob): Promise<void> {
@@ -989,13 +990,23 @@ async function runFlow(job: AnyJob): Promise<void> {
 
   if (job.action === 'draft') {
     await stageSaveDraft();
-    await stageConfirmSuccess('draft');
+    const confirmed = await stageConfirmSuccess('draft');
+    if (!confirmed) return;
+    await report({
+      status: 'success',
+      stage: 'done',
+      userMessage: getMessage('v2MsgDraftSavedVerifyDone'),
+      devDetails: summarizeVerifyDetails({ editorUrl: location.href }),
+    });
+    return;
   } else {
     // 新建文章首次打开可能是 /editor（无ID），先保存草稿以生成 editorId，避免发布卡住
     await stageEnsureDraftId(job);
     await stageEnsureOriginal();
     await stageEnsureOneTag();
     await stageSubmitPublish();
+    const confirmed = await stageConfirmSuccess('publish');
+    if (!confirmed) return;
 
     // 等待页面跳转（成功页/详情页）或后台处理一小段时间，然后进入列表验收闭环
     await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgPublishClickedWaitingRedirectOrIndex') });

@@ -127,7 +127,7 @@ function isDetailPage(): boolean {
 }
 
 function isMyPage(): boolean {
-  return location.hostname === 'sspai.com' && location.pathname.startsWith('/my');
+  return location.hostname === 'sspai.com' && (location.pathname.startsWith('/my') || location.pathname.startsWith('/whoops'));
 }
 
 function isEditPage(): boolean {
