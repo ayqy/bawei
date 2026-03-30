@@ -157,15 +157,19 @@ async function getContextFromBackground(): Promise<{ job: AnyJob; channelId: str
   return { job: res.job, channelId: res.channelId };
 }
 
-async function stageDetectLogin(): Promise<void> {
-  currentStage = 'detectLogin';
-  await report({ status: 'running', stage: 'detectLogin', userMessage: getMessage('v3MsgDetectingLogin') });
-
-  const loginState = detectPageLoginState({
+function getCurrentLoginState() {
+  return detectPageLoginState({
     loginUrlPattern: /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i,
     strictLoginPattern: /请登录|请先登录|登录后继续|未登录|手机号登录|验证码登录|sign in|log in/i,
     loggedInPattern: /新建|编辑器|我的笔记|工作台|账号设置|退出登录|发布/i,
   });
+}
+
+async function stageDetectLogin(): Promise<void> {
+  currentStage = 'detectLogin';
+  await report({ status: 'running', stage: 'detectLogin', userMessage: getMessage('v3MsgDetectingLogin') });
+
+  const loginState = getCurrentLoginState();
   if (loginState.status === 'not_logged_in') {
     await report({
       status: 'not_logged_in',
@@ -1282,7 +1286,11 @@ async function bootstrap(): Promise<void> {
   }
 }
 
-chrome.runtime.onMessage.addListener((message) => {
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === V2_PROBE_LOGIN_STATE && message.channelId === CHANNEL_ID) {
+    sendResponse({ success: true, result: { ...getCurrentLoginState(), url: location.href } });
+    return;
+  }
   if (!currentJob) return;
   if (message?.type === V2_REQUEST_STOP && message.jobId === currentJob.jobId) {
     stopRequested = true;

@@ -109,6 +109,8 @@ declare const V2_REQUEST_CONTINUE: string;
 declare const V2_REQUEST_RETRY: string;
 declare const V2_REQUEST_STOP: string;
 declare const V2_FOCUS_CHANNEL_TAB: string;
+declare const V2_AUDIT_CHANNEL_LOGIN: string;
+declare const V2_PROBE_LOGIN_STATE: string;
 
 declare const V3_FETCH_IMAGE: string;
 declare const V3_EXECUTE_MAIN_WORLD: string;

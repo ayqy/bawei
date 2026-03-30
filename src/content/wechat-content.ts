@@ -53,6 +53,10 @@ let imageRewriteScheduled = false;
 let panelKeepAliveTimer: number | null = null;
 let panelBridgeBound = false;
 let cachedArticlePayload: { title: string; sourceUrl: string; contentHtml: string; contentTokens: unknown[] } | null = null;
+type LoginAuditStatus = 'idle' | 'checking' | 'logged_in' | 'not_logged_in' | 'unknown';
+type LoginAuditState = { status: LoginAuditStatus; reason?: string; url?: string; checkedAt?: number; tabId?: number };
+let channelLoginAuditState: Partial<Record<ChannelId, LoginAuditState>> = {};
+let isCheckingChannelLogins = false;
 
 /**
  * Gets localized message
@@ -279,8 +283,10 @@ function writeRuntimeStateMirror(): void {
       focusChannel,
       selectedAction,
       runChannels: Array.from(runChannels),
+      loginAuditState: channelLoginAuditState,
       isExecuting: isExecutingNow(),
       isStartingJob,
+      isCheckingChannelLogins,
       isAwaitingFirstBroadcast,
       isStoppingJob,
       hasPanel: !!document.querySelector('#bawei-v2-panel'),
@@ -411,6 +417,8 @@ function collectUiState(): Record<string, unknown> {
     checkedChannels,
     startButtonText: String(startButton?.textContent || '').trim(),
     startButtonDisabled: !!startButton?.disabled,
+    isCheckingChannelLogins,
+    loginAuditState: channelLoginAuditState,
     diagnosisText: String(document.querySelector('#bawei-v2-diagnosis')?.textContent || '').trim(),
     runtime,
   };
@@ -524,6 +532,13 @@ async function handleWeixinPanelRemoteAction(
       await new Promise((resolve) => setTimeout(resolve, 120));
     }
 
+    return { ok: true, ...collectUiState() };
+  }
+
+  if (action === 'weixin-check-login') {
+    ensurePanelArtifacts();
+    showPanel();
+    await handleCheckLoginClick();
     return { ok: true, ...collectUiState() };
   }
 
@@ -707,11 +722,32 @@ function createPublishPanel(): void {
 
   const startSection = document.createElement('div');
   startSection.style.cssText = sectionStyle;
+  const startRow = document.createElement('div');
+  startRow.style.cssText = `display:flex; align-items:center; gap:8px;`;
+
+  const checkLoginBtn = document.createElement('button');
+  checkLoginBtn.id = 'bawei-v2-check-login';
+  checkLoginBtn.textContent = getMessage('panelCheckLogin') || '检查登录';
+  checkLoginBtn.style.cssText = `
+    flex: 0 0 96px;
+    background: #fff;
+    color: #0958d9;
+    border: 1px solid rgba(22,119,255,0.28);
+    border-radius: 8px;
+    padding: 10px 12px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+  `;
+  checkLoginBtn.addEventListener('click', () => {
+    void handleCheckLoginClick();
+  });
+
   const startBtn = document.createElement('button');
   startBtn.id = 'bawei-v2-start';
   startBtn.textContent = getMessage('panelStart') || '开始执行（并发全渠道）';
   startBtn.style.cssText = `
-    width: 100%;
+    flex: 1;
     background: #1677ff;
     color: #fff;
     border: none;
@@ -722,7 +758,9 @@ function createPublishPanel(): void {
     cursor: pointer;
   `;
   startBtn.addEventListener('click', handleStartClick);
-  startSection.appendChild(startBtn);
+  startRow.appendChild(checkLoginBtn);
+  startRow.appendChild(startBtn);
+  startSection.appendChild(startRow);
 
   const diagWrapper = document.createElement('div');
   diagWrapper.id = 'bawei-v2-diagnosis-wrapper';
@@ -948,7 +986,80 @@ async function initialize(): Promise<void> {
  * Checks if we should run on this page
  */
 function shouldRun(): boolean {
-  return window.location.hostname === 'mp.weixin.qq.com';
+  if (window.location.hostname !== 'mp.weixin.qq.com') return false;
+  const path = String(window.location.pathname || '');
+  if (!(path === '/s' || path.startsWith('/s/'))) return false;
+  const title = extractArticleTitle();
+  const contentRoot = findArticleContentRoot();
+  return !!title.trim() && !!contentRoot && !!contentRoot.innerHTML.trim();
+}
+
+function loginAuditStatusLabel(status: LoginAuditStatus): string {
+  if (status === 'checking') return getMessage('statusCheckingLogin') || '检查中';
+  if (status === 'logged_in') return getMessage('statusLoggedIn') || '已登录';
+  if (status === 'not_logged_in') return getMessage('statusNotLoggedIn') || '未登录';
+  if (status === 'unknown') return getMessage('statusUnknown') || '未知';
+  return getMessage('statusUnchecked') || '未检查';
+}
+
+async function handleCheckLoginClick(): Promise<void> {
+  if (runChannels.size === 0 || isCheckingChannelLogins || isStartingJob || isStoppingJob || isExecutingNow()) return;
+
+  isCheckingChannelLogins = true;
+  const checkedAt = Date.now();
+  for (const channelId of runChannels) {
+    channelLoginAuditState[channelId] = {
+      ...(channelLoginAuditState[channelId] || {}),
+      status: 'checking',
+      checkedAt,
+    };
+  }
+  renderStatusList();
+  refreshPanelControls();
+  writeRuntimeStateMirror();
+
+  try {
+    const response = (await chrome.runtime.sendMessage({
+      type: V2_AUDIT_CHANNEL_LOGIN,
+      channels: Array.from(runChannels),
+    })) as
+      | {
+          success: true;
+          results: Partial<Record<ChannelId, { status: LoginAuditStatus; reason: string; url: string; checkedAt?: number; tabId?: number }>>;
+        }
+      | { success: false; error?: string };
+
+    if (!response?.success) {
+      throw new Error(response?.error || 'login audit failed');
+    }
+
+    const now = Date.now();
+    for (const channelId of runChannels) {
+      const result = response.results?.[channelId];
+      channelLoginAuditState[channelId] = {
+        status: result?.status || 'unknown',
+        reason: result?.reason || '',
+        url: result?.url || '',
+        tabId: result?.tabId,
+        checkedAt: now,
+      };
+    }
+
+    const notLoggedIn = Array.from(runChannels).filter((channelId) => channelLoginAuditState[channelId]?.status === 'not_logged_in');
+    if (notLoggedIn.length > 0) {
+      showInfo(getMessage('panelLoginCheckFinishedWithNotLoggedIn') || '登录检查完成：存在未登录渠道，已在后台静默打开对应页面。');
+    } else {
+      showInfo(getMessage('panelLoginCheckFinishedAllLoggedIn') || '登录检查完成：所选渠道均已登录。');
+    }
+  } catch (error) {
+    console.error('Failed to audit channel login status:', error);
+    showError(getMessage('panelLoginCheckFailed') || `失败：${error instanceof Error ? error.message : getMessage('unknownError') || '未知错误'}`);
+  } finally {
+    isCheckingChannelLogins = false;
+    renderStatusList();
+    refreshPanelControls();
+    writeRuntimeStateMirror();
+  }
 }
 
 function statusLabel(status: string): string {
@@ -983,6 +1094,7 @@ function refreshPanelControls(): void {
   }
 
   const startBtn = document.querySelector('#bawei-v2-start') as HTMLButtonElement | null;
+  const checkLoginBtn = document.querySelector('#bawei-v2-check-login') as HTMLButtonElement | null;
   if (startBtn) {
     if (isStartingJob) {
       startBtn.disabled = true;
@@ -1007,6 +1119,16 @@ function refreshPanelControls(): void {
     startBtn.style.cursor = startBtn.disabled ? 'not-allowed' : 'pointer';
   }
 
+  if (checkLoginBtn) {
+    const canCheck = runChannels.size > 0 && !isCheckingChannelLogins && !isStartingJob && !isStoppingJob && !isExecutingNow();
+    checkLoginBtn.disabled = !canCheck;
+    checkLoginBtn.textContent = isCheckingChannelLogins
+      ? getMessage('panelCheckingLogin') || '检查中...'
+      : getMessage('panelCheckLogin') || '检查登录';
+    checkLoginBtn.style.opacity = checkLoginBtn.disabled ? '0.65' : '1';
+    checkLoginBtn.style.cursor = checkLoginBtn.disabled ? 'not-allowed' : 'pointer';
+  }
+
   const diagWrapper = document.querySelector('#bawei-v2-diagnosis-wrapper') as HTMLElement | null;
   if (diagWrapper) {
     diagWrapper.style.display = currentJobId ? 'block' : 'none';
@@ -1024,7 +1146,9 @@ function renderStatusList(): void {
 
   for (const ch of ALL_CHANNELS) {
     const state = latestState?.[ch.id];
-    const status = state?.status || 'not_started';
+    const audit = channelLoginAuditState[ch.id];
+    const useLoginAudit = !executing && !!audit;
+    const status = useLoginAudit ? audit?.status || 'idle' : state?.status || 'not_started';
     const row = document.createElement('div');
     row.style.cssText = `display:flex; align-items:center; justify-content:space-between; gap: 8px;`;
 
@@ -1041,7 +1165,7 @@ function renderStatusList(): void {
       refreshPanelControls();
     });
     const name = document.createElement('span');
-    name.style.cssText = `color:#111; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;`;
+    name.style.cssText = `color:${useLoginAudit && audit?.status === 'not_logged_in' ? '#cf1322' : '#111'}; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;`;
     name.textContent = getMessage(ch.labelKey) || ch.id;
     left.appendChild(checkbox);
     left.appendChild(name);
@@ -1049,15 +1173,53 @@ function renderStatusList(): void {
     const right = document.createElement('div');
     right.style.cssText = `display:flex; align-items:center; gap:6px; min-width: 0;`;
     const badge = document.createElement('span');
+    const badgeBg = useLoginAudit
+      ? status === 'logged_in'
+        ? 'rgba(0,180,90,0.12)'
+        : status === 'not_logged_in'
+          ? 'rgba(255,77,79,0.12)'
+          : status === 'checking'
+            ? 'rgba(22,119,255,0.12)'
+            : 'rgba(250,173,20,0.16)'
+      : status === 'success'
+        ? 'rgba(0,180,90,0.12)'
+        : status === 'failed'
+          ? 'rgba(255,77,79,0.12)'
+          : status === 'waiting_user'
+            ? 'rgba(250,173,20,0.16)'
+            : status === 'not_logged_in'
+              ? 'rgba(114,46,209,0.14)'
+              : status === 'running'
+                ? 'rgba(22,119,255,0.12)'
+                : 'rgba(0,0,0,0.06)';
+    const badgeColor = useLoginAudit
+      ? status === 'logged_in'
+        ? '#0a7a3a'
+        : status === 'not_logged_in'
+          ? '#cf1322'
+          : status === 'checking'
+            ? '#0958d9'
+            : '#ad6800'
+      : status === 'success'
+        ? '#0a7a3a'
+        : status === 'failed'
+          ? '#cf1322'
+          : status === 'waiting_user'
+            ? '#ad6800'
+            : status === 'not_logged_in'
+              ? '#531dab'
+              : status === 'running'
+                ? '#0958d9'
+                : '#555';
     badge.style.cssText = `
       font-size: 11px;
       padding: 2px 8px;
       border-radius: 999px;
-      background: ${status === 'success' ? 'rgba(0,180,90,0.12)' : status === 'failed' ? 'rgba(255,77,79,0.12)' : status === 'waiting_user' ? 'rgba(250,173,20,0.16)' : status === 'not_logged_in' ? 'rgba(114,46,209,0.14)' : status === 'running' ? 'rgba(22,119,255,0.12)' : 'rgba(0,0,0,0.06)'};
-      color: ${status === 'success' ? '#0a7a3a' : status === 'failed' ? '#cf1322' : status === 'waiting_user' ? '#ad6800' : status === 'not_logged_in' ? '#531dab' : status === 'running' ? '#0958d9' : '#555'};
+      background: ${badgeBg};
+      color: ${badgeColor};
     `;
-    badge.textContent = statusLabel(status);
-    if (currentJobId) {
+    badge.textContent = useLoginAudit ? loginAuditStatusLabel(status as LoginAuditStatus) : statusLabel(status);
+    if (!useLoginAudit && currentJobId) {
       badge.style.cursor = 'pointer';
       badge.title = getMessage('panelDiagnosisHint') || '点击跳转到该渠道页面';
       badge.addEventListener('click', async () => {
@@ -1071,13 +1233,13 @@ function renderStatusList(): void {
 
     right.appendChild(badge);
 
-    const progressText = state?.userMessage || state?.stage || '';
+    const progressText = useLoginAudit ? audit?.reason || '' : state?.userMessage || state?.stage || '';
     const progress = document.createElement('span');
     progress.style.cssText = `font-size:11px; color:#666; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;`;
     progress.textContent = progressText;
     right.appendChild(progress);
 
-    if (allowControl && status === 'waiting_user') {
+    if (!useLoginAudit && allowControl && status === 'waiting_user') {
       const btn = document.createElement('button');
       btn.textContent = getMessage('panelContinue') || '继续';
       btn.style.cssText = `font-size:11px; padding:4px 8px; border-radius:6px; border:1px solid rgba(0,0,0,0.12); background:#fff; cursor:pointer;`;
@@ -1087,7 +1249,7 @@ function renderStatusList(): void {
       right.appendChild(btn);
     }
 
-    if (allowControl && status === 'failed') {
+    if (!useLoginAudit && allowControl && status === 'failed') {
       const btn = document.createElement('button');
       btn.textContent = getMessage('panelRetry') || '重试';
       btn.style.cssText = `font-size:11px; padding:4px 8px; border-radius:6px; border:1px solid rgba(0,0,0,0.12); background:#fff; cursor:pointer;`;
@@ -1097,7 +1259,7 @@ function renderStatusList(): void {
       right.appendChild(btn);
     }
 
-    if (allowControl && status === 'not_logged_in') {
+    if (!useLoginAudit && allowControl && status === 'not_logged_in') {
       const btn = document.createElement('button');
       btn.textContent = getMessage('panelRetry') || '重试';
       btn.style.cssText = `font-size:11px; padding:4px 8px; border-radius:6px; border:1px solid rgba(0,0,0,0.12); background:#fff; cursor:pointer;`;

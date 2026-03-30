@@ -8,6 +8,8 @@ export const V2_REQUEST_CONTINUE = 'V2_REQUEST_CONTINUE' as const;
 export const V2_REQUEST_RETRY = 'V2_REQUEST_RETRY' as const;
 export const V2_REQUEST_STOP = 'V2_REQUEST_STOP' as const;
 export const V2_FOCUS_CHANNEL_TAB = 'V2_FOCUS_CHANNEL_TAB' as const;
+export const V2_AUDIT_CHANNEL_LOGIN = 'V2_AUDIT_CHANNEL_LOGIN' as const;
+export const V2_PROBE_LOGIN_STATE = 'V2_PROBE_LOGIN_STATE' as const;
 
 export const V3_FETCH_IMAGE = 'V3_FETCH_IMAGE' as const;
 export const V3_EXECUTE_MAIN_WORLD = 'V3_EXECUTE_MAIN_WORLD' as const;
@@ -93,6 +95,42 @@ export type FocusChannelTabResponse =
       error: string;
     };
 
+export type ProbeLoginStateResult = {
+  status: 'logged_in' | 'not_logged_in' | 'unknown';
+  reason: string;
+  url: string;
+};
+
+export type AuditChannelLoginRequest = {
+  type: typeof V2_AUDIT_CHANNEL_LOGIN;
+  channels: ChannelId[];
+};
+
+export type AuditChannelLoginResponse =
+  | {
+      success: true;
+      results: Partial<Record<ChannelId, ProbeLoginStateResult & { tabId?: number }>>;
+    }
+  | {
+      success: false;
+      error: string;
+    };
+
+export type ProbeLoginStateRequest = {
+  type: typeof V2_PROBE_LOGIN_STATE;
+  channelId: ChannelId;
+};
+
+export type ProbeLoginStateResponse =
+  | {
+      success: true;
+      result: ProbeLoginStateResult;
+    }
+  | {
+      success: false;
+      error: string;
+    };
+
 export type FetchImageRequest = {
   type: typeof V3_FETCH_IMAGE;
   jobId: string;
@@ -122,6 +160,7 @@ export type ExecuteMainWorldAction =
   | 'weixin-set-channels'
   | 'weixin-start'
   | 'weixin-start-job'
+  | 'weixin-check-login'
   | 'weixin-read-runtime';
 
 export type ExecuteMainWorldRequest = {

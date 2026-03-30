@@ -385,14 +385,18 @@ async function verifyFromDetailPage(job: AnyJob): Promise<void> {
   });
 }
 
+function getCurrentLoginState() {
+  return detectPageLoginState({
+    loginUrlPattern: /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i,
+    loggedInPattern: /发布文章|文章管理|创作中心|写文章|草稿箱|退出登录|个人中心|我的博客/i,
+  });
+}
+
 async function stageDetectLogin(): Promise<void> {
   currentStage = 'detectLogin';
   await report({ status: 'running', stage: 'detectLogin', userMessage: getMessage('v3MsgDetectingLogin') });
 
-  const loginState = detectPageLoginState({
-    loginUrlPattern: /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i,
-    loggedInPattern: /发布文章|文章管理|创作中心|写文章|草稿箱|退出登录|个人中心|我的博客/i,
-  });
+  const loginState = getCurrentLoginState();
   if (loginState.status === 'not_logged_in') {
     await report({
       status: 'not_logged_in',
@@ -1067,7 +1071,11 @@ async function bootstrap(): Promise<void> {
   }
 }
 
-chrome.runtime.onMessage.addListener((message) => {
+chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+  if (message?.type === V2_PROBE_LOGIN_STATE && message.channelId === CHANNEL_ID) {
+    sendResponse({ success: true, result: { ...getCurrentLoginState(), url: location.href } });
+    return;
+  }
   if (!currentJob) return;
   if (message?.type === V2_REQUEST_STOP && message.jobId === currentJob.jobId) {
     stopRequested = true;

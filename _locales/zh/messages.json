@@ -171,6 +171,26 @@
     "message": "任务已启动：正在并发打开各渠道编辑页...",
     "description": "Started toast"
   },
+  "panelCheckLogin": {
+    "message": "检查登录",
+    "description": "Check selected channels login button"
+  },
+  "panelCheckingLogin": {
+    "message": "检查中...",
+    "description": "Checking selected channels login status"
+  },
+  "panelLoginCheckFinishedAllLoggedIn": {
+    "message": "登录检查完成：所选渠道均已登录。",
+    "description": "All selected channels logged in"
+  },
+  "panelLoginCheckFinishedWithNotLoggedIn": {
+    "message": "登录检查完成：存在未登录渠道，已在后台静默打开对应页面。",
+    "description": "Some selected channels are not logged in"
+  },
+  "panelLoginCheckFailed": {
+    "message": "登录检查失败，请重试",
+    "description": "Login check failed"
+  },
   "panelStatusLabel": {
     "message": "渠道执行状态",
     "description": "Status section label"
@@ -214,6 +234,22 @@
   "statusNotStarted": {
     "message": "未开始",
     "description": "Status not started"
+  },
+  "statusUnchecked": {
+    "message": "未检查",
+    "description": "Status unchecked"
+  },
+  "statusCheckingLogin": {
+    "message": "检查中",
+    "description": "Status checking login"
+  },
+  "statusLoggedIn": {
+    "message": "已登录",
+    "description": "Status logged in"
+  },
+  "statusUnknown": {
+    "message": "未知",
+    "description": "Status unknown"
   },
   "statusRunning": {
     "message": "进行中",

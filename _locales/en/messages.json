@@ -171,6 +171,26 @@
     "message": "Job started: opening editors for all channels...",
     "description": "Started toast"
   },
+  "panelCheckLogin": {
+    "message": "Check login",
+    "description": "Check selected channels login button"
+  },
+  "panelCheckingLogin": {
+    "message": "Checking...",
+    "description": "Checking selected channels login status"
+  },
+  "panelLoginCheckFinishedAllLoggedIn": {
+    "message": "Login check finished: all selected channels are logged in.",
+    "description": "All selected channels logged in"
+  },
+  "panelLoginCheckFinishedWithNotLoggedIn": {
+    "message": "Login check finished: some channels are not logged in, and their pages were opened silently in background tabs.",
+    "description": "Some selected channels are not logged in"
+  },
+  "panelLoginCheckFailed": {
+    "message": "Login check failed, please retry",
+    "description": "Login check failed"
+  },
   "panelStatusLabel": {
     "message": "Channel status",
     "description": "Status section label"
@@ -214,6 +234,22 @@
   "statusNotStarted": {
     "message": "Not started",
     "description": "Status not started"
+  },
+  "statusUnchecked": {
+    "message": "Unchecked",
+    "description": "Status unchecked"
+  },
+  "statusCheckingLogin": {
+    "message": "Checking",
+    "description": "Status checking login"
+  },
+  "statusLoggedIn": {
+    "message": "Logged in",
+    "description": "Status logged in"
+  },
+  "statusUnknown": {
+    "message": "Unknown",
+    "description": "Status unknown"
   },
   "statusRunning": {
     "message": "Running",

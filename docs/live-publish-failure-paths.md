@@ -1,6 +1,6 @@
 # live-publish 已验证失败路径与成功经验
 
-更新时间：2026-03-30（Asia/Shanghai）
+更新时间：2026-03-31（Asia/Shanghai）
 
 ## 目标
 
@@ -23,6 +23,33 @@
    - 本轮已经验证的是：微信公众号文章页内的插件悬浮入口 + 发布面板 UI 可用，并可驱动 10 个渠道完成草稿/发布。
    - `src/popup/` 对应的 Chrome 工具栏 popup，本轮**没有单独作为 10 渠道回归入口再做一轮独立验证**。
    - 若后续要单独声明“popup 也 10/10 可用”，应再补一轮仅从工具栏 popup 发起的独立回归。
+
+## 本轮草稿一致性审计（2026-03-31）
+
+1. **审计基准**
+   - 目标文章：`https://mp.weixin.qq.com/s/NBlnaBCThLQGV1aYUP2O8g`
+   - 源标题：`Cursor公布的这张图，价值千金`
+   - 源文图片数：`4`
+   - 自动审计产物：`artifacts/live-publish/draft-audit.json`
+
+2. **当前已确认不一致的渠道**
+   - `tencent-cloud-dev`：标题对、原文链接在，但正文被压成少量大段，图片 `0/4`。
+   - `toutiao`：标题对、原文链接在，但正文被压成少量大段，图片 `0/4`。
+   - `oschina`：标题对、图片 `4/4`、原文链接在，但段落明显粘连，图片落点顺序也偏移。
+   - `mowen`：是当前最接近原文的草稿，标题/图片/原文链接都对，但段落拆分仍与原文不一致。
+   - `feishu-docs`：标题塌缩为整篇正文前缀，正文出现重复，图片 `0/4`。
+
+3. **当前自动审计仍需二次取证的渠道**
+   - `csdn`：`draft-audit.json` 报 `root not found`，但此前直接 iframe probe 已看见标题与正文落入编辑器；自动 extractor 目前不足以把它判成“已一致”。
+   - `baijiahao`：`draft-audit.json` 报 `baijiahao root not found`，但此前直接页面 probe 已确认标题、图片与原文链接可见；当前仍需更稳的 extractor 才能纳入自动验收。
+   - `cnblogs`：当前页仍停在 `https://i.cnblogs.com/posts/edit?postId=19798784` 且 DOM 只有“编辑器加载中...”，这轮自动取证无法确认正文是否完整落稿。
+   - `sspai`：当前页落在 `https://sspai.com/whoops`，拿不到稳定的文章详情页 / article id，自动验收不足。
+   - `woshipm`：自动审计仍取不到稳定正文 root；结合既有策略，该渠道目前仍是“先保提交流程，不保正文图片 fidelity”。
+
+4. **本轮审计新增结论**
+   - “草稿保存成功”不等于“草稿 fidelity 合格”；标题、段落、图片数量、图片插入位置、原文链接都必须单独核对。
+   - 自动 extractor 对自定义编辑器有明显误判风险；像 `csdn`、`baijiahao` 这类站点，必须结合真实 DOM probe / iframe probe 一起看，不能只看 `draft-audit.json` 的单一结论。
+   - 本轮自动审计结果里，`leadingBrace` 已全部为 `false`；但百家号此前出现过前导 `}` 污染，因此仍需保留该项为固定检查项。
 
 ## 通用结论
 
@@ -108,6 +135,11 @@
    - 2026-03-30 本轮新增确认：`wechat-content` 在文章图上做代理 URL 改写时，如果对已经是目标值的 `src/data-src/...` 继续重复 `setAttribute`，会反复触发自己监听的 `MutationObserver(attributes)`。
    - 结果表现为：微信文章页控制台能看到内容脚本初始化成功，但随后页面主线程被持续属性变更拖慢，`page.evaluate`、`chrome.tabs.sendMessage`、面板探针都会超时，看起来像“插件 UI 没注入”或“content script 不响应”。
    - 修复原则：只有在属性值确实变化时才写回；`srcset` 同理，避免自触发的属性抖动循环。
+
+18. **“当前浏览器已加载新代码”不能想当然**
+   - 2026-03-31 本轮再次确认：即使 `dist/src/content/wechat-content.js` 已包含新按钮和新逻辑，当前 Chrome for Testing 会话里的微信文章页仍可能继续跑旧 content script。
+   - 直接表现为：页面上仍只有旧版 `#bawei-v2-panel`，没有 `#bawei-v2-check-login`，而 `verify-wechat-ui.cjs` 会报 `未找到检查登录按钮`。
+   - 这类问题不能靠读源码判断已生效；必须把“扩展 reload + 微信文章页刷新后重新取样 DOM”纳入真实回归步骤。
 
 ## 观测依据
 

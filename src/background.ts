@@ -2,10 +2,12 @@ import { getSettings } from './shared/settings-manager';
 import { cleanExpiredData, getJobData, getJobState, markJobStopped, storeJobData, storeJobState } from './shared/article-data-manager';
 import type { ChannelId, ChannelRuntimeState, PublishAction, PublishJob } from './shared/v2-types';
 import {
+  V2_AUDIT_CHANNEL_LOGIN,
   V2_CHANNEL_UPDATE,
   V2_FOCUS_CHANNEL_TAB,
   V2_GET_CONTEXT,
   V2_JOB_BROADCAST,
+  V2_PROBE_LOGIN_STATE,
   V2_REQUEST_CONTINUE,
   V2_REQUEST_RETRY,
   V2_REQUEST_STOP,
@@ -14,6 +16,8 @@ import {
   V3_FETCH_IMAGE,
 } from './shared/v2-protocol';
 import type {
+  AuditChannelLoginRequest,
+  AuditChannelLoginResponse,
   ChannelUpdate,
   ContinueRequest,
   ExecuteMainWorldRequest,
@@ -23,6 +27,8 @@ import type {
   FocusChannelTabRequest,
   FocusChannelTabResponse,
   GetContextResponse,
+  ProbeLoginStateResult,
+  ProbeLoginStateResponse,
   RetryRequest,
   StartJobRequest,
   StartJobResponse,
@@ -108,6 +114,14 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
 
     case V2_FOCUS_CHANNEL_TAB:
       handleV2FocusChannelTab(message as FocusChannelTabRequest, sendResponse as (response: FocusChannelTabResponse) => void);
+      return true;
+
+    case V2_AUDIT_CHANNEL_LOGIN:
+      handleV2AuditChannelLogin(
+        message as AuditChannelLoginRequest,
+        sender,
+        sendResponse as (response: AuditChannelLoginResponse) => void
+      );
       return true;
 
     case V3_FETCH_IMAGE:
@@ -214,6 +228,10 @@ function newJobId(): string {
   } catch {
     return `${Date.now()}_${Math.random().toString(36).slice(2, 10)}`;
   }
+}
+
+async function sleep(ms: number): Promise<void> {
+  await new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 function nowState(channelId: ChannelId, patch?: Partial<ChannelRuntimeState>): ChannelRuntimeState {
@@ -466,6 +484,94 @@ async function handleV2FocusChannelTab(message: FocusChannelTabRequest, sendResp
 
     sendResponse({ success: true, tabId: tab.id });
   } catch (error) {
+    sendResponse({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
+  }
+}
+
+async function waitForTabReady(tabId: number, timeoutMs = 30000): Promise<chrome.tabs.Tab> {
+  const deadline = Date.now() + timeoutMs;
+  let lastTab: chrome.tabs.Tab | null = null;
+
+  while (Date.now() < deadline) {
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    if (!tab) throw new Error(`tab not found: ${tabId}`);
+    lastTab = tab;
+    if (tab.status === 'complete') {
+      await sleep(800);
+      return (await chrome.tabs.get(tabId).catch(() => tab)) || tab;
+    }
+    await sleep(300);
+  }
+
+  if (lastTab) return lastTab;
+  throw new Error(`tab not ready: ${tabId}`);
+}
+
+async function probeLoginStateFromChannelTab(tabId: number, channelId: ChannelId, fallbackUrl: string): Promise<ProbeLoginStateResult> {
+  try {
+    const response = (await chrome.tabs.sendMessage(tabId, {
+      type: V2_PROBE_LOGIN_STATE,
+      channelId,
+    })) as ProbeLoginStateResponse | undefined;
+    if (response?.success && response.result) {
+      return response.result;
+    }
+  } catch {
+    // ignore and fallback to URL-only probe
+  }
+
+  return {
+    status: looksLikeLoginUrl(fallbackUrl, channelId) ? 'not_logged_in' : 'unknown',
+    reason: looksLikeLoginUrl(fallbackUrl, channelId) ? 'login-url' : 'probe-unavailable',
+    url: fallbackUrl,
+  };
+}
+
+async function handleV2AuditChannelLogin(
+  message: AuditChannelLoginRequest,
+  sender: chrome.runtime.MessageSender,
+  sendResponse: (response: AuditChannelLoginResponse) => void
+) {
+  const channels = (Array.isArray(message.channels) ? message.channels : []).filter((item): item is ChannelId => ALL_CHANNELS.includes(item));
+  if (!channels.length) {
+    sendResponse({ success: false, error: 'No channels selected' });
+    return;
+  }
+
+  const sourceTabId = sender.tab?.id;
+
+  try {
+    const results: Partial<Record<ChannelId, ProbeLoginStateResult & { tabId?: number }>> = {};
+
+    for (const channelId of channels) {
+      const tab = await openOrReuseChannelTab(channelId, { active: false });
+      if (!tab.id) {
+        results[channelId] = {
+          status: 'unknown',
+          reason: 'tab-open-failed',
+          url: CHANNEL_ENTRY_URLS[channelId],
+        };
+        continue;
+      }
+
+      const readyTab = await waitForTabReady(tab.id, 45000).catch(() => tab);
+      const currentUrl = String(readyTab.url || CHANNEL_ENTRY_URLS[channelId]);
+      const result = await probeLoginStateFromChannelTab(tab.id, channelId, currentUrl);
+      results[channelId] = {
+        ...result,
+        tabId: tab.id,
+      };
+    }
+
+    if (typeof sourceTabId === 'number') {
+      await chrome.tabs.update(sourceTabId, { active: true }).catch(() => {});
+    }
+
+    sendResponse({ success: true, results });
+  } catch (error) {
+    if (typeof sourceTabId === 'number') {
+      await chrome.tabs.update(sourceTabId, { active: true }).catch(() => {});
+    }
     sendResponse({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
   }
 }
@@ -1211,6 +1317,12 @@ async function dispatchDirectMessage(message: unknown): Promise<unknown> {
   if (type === V2_FOCUS_CHANNEL_TAB) {
     return await new Promise<FocusChannelTabResponse>((resolve) => {
       handleV2FocusChannelTab(message as FocusChannelTabRequest, resolve);
+    });
+  }
+
+  if (type === V2_AUDIT_CHANNEL_LOGIN) {
+    return await new Promise<AuditChannelLoginResponse>((resolve) => {
+      handleV2AuditChannelLogin(message as AuditChannelLoginRequest, {} as chrome.runtime.MessageSender, resolve);
     });
   }
 
