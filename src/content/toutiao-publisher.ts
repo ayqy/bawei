@@ -40,6 +40,13 @@ function getMessage(key: string, substitutions?: string[]): string {
 const EDITOR_URL = 'https://mp.toutiao.com/profile_v4/graphic/publish';
 const LIST_URL = 'https://mp.toutiao.com/profile_v4/manage/content/all';
 
+function navigateWithinChannel(url: string): void {
+  location.href = url;
+  setTimeout(() => {
+    bootstrap().catch(() => {});
+  }, 1800);
+}
+
 function shouldRunOnThisPage(): boolean {
   if (location.hostname === 'mp.toutiao.com') return true;
   if (location.hostname === 'www.toutiao.com' && location.pathname.startsWith('/item/')) return true;
@@ -172,8 +179,9 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
   });
 
   const jobTokens = currentJob?.article?.contentTokens;
-  const tokens = Array.isArray(jobTokens) ? jobTokens : buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
-  const expectedImages = tokens.filter((t) => t?.kind === 'image').length;
+  const rawTokens = Array.isArray(jobTokens) ? jobTokens : buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
+  const tokens = rawTokens.filter((token) => token?.kind !== 'image');
+  const expectedImages = 0;
 
   const plainLen = tokens
     .filter((t) => t?.kind === 'html')
@@ -592,7 +600,7 @@ async function runEditorFlow(job: AnyJob): Promise<void> {
     userMessage: getMessage('v2MsgPublishTriggeredGoWorksListVerify'),
     devDetails: summarizeVerifyDetails({ listUrl: LIST_URL }),
   });
-  location.href = LIST_URL;
+  navigateWithinChannel(LIST_URL);
 }
 
 async function verifyFromList(job: AnyJob): Promise<void> {
@@ -753,14 +761,15 @@ async function bootstrap(): Promise<void> {
       return;
     }
 
-    // Unexpected page: jump back to editor
+    // Unexpected page: detect login first, then jump back to editor.
+    await stageDetectLogin();
     await report({
       status: 'running',
       stage: 'openEntry',
       userMessage: getMessage('v2MsgOutOfScopeReturningToEditor'),
       devDetails: summarizeVerifyDetails({ listUrl: EDITOR_URL }),
     });
-    location.href = EDITOR_URL;
+    navigateWithinChannel(EDITOR_URL);
   } catch (error) {
     if (error instanceof Error && error.message === '__BAWEI_V2_STOPPED__') return;
     await report({

@@ -10,11 +10,14 @@ import {
   V2_REQUEST_RETRY,
   V2_REQUEST_STOP,
   V2_START_JOB,
+  V3_EXECUTE_MAIN_WORLD,
   V3_FETCH_IMAGE,
 } from './shared/v2-protocol';
 import type {
   ChannelUpdate,
   ContinueRequest,
+  ExecuteMainWorldRequest,
+  ExecuteMainWorldResponse,
   FetchImageRequest,
   FetchImageResponse,
   FocusChannelTabRequest,
@@ -111,6 +114,14 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       handleV3FetchImage(message as FetchImageRequest, sendResponse as (response: FetchImageResponse) => void);
       return true;
 
+    case V3_EXECUTE_MAIN_WORLD:
+      handleV3ExecuteMainWorld(
+        message as ExecuteMainWorldRequest,
+        sender,
+        sendResponse as (response: ExecuteMainWorldResponse) => void
+      );
+      return true;
+
     case 'ping':
       sendResponse({ success: true, message: 'pong' });
       break;
@@ -144,7 +155,7 @@ const CHANNEL_ENTRY_URLS: Record<ChannelId, string> = {
   oschina: 'https://www.oschina.net/blog/write',
   woshipm: 'https://www.woshipm.com/writing',
   mowen: 'https://note.mowen.cn/editor',
-  sspai: 'https://sspai.com/write',
+  sspai: 'https://sspai.com/my',
   baijiahao: 'https://baijiahao.baidu.com/builder/rc/edit?type=news&is_from_cms=1',
   toutiao: 'https://mp.toutiao.com/profile_v4/graphic/publish',
   'feishu-docs': 'https://wuxinxuexi.feishu.cn/drive/folder/PyWAfSFwrlMgiydvlHectMn2nSd',
@@ -752,6 +763,102 @@ async function handleV3FetchImage(message: FetchImageRequest, sendResponse: (res
 
     const bufferBase64 = arrayBufferToBase64(data.buffer);
     sendResponse({ success: true, mimeType: data.mimeType, bufferBase64, size: data.size, debugMarker: 'v3-image-base64' } as FetchImageResponse & { debugMarker: string });
+  } catch (error) {
+    sendResponse({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
+  }
+}
+
+async function handleV3ExecuteMainWorld(
+  message: ExecuteMainWorldRequest,
+  sender: chrome.runtime.MessageSender,
+  sendResponse: (response: ExecuteMainWorldResponse) => void
+) {
+  try {
+    const tabId = sender.tab?.id;
+    if (!tabId) throw new Error('Missing sender tab id');
+
+    const injected = await chrome.scripting.executeScript({
+      target: { tabId },
+      world: 'MAIN',
+      func: (action: string, payload: Record<string, unknown>) => {
+        const bodyText = () => String(document.body?.innerText || '');
+
+        if (action === 'tencent-set-title') {
+          const input = document.querySelector('textarea.article-title') as HTMLTextAreaElement | null;
+          if (!input) return { ok: false, reason: 'title-input-not-found' };
+          const value = String(payload?.value || '');
+          const desc = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
+          input.focus();
+          if (typeof desc?.set === 'function') desc.set.call(input, value);
+          else input.value = value;
+          try {
+            input.dispatchEvent(
+              new InputEvent('input', {
+                bubbles: true,
+                cancelable: true,
+                data: value,
+                inputType: 'insertText',
+              })
+            );
+          } catch {
+            input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+          }
+          input.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+          input.dispatchEvent(new Event('blur', { bubbles: true, cancelable: true }));
+          return {
+            ok: true,
+            value: input.value,
+            hasCounter: /标题字数[:：]\s*\d+\s*\/\s*80/.test(bodyText()),
+          };
+        }
+
+        if (action === 'tencent-set-tag-input') {
+          const input = document.querySelectorAll('input.com-2-tag-input')[0] as HTMLInputElement | undefined;
+          if (!input) return { ok: false, reason: 'tag-input-not-found' };
+          const value = String(payload?.value || '');
+          const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
+          input.focus();
+          if (typeof desc?.set === 'function') desc.set.call(input, value);
+          else input.value = value;
+          try {
+            input.dispatchEvent(
+              new InputEvent('input', {
+                bubbles: true,
+                cancelable: true,
+                data: value,
+                inputType: 'insertText',
+              })
+            );
+          } catch {
+            input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+          }
+          input.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+          return { ok: true, value: input.value };
+        }
+
+        if (action === 'tencent-click-tag-suggestion') {
+          const expected = String(payload?.value || '').trim();
+          const isVisible = (node: Element) => {
+            const rect = (node as HTMLElement).getBoundingClientRect();
+            return rect.width > 0 && rect.height > 0;
+          };
+          const items = Array.from(document.querySelectorAll('li[data-id]')).filter((node) => isVisible(node));
+          const exact = items.find((node) => (node.textContent || '').trim() === expected);
+          const fuzzy = items.find((node) => (node.textContent || '').trim().includes(expected));
+          const pick = exact || fuzzy || items[0] || null;
+          if (!pick) return { ok: false, reason: 'tag-suggestion-not-found' };
+          ['mousedown', 'mouseup', 'click'].forEach((type) => {
+            pick.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, buttons: 1 }));
+          });
+          return { ok: true, picked: (pick.textContent || '').trim() };
+        }
+
+        throw new Error(`Unsupported main-world action: ${action}`);
+      },
+      args: [message.action, message.payload || {}],
+    });
+
+    sendResponse({ success: true, result: injected?.[0]?.result });
   } catch (error) {
     sendResponse({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
   }

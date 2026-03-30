@@ -59,6 +59,32 @@ async function testBuildRichContentTokens(page) {
   assert(String(last.html || '').includes(sourceUrl), 'last token should contain sourceUrl');
 }
 
+async function testBuildRichContentTokensSplitBlocks(page) {
+  const contentHtml = `
+    <h2>主标题</h2>
+    <p>第一段</p>
+    <div><p>第二段</p><blockquote>引用块</blockquote></div>
+    <img src="https://mmbiz.qpic.cn/mmbiz_jpg/split/0?wx_fmt=jpg" />
+    <section><p>第三段</p></section>
+  `;
+  const sourceUrl = 'https://mp.weixin.qq.com/s/SPLIT_BLOCKS';
+
+  const tokens = await page.evaluate(
+    ({ contentHtml, sourceUrl }) => {
+      return buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl, htmlMode: 'raw', splitBlocks: true });
+    },
+    { contentHtml, sourceUrl }
+  );
+
+  assert(Array.isArray(tokens), 'splitBlocks tokens should be an array');
+  assert(tokens.length >= 6, 'splitBlocks tokens length should be >= 6');
+  assert(tokens[0].kind === 'html' && String(tokens[0].html || '').includes('<h2>主标题</h2>'), 'first token should keep h2 block');
+  assert(tokens[1].kind === 'html' && String(tokens[1].html || '').includes('<p>第一段</p>'), 'second token should keep first paragraph');
+  assert(tokens[2].kind === 'html' && String(tokens[2].html || '').includes('<p>第二段</p>'), 'third token should split nested paragraph');
+  assert(tokens[3].kind === 'html' && String(tokens[3].html || '').includes('<blockquote>引用块</blockquote>'), 'fourth token should split blockquote');
+  assert(tokens.some((t) => t.kind === 'image'), 'splitBlocks tokens should contain image token');
+}
+
 async function testFillEditorByTokensWithImage(page) {
   await page.setContent(`
     <html>
@@ -157,6 +183,7 @@ async function main() {
   await page.addScriptTag({ content: imageBridge });
 
   await testBuildRichContentTokens(page);
+  await testBuildRichContentTokensSplitBlocks(page);
   await testFillEditorByTokensWithImage(page);
 
   await browser.close();

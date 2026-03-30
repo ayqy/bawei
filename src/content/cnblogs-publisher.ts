@@ -82,6 +82,83 @@ async function stageDetectLogin(): Promise<void> {
   }
 }
 
+function appendCnblogsSourceHtml(html: string, sourceUrl: string): string {
+  const base = String(html || '');
+  if (!sourceUrl) return base;
+  if (base.includes(sourceUrl)) return base;
+  return `${base}<p><br></p><p>原文链接：${sourceUrl}</p>`;
+}
+
+function syncCnblogsEditorContent(sourceUrl: string): string {
+  type TinyMceEditor = {
+    getContent?: () => string;
+    setContent?: (html: string) => void;
+    insertContent?: (html: string) => void;
+    focus?: () => void;
+    save?: () => void;
+    fire?: (name: string) => void;
+    nodeChanged?: () => void;
+  };
+  type TinyMceGlobal = {
+    get?: (id: string) => unknown;
+    triggerSave?: () => void;
+  };
+
+  const iframe = document.querySelector<HTMLIFrameElement>('#Editor_Edit_EditorBody_ifr');
+  const iframeBody = iframe?.contentDocument?.body || null;
+  const textarea = document.querySelector<HTMLTextAreaElement>('#Editor_Edit_EditorBody');
+  const tinymceGlobal = (window as Window & { tinymce?: TinyMceGlobal }).tinymce;
+  const editor = (tinymceGlobal?.get?.('Editor_Edit_EditorBody') as TinyMceEditor | undefined) || undefined;
+
+  let finalHtml = '';
+  try {
+    if (typeof editor?.getContent === 'function') finalHtml = String(editor.getContent() || '');
+  } catch {
+    // ignore
+  }
+  if (!finalHtml && iframeBody) finalHtml = String(iframeBody.innerHTML || '');
+  if (!finalHtml && textarea) finalHtml = String(textarea.value || '');
+  finalHtml = appendCnblogsSourceHtml(finalHtml, sourceUrl);
+
+  if (iframeBody) {
+    try {
+      iframeBody.innerHTML = finalHtml;
+    } catch {
+      // ignore
+    }
+  }
+
+  if (editor) {
+    try {
+      if (typeof editor.focus === 'function') editor.focus();
+      if (typeof editor.setContent === 'function') editor.setContent(finalHtml);
+      if (typeof editor.fire === 'function') editor.fire('change');
+      if (typeof editor.nodeChanged === 'function') editor.nodeChanged();
+      if (typeof editor.save === 'function') editor.save();
+    } catch {
+      // ignore
+    }
+  }
+
+  if (textarea) {
+    try {
+      textarea.value = finalHtml;
+      textarea.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+      textarea.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+      textarea.dispatchEvent(new Event('blur', { bubbles: true, cancelable: true }));
+    } catch {
+      // ignore
+    }
+  }
+
+  try {
+    if (typeof tinymceGlobal?.triggerSave === 'function') tinymceGlobal.triggerSave();
+  } catch {
+    // ignore
+  }
+  return finalHtml;
+}
+
 async function stageFillTitle(title: string): Promise<void> {
   currentStage = 'fillTitle';
   await report({ status: 'running', stage: 'fillTitle' });
@@ -175,6 +252,14 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
     }
   }
 
+  try {
+    syncCnblogsEditorContent(sourceUrl);
+  } catch {
+    // ignore
+  }
+
+  await new Promise((r) => setTimeout(r, 500));
+
   await report({ userMessage: getMessage('v2MsgAppendedSourceLinkKeepOriginal') });
 }
 
@@ -189,6 +274,11 @@ async function stageSaveDraft(): Promise<void> {
 async function stageSubmitPublish(): Promise<void> {
   currentStage = 'submitPublish';
   await report({ status: 'running', stage: 'submitPublish', userMessage: getMessage('v2MsgPublishing') });
+  try {
+    syncCnblogsEditorContent(currentJob?.article?.sourceUrl || '');
+  } catch {
+    // ignore
+  }
   const btn = Array.from(document.querySelectorAll('button')).find((b) => (b.textContent || '').trim() === '发布');
   if (!btn) throw new Error('未找到发布按钮');
   (btn as HTMLButtonElement).click();

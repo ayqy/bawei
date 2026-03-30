@@ -20,6 +20,9 @@ const ALL_CHANNELS = [
 ];
 
 const LIVE_PUBLISH_CHANNELS_RAW = String(process.env.LIVE_PUBLISH_CHANNELS || '').trim();
+const LIVE_PUBLISH_FORCE_CHANNELS_RAW = String(process.env.LIVE_PUBLISH_FORCE_CHANNELS || '').trim();
+const LIVE_PUBLISH_REQUIRE_EXISTING_CHROME = String(process.env.LIVE_PUBLISH_REQUIRE_EXISTING_CHROME || '0') === '1';
+const LIVE_PUBLISH_PRESERVE_EXISTING_PAGES = String(process.env.LIVE_PUBLISH_PRESERVE_EXISTING_PAGES || '0') === '1';
 
 function parseActiveChannels(raw) {
   const text = String(raw || '').trim();
@@ -33,16 +36,25 @@ function parseActiveChannels(raw) {
   return filtered;
 }
 
+function parseOptionalChannels(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return [];
+  const uniq = Array.from(new Set(text.split(',').map((s) => s.trim()).filter(Boolean)));
+  return uniq.filter((id) => ALL_CHANNELS.includes(id));
+}
+
 const ACTIVE_CHANNELS = parseActiveChannels(LIVE_PUBLISH_CHANNELS_RAW);
+const FORCE_RERUN_CHANNELS = parseOptionalChannels(LIVE_PUBLISH_FORCE_CHANNELS_RAW);
+const OSCHINA_DIRECT_WRITE_ENTRY_URL = 'https://my.oschina.net/u/1/blog/write';
 
 const CHANNEL_ENTRY_URLS = {
   csdn: 'https://mp.csdn.net/mp_blog/creation/editor',
   'tencent-cloud-dev': 'https://cloud.tencent.com/developer/article/write',
   cnblogs: 'https://i.cnblogs.com/posts/edit',
-  oschina: 'https://www.oschina.net/blog/write',
+  oschina: OSCHINA_DIRECT_WRITE_ENTRY_URL,
   woshipm: 'https://www.woshipm.com/writing',
   mowen: 'https://note.mowen.cn/editor',
-  sspai: 'https://sspai.com/write',
+  sspai: 'https://sspai.com/my',
   baijiahao: 'https://baijiahao.baidu.com/builder/rc/edit?type=news&is_from_cms=1',
   toutiao: 'https://mp.toutiao.com/profile_v4/graphic/publish',
   'feishu-docs': 'https://wuxinxuexi.feishu.cn/drive/folder/PyWAfSFwrlMgiydvlHectMn2nSd',
@@ -66,8 +78,19 @@ const LOGIN_URL_RULES = {
   'feishu-docs': [/passport\.feishu\.cn/i, /\/login/i, /\/signin/i],
 };
 
-const PER_CHANNEL_TIMEOUT_MS = 10 * 60_000;
-const NO_PROGRESS_TIMEOUT_MS = Number(process.env.NO_PROGRESS_TIMEOUT_MS || 180_000);
+const LOGIN_AUDIT_STRICT_TEXT_RULES = {
+  oschina: /请登录|未登录|登录后继续|登录即可|请先登录|扫码登录|手机号登录|登录|注册|sign in|log in/i,
+  woshipm: /请登录|未登录|登录后继续|登录即可|请先登录|扫码登录|手机号登录|注册\s*\|\s*登录|立即登录|点我注册|登录人人都是产品经理即可获得以下权益|sign in|log in/i,
+};
+
+const LOGIN_AUDIT_LOGGED_HINT_RULES = {
+  oschina: /写博客|我的博客|博客广场|动弹|消息|设置|个人空间|退出登录|我的主页/i,
+  woshipm: /发布文章|我的文章|草稿箱|账号设置|退出登录|个人中心|创作中心/i,
+};
+
+const PER_CHANNEL_TIMEOUT_MS = Number(process.env.PER_CHANNEL_TIMEOUT_MS || (ACTIVE_CHANNELS.includes('sspai') ? 45 * 60_000 : 10 * 60_000));
+const NO_PROGRESS_TIMEOUT_MS_BASE = Number(process.env.NO_PROGRESS_TIMEOUT_MS || 180_000);
+const NO_PROGRESS_TIMEOUT_MS = ACTIVE_CHANNELS.includes('sspai') ? Math.max(NO_PROGRESS_TIMEOUT_MS_BASE, 15 * 60_000) : NO_PROGRESS_TIMEOUT_MS_BASE;
 const LOOP_INTERVAL_MS = 3000;
 const CHROME_CDP_PORT = Number(process.env.CDP_PORT || 52607);
 const DEFAULT_ARTICLE_URL = 'https://mp.weixin.qq.com/s/3sSae4T0IeSsfM3dm5fByg';
@@ -76,7 +99,8 @@ const KEEP_BROWSER_OPEN = String(process.env.KEEP_BROWSER_OPEN || '1') !== '0';
 const WAIT_FOR_LOGIN = String(process.env.WAIT_FOR_LOGIN || '1') !== '0';
 const LOGIN_WAIT_TIMEOUT_MS = Number(process.env.LOGIN_WAIT_TIMEOUT_MS || 10 * 60_000);
 const USE_BACKGROUND_DIRECT = String(process.env.USE_BACKGROUND_DIRECT || '1') !== '0';
-const BOOTSTRAP_PROFILE = String(process.env.BOOTSTRAP_PROFILE || '1') !== '0';
+const BOOTSTRAP_PROFILE = String(process.env.BOOTSTRAP_PROFILE || '0') !== '0';
+const BOOTSTRAP_PROFILE_REFRESH = String(process.env.BOOTSTRAP_PROFILE_REFRESH || '0') === '1';
 const SANITIZE_PROFILE = String(process.env.SANITIZE_PROFILE || '1') !== '0';
 const PROFILE_BOOTSTRAP_MARK = '.bootstrap-from-chrome.done';
 const BOOTSTRAP_SOURCE_DIR = path.resolve(
@@ -93,6 +117,17 @@ function safeJsonStringify(value) {
 
 function abs(p) {
   return path.resolve(process.cwd(), p);
+}
+
+function canonicalUrlKey(raw) {
+  const s = String(raw || '').trim();
+  if (!s) return '';
+  try {
+    const u = new URL(s);
+    return `${u.origin}${u.pathname}`;
+  } catch {
+    return s;
+  }
 }
 
 function dumpArticlePayloadToArtifacts(articlePayload, articleUrl) {
@@ -214,6 +249,8 @@ function installNetworkLogger(context, label) {
           'up.qiniu.com',
           'upload.qiniu.com',
         ]
+      : label === 'tencent-cloud-dev'
+        ? ['cloud.tencent.com', 'developer-private-1258344699.cos.ap-guangzhou.myqcloud.com']
       : ['sspai.com', 'cdnfile.sspai.com', 'cdn-static.sspai.com', 'up.qiniu.com', 'upload.qiniu.com'];
   const logPath = abs(`artifacts/live-publish/network-${label}-${Date.now()}.ndjson`);
   try {
@@ -233,6 +270,13 @@ function installNetworkLogger(context, label) {
         if (u.hostname.endsWith('.aliyuncs.com') || u.hostname.endsWith('.myqcloud.com') || u.hostname.endsWith('.cos.ap-shanghai.myqcloud.com')) {
           return true;
         }
+        return false;
+      }
+      if (label === 'tencent-cloud-dev') {
+        if (wantDomains.includes(u.hostname)) return true;
+        if (u.hostname.endsWith('.myqcloud.com')) return true;
+        if (u.hostname.endsWith('.tencent.com')) return true;
+        if (u.href.includes('article?action=')) return true;
         return false;
       }
       if (wantDomains.includes(u.hostname)) return true;
@@ -587,19 +631,22 @@ function sanitizeProfileStartupState(userDataDir) {
 function maybeBootstrapProfileFromChrome(userDataDir) {
   if (!BOOTSTRAP_PROFILE) return;
   const markFile = path.join(userDataDir, PROFILE_BOOTSTRAP_MARK);
-  if (fs.existsSync(markFile)) return;
-
   if (!fs.existsSync(BOOTSTRAP_SOURCE_DIR)) {
     console.log(`[profile-bootstrap] 跳过：未找到源目录 ${BOOTSTRAP_SOURCE_DIR}`);
     return;
   }
 
+  const firstSync = !fs.existsSync(markFile);
+  if (!firstSync && !BOOTSTRAP_PROFILE_REFRESH) {
+    console.log(`[profile-bootstrap] 跳过：目标 profile 已初始化，继续复用 ${userDataDir}`);
+    return;
+  }
   fs.mkdirSync(userDataDir, { recursive: true });
-  console.log(`[profile-bootstrap] 首次引导登录态：${BOOTSTRAP_SOURCE_DIR} -> ${userDataDir}`);
+  console.log(`[profile-bootstrap] ${firstSync ? '首次引导' : '刷新'}登录态：${BOOTSTRAP_SOURCE_DIR} -> ${userDataDir}`);
 
   fs.cpSync(BOOTSTRAP_SOURCE_DIR, userDataDir, {
     recursive: true,
-    force: false,
+    force: true,
     errorOnExist: false,
     dereference: true,
     filter: (src) => profileCopyFilter(src, BOOTSTRAP_SOURCE_DIR),
@@ -608,7 +655,7 @@ function maybeBootstrapProfileFromChrome(userDataDir) {
   cleanChromeSingletonLocks(userDataDir);
   sanitizeProfileStartupState(userDataDir);
   fs.writeFileSync(markFile, `${nowIso()}\n`, 'utf8');
-  console.log('[profile-bootstrap] 完成');
+  console.log(`[profile-bootstrap] ${firstSync ? '完成' : '已刷新'}`);
 }
 
 function normalizeBadge(badge) {
@@ -637,12 +684,34 @@ function loadProgress(filePath, articleUrl) {
     if (!fs.existsSync(filePath)) return createProgress(articleUrl);
     const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
     if (!parsed || typeof parsed !== 'object' || !parsed.channels) return createProgress(articleUrl);
+    const previousArticleKey = canonicalUrlKey(parsed.articleUrl);
+    const nextArticleKey = canonicalUrlKey(articleUrl);
+    const articleChanged = !!previousArticleKey && !!nextArticleKey && previousArticleKey !== nextArticleKey;
     parsed.articleUrl = articleUrl;
     for (const id of ALL_CHANNELS) {
       if (!parsed.channels[id]) parsed.channels[id] = { status: 'pending', notes: '', updatedAt: nowIso(), attempts: 0 };
       if (parsed.channels[id].attempts == null) parsed.channels[id].attempts = 0;
       if (parsed.channels[id].updatedAt == null) parsed.channels[id].updatedAt = nowIso();
       if (parsed.channels[id].status === 'running') parsed.channels[id].status = 'pending';
+    }
+    if (articleChanged) {
+      for (const id of ACTIVE_CHANNELS) {
+        parsed.channels[id] = {
+          ...parsed.channels[id],
+          status: 'pending',
+          notes: `切换文章后自动重置：${articleUrl}`,
+          updatedAt: nowIso(),
+          attempts: 0,
+        };
+      }
+    }
+    for (const id of FORCE_RERUN_CHANNELS) {
+      parsed.channels[id] = {
+        ...parsed.channels[id],
+        status: 'pending',
+        notes: '按 LIVE_PUBLISH_FORCE_CHANNELS 强制重跑',
+        updatedAt: nowIso(),
+      };
     }
     return parsed;
   } catch {
@@ -860,8 +929,66 @@ function tryGetTargets(port) {
   });
 }
 
+function httpRequestText({ method, url }) {
+  return new Promise((resolve) => {
+    const req = http.request(url, { method }, (res) => {
+      let data = '';
+      res.on('data', (chunk) => {
+        data += chunk;
+      });
+      res.on('end', () => resolve(String(data || '')));
+    });
+    req.on('error', () => resolve(''));
+    req.end();
+  });
+}
+
+async function tryOpenBlankPage(port) {
+  const body = await httpRequestText({ method: 'PUT', url: `http://127.0.0.1:${port}/json/new` });
+  try {
+    const parsed = JSON.parse(body || '{}');
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+async function tryCloseTarget(port, id) {
+  if (!id) return false;
+  await httpRequestText({ method: 'GET', url: `http://127.0.0.1:${port}/json/close/${encodeURIComponent(String(id))}` });
+  return true;
+}
+
+async function cleanupChromePagesKeepBlank(port) {
+  const targets = await tryGetTargets(port);
+  const pages = targets.filter((t) => String(t?.type || '') === 'page');
+  if (!pages.length) return;
+
+  let keep = pages.find((p) => String(p?.url || '') === 'about:blank') || null;
+  if (!keep) {
+    keep = await tryOpenBlankPage(port);
+  }
+  const keepId = String(keep?.id || '').trim();
+
+  for (const p of pages) {
+    const id = String(p?.id || '').trim();
+    if (!id) continue;
+    if (keepId && id === keepId) continue;
+    await tryCloseTarget(port, id).catch(() => false);
+  }
+}
+
+function isExtensionServiceWorkerTarget(target) {
+  return String(target?.type || '') === 'service_worker' && String(target?.url || '').startsWith('chrome-extension://');
+}
+
+function isLikelyBaweiWorkerUrl(url) {
+  const s = String(url || '');
+  return s.includes('/src/background.js') || s.endsWith('/background.js') || s.endsWith('/service_worker.js');
+}
+
 function hasBaweiExtensionServiceWorker(targets) {
-  return targets.some((t) => String(t?.type || '') === 'service_worker' && String(t?.url || '').includes('/src/background.js'));
+  return targets.some((t) => isExtensionServiceWorkerTarget(t) && isLikelyBaweiWorkerUrl(t?.url));
 }
 
 async function waitBaweiExtensionReady(port, timeoutMs) {
@@ -1217,23 +1344,25 @@ async function runtimeEvaluateByWs(wsUrl, expression) {
   );
 }
 
-async function findBackgroundWorkerTarget() {
+async function findBackgroundWorkerTargets() {
   const targets = await tryGetTargets(CHROME_CDP_PORT);
-  const worker = targets.find(
-    (t) => String(t?.type || '') === 'service_worker' && String(t?.url || '').includes('/src/background.js') && t?.webSocketDebuggerUrl
-  );
-  return worker || null;
+  return (targets || [])
+    .filter((t) => isExtensionServiceWorkerTarget(t) && t?.webSocketDebuggerUrl)
+    .sort((a, b) => {
+      const aScore = isLikelyBaweiWorkerUrl(a?.url) ? 1 : 0;
+      const bScore = isLikelyBaweiWorkerUrl(b?.url) ? 1 : 0;
+      return bScore - aScore;
+    });
 }
 
 async function createBackgroundBridge() {
   const deadline = Date.now() + 120_000;
   let noTargetCount = 0;
   while (Date.now() < deadline) {
-    const target = await findBackgroundWorkerTarget();
-    if (!target) {
+    const targets = await findBackgroundWorkerTargets();
+    if (!targets.length) {
       noTargetCount += 1;
       if (noTargetCount % 10 === 0) {
-        const targets = await tryGetTargets(CHROME_CDP_PORT).catch(() => []);
         console.log(
           `[background-bridge] waiting worker... seenTargets=${Array.isArray(targets) ? targets.length : 0} sample=${(targets || [])
             .slice(0, 3)
@@ -1245,33 +1374,33 @@ async function createBackgroundBridge() {
       continue;
     }
 
-    const wsUrl = String(target.webSocketDebuggerUrl || '').trim();
-    if (!wsUrl) {
-      await sleep(1200);
-      continue;
-    }
+    for (const target of targets) {
+      const wsUrl = String(target.webSocketDebuggerUrl || '').trim();
+      if (!wsUrl) continue;
 
-    try {
-      const probe = await runtimeEvaluateByWs(
-        wsUrl,
-        `(() => ({
-          runtimeId: String(chrome?.runtime?.id || ''),
-          hasDirect: typeof globalThis.__BAWEI_V2_DISPATCH_DIRECT === 'function',
-          hasRuntimeDirect: typeof chrome?.runtime?.__BAWEI_V2_DISPATCH_DIRECT === 'function',
-          hasChromeDirect: typeof chrome?.__BAWEI_V2_DISPATCH_DIRECT === 'function'
-        }))()`
-      );
-      const runtimeId = String(probe?.runtimeId || '');
-      if (runtimeId) {
-        console.log(
-          `[background-bridge] worker ready runtimeId=${runtimeId} hasDirect=${Boolean(probe?.hasDirect)} hasRuntimeDirect=${Boolean(
-            probe?.hasRuntimeDirect
-          )} hasChromeDirect=${Boolean(probe?.hasChromeDirect)}`
+      try {
+        const probe = await runtimeEvaluateByWs(
+          wsUrl,
+          `(() => ({
+            runtimeId: String(chrome?.runtime?.id || ''),
+            hasDirect: typeof globalThis.__BAWEI_V2_DISPATCH_DIRECT === 'function',
+            hasRuntimeDirect: typeof chrome?.runtime?.__BAWEI_V2_DISPATCH_DIRECT === 'function',
+            hasChromeDirect: typeof chrome?.__BAWEI_V2_DISPATCH_DIRECT === 'function'
+          }))()`
         );
-        return { wsUrl, runtimeId };
+        const runtimeId = String(probe?.runtimeId || '');
+        const hasAnyDirect = Boolean(probe?.hasDirect) || Boolean(probe?.hasRuntimeDirect) || Boolean(probe?.hasChromeDirect);
+        if (runtimeId && hasAnyDirect) {
+          console.log(
+            `[background-bridge] worker ready runtimeId=${runtimeId} hasDirect=${Boolean(probe?.hasDirect)} hasRuntimeDirect=${Boolean(
+              probe?.hasRuntimeDirect
+            )} hasChromeDirect=${Boolean(probe?.hasChromeDirect)}`
+          );
+          return { wsUrl, runtimeId };
+        }
+      } catch (error) {
+        console.log(`[background-bridge] probe failed: ${error instanceof Error ? error.message : String(error)}`);
       }
-    } catch (error) {
-      console.log(`[background-bridge] probe failed: ${error instanceof Error ? error.message : String(error)}`);
     }
     await sleep(1200);
   }
@@ -1291,7 +1420,21 @@ async function loadArticlePayloadFromBackground(bridge, articleUrl) {
       .sort((a, b) => Number(b.createdAt || 0) - Number(a.createdAt || 0));
 
     const expected = ${JSON.stringify(articleUrl)};
-    const hit = jobs.find((j) => String(j?.article?.sourceUrl || '') === expected) || jobs[0] || null;
+    const canonicalKey = (raw) => {
+      const s = String(raw || '').trim();
+      if (!s) return '';
+      try {
+        const u = new URL(s);
+        return u.origin + u.pathname;
+      } catch {
+        return s;
+      }
+    };
+
+    const expectedKey = canonicalKey(expected);
+    const hit = expectedKey
+      ? jobs.find((j) => canonicalKey(String(j?.article?.sourceUrl || '')) === expectedKey) || null
+      : jobs[0] || null;
     if (!hit) return null;
     const article = hit.article || {};
     return {
@@ -1562,7 +1705,10 @@ async function readDiagnosis(page, channelId) {
 }
 
 async function inspectLoginStateOnPage(page, channelId) {
-  const info = await page.evaluate(() => {
+  const strictRule = LOGIN_AUDIT_STRICT_TEXT_RULES[channelId] || /请登录|未登录|登录后继续|登录即可|请先登录|扫码登录|手机号登录|sign in|log in/i;
+  const loggedRule = LOGIN_AUDIT_LOGGED_HINT_RULES[channelId] || /个人中心|退出登录|发文章|创作中心|发布入口|写文章|我的主页/i;
+
+  const info = await page.evaluate(({ strictRuleSource, loggedRuleSource }) => {
     const bodyText = String(document.body?.innerText || '').slice(0, 5000);
     const hasPwd = !!document.querySelector('input[type="password"]');
     const hasLoginBtn = Array.from(document.querySelectorAll('button,a,div,span')).some((el) => {
@@ -1571,15 +1717,15 @@ async function inspectLoginStateOnPage(page, channelId) {
       return /登录|登入|sign in|log in|继续登录|扫码登录|手机号登录/i.test(t);
     });
     const hasCaptchaHints = /验证码|安全验证|风控|请完成验证|访问异常|环境异常|行为验证|滑动验证|captcha|human verification/i.test(bodyText);
-    const hasLoggedInHints = /个人中心|退出登录|发文章|创作中心|发布入口|写文章|我的主页/i.test(bodyText);
-    return { bodyText, hasPwd, hasLoginBtn, hasCaptchaHints, hasLoggedInHints };
-  });
+    const strictLoginText = new RegExp(strictRuleSource, 'i').test(bodyText);
+    const hasLoggedInHints = new RegExp(loggedRuleSource, 'i').test(bodyText);
+    return { bodyText, hasPwd, hasLoginBtn, hasCaptchaHints, hasLoggedInHints, strictLoginText };
+  }, { strictRuleSource: strictRule.source, loggedRuleSource: loggedRule.source });
 
   const url = String(page.url() || '');
   const lowUrl = url.toLowerCase();
   const byUrl = (LOGIN_URL_RULES[channelId] || []).some((r) => r.test(lowUrl)) || /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i.test(lowUrl);
-  const strictLoginText = /请登录|未登录|登录后继续|登录即可|请先登录|扫码登录|手机号登录|sign in|log in/i.test(info.bodyText || '');
-  const byDom = (info.hasPwd && info.hasLoginBtn) || strictLoginText;
+  const byDom = (info.hasPwd && info.hasLoginBtn) || info.strictLoginText;
 
   if (info.hasLoggedInHints && !byDom) return { status: 'logged_in', reason: 'logged-in-dom-hints', url };
   if (byUrl || byDom) return { status: 'not_logged_in', reason: byUrl ? 'login-url' : 'login-dom', url };
@@ -1889,17 +2035,21 @@ async function runPublishOnce(articleUrl, options) {
     port: CHROME_CDP_PORT,
     userDataDir,
     distDir,
-    forceRestart: false,
+    forceRestart: !options?.requireExistingChrome,
     requireExisting: Boolean(options?.requireExistingChrome),
   });
   console.log('[cdp] connected ws:', cdp.ws, `reused=${cdp.reused}`);
 
   let browser = null;
   try {
+    const initialConnectTimeout = options?.requireExistingChrome ? 120_000 : 30_000;
     try {
-      browser = await chromium.connectOverCDP(cdp.ws, { timeout: 30_000 });
+      browser = await chromium.connectOverCDP(cdp.ws, { timeout: initialConnectTimeout });
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
+      if (options?.requireExistingChrome) {
+        throw new Error(`复用现有浏览器失败（不会自动重启当前会话）：${reason}`);
+      }
       console.log(`[cdp] connectOverCDP 失败，尝试重启后重连：${reason}`);
       const restarted = await ensureChromeAndGetWs({
         port: CHROME_CDP_PORT,
@@ -1916,13 +2066,16 @@ async function runPublishOnce(articleUrl, options) {
     installContextDialogAutoDismiss(context, 'publish');
     if (ACTIVE_CHANNELS.includes('sspai')) installNetworkLogger(context, 'sspai');
     if (ACTIVE_CHANNELS.includes('mowen')) installNetworkLogger(context, 'mowen');
+    if (ACTIVE_CHANNELS.includes('tencent-cloud-dev')) installNetworkLogger(context, 'tencent-cloud-dev');
 
     if (!options?.preserveExistingPages) {
-      for (const p of context.pages()) {
-        try {
-          if (!p.isClosed()) await p.close();
-        } catch {
-          // ignore
+      for (const ctx of browser.contexts()) {
+        for (const p of ctx.pages()) {
+          try {
+            if (!p.isClosed()) await p.close();
+          } catch {
+            // ignore
+          }
         }
       }
     }
@@ -1974,6 +2127,18 @@ async function runPublishOnce(articleUrl, options) {
         45_000,
         'loadArticlePayloadFromBackground'
       ).catch(() => null);
+
+      try {
+        const expectedKey = canonicalUrlKey(articleUrl);
+        const gotKey = canonicalUrlKey(articlePayloadForRun?.sourceUrl || '');
+        if (expectedKey && gotKey && expectedKey !== gotKey) {
+          console.log(`[main] warning: background payload mismatch; fallback to page extract (expected=${articleUrl} got=${articlePayloadForRun?.sourceUrl})`);
+          articlePayloadForRun = null;
+        }
+      } catch {
+        // ignore
+      }
+
       if (!articlePayloadForRun?.title || !articlePayloadForRun?.contentHtml) {
         const fallback = await withTimeout(extractArticlePayloadFromPage(wechatPage), 20_000, 'extractArticlePayloadFromPage').catch(() => null);
         if (fallback?.title && fallback?.contentHtml) {
@@ -2174,6 +2339,9 @@ async function runPublishOnce(articleUrl, options) {
       throw new Error(`单次运行未达成 ${successCount}/${ACTIVE_CHANNELS.length}：${failedChannels.join(', ')}`);
     }
   } finally {
+    if (KEEP_BROWSER_OPEN && !options?.preserveExistingPages) {
+      await cleanupChromePagesKeepBlank(CHROME_CDP_PORT).catch(() => {});
+    }
     try {
       await browser?.close();
     } catch {
@@ -2198,10 +2366,16 @@ async function main() {
     return;
   }
   if (cli.mode === 'publish') {
-    await runPublishOnce(cli.articleUrl, { requireExistingChrome: true, preserveExistingPages: false });
+    await runPublishOnce(cli.articleUrl, {
+      requireExistingChrome: LIVE_PUBLISH_REQUIRE_EXISTING_CHROME,
+      preserveExistingPages: LIVE_PUBLISH_PRESERVE_EXISTING_PAGES,
+    });
     return;
   }
-  await runPublishOnce(cli.articleUrl, { requireExistingChrome: false, preserveExistingPages: false });
+  await runPublishOnce(cli.articleUrl, {
+    requireExistingChrome: LIVE_PUBLISH_REQUIRE_EXISTING_CHROME,
+    preserveExistingPages: LIVE_PUBLISH_PRESERVE_EXISTING_PAGES,
+  });
 }
 
 main().catch((e) => {

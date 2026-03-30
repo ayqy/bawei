@@ -53,6 +53,110 @@ function normalizeLoose(value: string): string {
   return normalizeForSearch(value).replace(/[^\u4e00-\u9fa5a-zA-Z0-9]/g, '');
 }
 
+function normalizeTitleValue(value: string): string {
+  return String(value || '').replace(/\s+/g, ' ').trim();
+}
+
+function sanitizeBaijiahaoRichHtml(rawHtml: string): string {
+  const container = document.createElement('div');
+  container.innerHTML = String(rawHtml || '');
+
+  const removableSelectors = ['script', 'style', 'iframe', 'mp-style-type'];
+  for (const node of Array.from(container.querySelectorAll(removableSelectors.join(', ')))) {
+    node.remove();
+  }
+
+  const removableAttrRules = [
+    /^data-pm-slice$/i,
+    /^data-diagnose-id$/i,
+    /^data-report-img-idx$/i,
+    /^data-fail$/i,
+    /^leaf$/i,
+    /^nodeleaf$/i,
+    /^textstyle$/i,
+    /^_width$/i,
+  ];
+
+  for (const el of Array.from(container.querySelectorAll<HTMLElement>('*'))) {
+    for (const attr of Array.from(el.attributes)) {
+      if (removableAttrRules.some((rule) => rule.test(attr.name))) {
+        el.removeAttribute(attr.name);
+      }
+    }
+  }
+
+  const blocks = Array.from(container.querySelectorAll<HTMLElement>('p,section,div'));
+  for (const block of blocks) {
+    const text = String(block.textContent || '')
+      .replace(/\u00a0/g, ' ')
+      .replace(/\s+/g, '')
+      .trim();
+    const hasMedia = !!block.querySelector('img,video,table,blockquote,pre,hr');
+    const styleText = String(block.getAttribute('style') || '');
+    if (!text && !hasMedia) {
+      block.remove();
+      continue;
+    }
+    if (!hasMedia && /font-size:\s*0px/i.test(styleText) && text.length <= 1) {
+      block.remove();
+    }
+  }
+
+  return String(container.innerHTML || '').trim();
+}
+
+function buildBaijiahaoTitle(title: string): string {
+  return normalizeTitleValue(title).slice(0, 64);
+}
+
+function selectContents(el: HTMLElement): void {
+  try {
+    const sel = window.getSelection();
+    if (!sel) return;
+    const range = document.createRange();
+    range.selectNodeContents(el);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  } catch {
+    // ignore
+  }
+}
+
+function setEditableTitleValue(target: HTMLElement, value: string): void {
+  simulateFocus(target);
+  selectContents(target);
+  try {
+    document.execCommand('delete', false);
+  } catch {
+    // ignore
+  }
+  try {
+    target.innerHTML = '';
+  } catch {
+    // ignore
+  }
+  try {
+    target.textContent = value;
+  } catch {
+    // ignore
+  }
+  try {
+    target.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, data: value, inputType: 'insertText' }));
+  } catch {
+    // ignore
+  }
+  try {
+    target.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+  } catch {
+    // ignore
+  }
+  try {
+    target.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true, key: 'End' }));
+  } catch {
+    // ignore
+  }
+}
+
 function findPreviewLinkByTitleOrToken(title: string, token: string): HTMLAnchorElement | null {
   const wantTitle = normalizeLoose(title);
   const wantToken = normalizeLoose(token);
@@ -91,6 +195,98 @@ function buildPlainText(contentHtml: string, sourceUrl: string): string {
   const base = htmlToPlainTextSafe(contentHtml) || '（以下为自动发布内容）';
   const suffix = sourceUrl ? `\n\n原文链接：${sourceUrl}` : '';
   return `${base}${suffix}`.trim();
+}
+
+function buildBaijiahaoFinalHtml(contentHtml: string, needPad: boolean): string {
+  const container = document.createElement('div');
+  container.innerHTML = String(contentHtml || '').trim();
+
+  if (needPad) {
+    container.insertAdjacentHTML('beforeend', '<p>（提示：本文内容较短，更多细节请点击下方原文链接查看完整内容。）</p>');
+  }
+
+  return String(container.innerHTML || '').trim();
+}
+
+async function setBaijiahaoEditorContent(contentHtml: string, sourceUrl: string): Promise<void> {
+  const html = String(contentHtml || '').trim();
+  if (!html) throw new Error('baijiahao content html empty');
+
+  const host = document.documentElement || document.body || document.head;
+  if (!host) throw new Error('baijiahao main-world host missing');
+
+  const runId = `bawei-bjh-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const resultNodeId = `bawei-v2-bjh-mainworld-result-${runId}`;
+  const resultNode = document.createElement('script');
+  resultNode.id = resultNodeId;
+  resultNode.type = 'application/json';
+  resultNode.style.display = 'none';
+  resultNode.textContent = '';
+  host.appendChild(resultNode);
+
+  try {
+    const script = document.createElement('script');
+    script.textContent = `(() => {
+      const detail = { ok: false, error: '' };
+      const marker = document.getElementById(${JSON.stringify(resultNodeId)});
+      try {
+        const editor =
+          window.editor ||
+          (window.UE_V2 && typeof window.UE_V2.getEditor === 'function' ? window.UE_V2.getEditor('ueditor_0') : null);
+        if (!editor) throw new Error('editor not found');
+        const html = ${JSON.stringify(html)};
+        const sourceUrl = ${JSON.stringify(String(sourceUrl || ''))};
+        const sourceHtml = sourceUrl
+          ? '<p><br></p><p>原文链接：<a href="' + sourceUrl + '" target="_blank" rel="noreferrer noopener">' + sourceUrl + '</a></p>'
+          : '';
+        if (typeof editor.focus === 'function') editor.focus(true);
+        if (typeof editor.setContent === 'function') {
+          editor.setContent(html);
+        } else if (typeof editor.execCommand === 'function') {
+          try {
+            editor.execCommand('cleardoc');
+          } catch {
+            // ignore
+          }
+          editor.execCommand('inserthtml', html);
+        } else {
+          throw new Error('editor write api unavailable');
+        }
+        const iframe = document.querySelector('iframe#ueditor_0');
+        const body = iframe && iframe.contentDocument && iframe.contentDocument.body;
+        const bodyHtml = body ? String(body.innerHTML || '') : '';
+        const bodyText = body ? String(body.innerText || body.textContent || '') : '';
+        const hasSource = !sourceUrl || bodyHtml.includes(sourceUrl) || bodyText.includes(sourceUrl);
+        if (!hasSource && sourceHtml && typeof editor.execCommand === 'function') {
+          editor.execCommand('inserthtml', sourceHtml);
+        }
+        if (typeof editor.sync === 'function') editor.sync();
+        const finalHtml = body ? String(body.innerHTML || '') : '';
+        const finalText = body ? String(body.innerText || body.textContent || '') : '';
+        detail.ok = !!body && !!finalHtml.trim() && (!sourceUrl || finalHtml.includes(sourceUrl) || finalText.includes(sourceUrl));
+        if (!detail.ok) detail.error = !finalHtml.trim() ? 'editor body empty after setContent' : 'source url missing after setContent';
+      } catch (error) {
+        detail.error = error instanceof Error ? error.message : String(error);
+      }
+      if (marker) marker.textContent = JSON.stringify(detail);
+    })();`;
+
+    host.appendChild(script);
+    script.remove();
+
+    await retryUntil(
+      async () => {
+        const raw = String(resultNode.textContent || '').trim();
+        if (!raw) throw new Error('baijiahao main-world setContent pending');
+        const parsed = JSON.parse(raw) as { ok?: boolean; error?: string };
+        if (!parsed?.ok) throw new Error(String(parsed?.error || 'baijiahao main-world setContent failed'));
+        return true;
+      },
+      { timeoutMs: 8000, intervalMs: 120 }
+    );
+  } finally {
+    resultNode.remove();
+  }
 }
 
 function shouldRunOnThisPage(): boolean {
@@ -153,6 +349,20 @@ function findClickableByText(text: string): HTMLElement | null {
   const el = findByExactText(text) || findAnyElementContainingText(text);
   if (!el) return null;
   return (el.closest('button') as HTMLElement | null) || (el.closest('[role="button"]') as HTMLElement | null) || el;
+}
+
+function isVisibleTextEntry(el: HTMLElement | null | undefined): el is HTMLElement {
+  if (!el) return false;
+  const rect = el.getBoundingClientRect();
+  if (rect.width < 120 || rect.height < 18) return false;
+  if (rect.top < -20 || rect.top > window.innerHeight + 260) return false;
+  try {
+    const style = getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+  } catch {
+    // ignore
+  }
+  return true;
 }
 
 function findCoverSelectButton(): HTMLElement | null {
@@ -238,6 +448,26 @@ async function dismissOnboardingBestEffort(): Promise<void> {
 }
 
 function findTitleEditable(): HTMLElement | null {
+  const explicit = Array.from(
+    document.querySelectorAll<HTMLElement>([
+      '[contenteditable="true"][placeholder*="标题"]',
+      '[contenteditable="true"][aria-label*="标题"]',
+      '[contenteditable="true"][data-placeholder*="标题"]',
+      '[role="textbox"][contenteditable="true"]',
+      '[role="textbox"][aria-label*="标题"]',
+      '[role="textbox"][data-placeholder*="标题"]',
+      '[class*="title"][contenteditable="true"]',
+      '[id*="title"][contenteditable="true"]',
+    ].join(', '))
+  )
+    .filter((el) => isVisibleTextEntry(el))
+    .sort((a, b) => {
+      const ar = a.getBoundingClientRect();
+      const br = b.getBoundingClientRect();
+      return ar.top - br.top || ar.height - br.height;
+    });
+  if (explicit[0]) return explicit[0];
+
   const cands = Array.from(document.querySelectorAll<HTMLElement>('[contenteditable="true"]'))
     .map((el) => ({ el, rect: el.getBoundingClientRect() }))
     // Title editor may expand to multiple lines (height > 160) when long; keep an upper bound to avoid huge editors.
@@ -248,7 +478,31 @@ function findTitleEditable(): HTMLElement | null {
   return cands[0]?.el || null;
 }
 
-function findTitleTextareaFallback(): HTMLTextAreaElement | null {
+function findTitleTextFieldFallback(): HTMLInputElement | HTMLTextAreaElement | null {
+  const explicit = Array.from(
+    document.querySelectorAll<HTMLInputElement | HTMLTextAreaElement>([
+      'textarea[placeholder*="标题"]',
+      'textarea[aria-label*="标题"]',
+      'textarea[data-placeholder*="标题"]',
+      'textarea[name*="title" i]',
+      'textarea[id*="title" i]',
+      'input[placeholder*="标题"]',
+      'input[aria-label*="标题"]',
+      'input[data-placeholder*="标题"]',
+      'input[name*="title" i]',
+      'input[id*="title" i]',
+      'input[type="text"][class*="title"]',
+      'textarea[class*="title"]',
+    ].join(', '))
+  )
+    .filter((el) => isVisibleTextEntry(el as unknown as HTMLElement))
+    .sort((a, b) => {
+      const ar = a.getBoundingClientRect();
+      const br = b.getBoundingClientRect();
+      return ar.top - br.top || ar.height - br.height;
+    });
+  if (explicit[0]) return explicit[0];
+
   const exclude = new Set(['abstract', 'inputTextArea']);
   const cands = Array.from(document.querySelectorAll<HTMLTextAreaElement>('textarea'))
     .filter((el) => !exclude.has(el.id || ''))
@@ -262,7 +516,25 @@ function findTitleTextareaFallback(): HTMLTextAreaElement | null {
       return true;
     })
     .sort((a, b) => a.rect.top - b.rect.top || a.rect.height - b.rect.height);
-  return cands[0]?.el || null;
+  if (cands[0]?.el) return cands[0].el;
+
+  const inputs = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="text"], input:not([type])'))
+    .map((el) => ({ el, rect: el.getBoundingClientRect() }))
+    .filter((x) => x.rect.width >= 240 && x.rect.height >= 18 && x.rect.height <= 120)
+    .filter((x) => x.rect.top >= 0 && x.rect.top <= window.innerHeight + 200)
+    .filter((x) => isVisibleTextEntry(x.el))
+    .sort((a, b) => a.rect.top - b.rect.top || a.rect.height - b.rect.height);
+  return inputs[0]?.el || null;
+}
+
+function setNativeTextEntryValue(target: HTMLInputElement | HTMLTextAreaElement, value: string): void {
+  const proto = target instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype;
+  const desc = Object.getOwnPropertyDescriptor(proto, 'value');
+  if (typeof desc?.set === 'function') desc.set.call(target, value);
+  else target.value = value;
+
+  target.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, data: value, inputType: 'insertText' }));
+  target.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
 }
 
 async function stageOpenEditor(): Promise<void> {
@@ -295,6 +567,7 @@ async function stageOpenEditor(): Promise<void> {
 async function stageFillTitle(title: string): Promise<void> {
   currentStage = 'fillTitle';
   await report({ status: 'running', stage: 'fillTitle', userMessage: getMessage('v2MsgFillingTitle') });
+  const finalTitle = buildBaijiahaoTitle(title);
 
   // Persistent contexts may restore the last scroll position; ensure title area is visible.
   try {
@@ -303,82 +576,82 @@ async function stageFillTitle(title: string): Promise<void> {
     // ignore
   }
 
-  const target = await retryUntil(
-    async () => {
-      const pageText = document.body?.innerText || '';
-      if (pageText.includes('百度安全验证') || pageText.includes('拖动左侧滑块') || pageText.includes('扫码验证')) {
-        // Give the user a clear hint and keep polling until verification is done.
-        const key = `bawei_v2_baijiahao_security_hint_${currentJob?.jobId || ''}`;
-        if (!sessionStorage.getItem(key)) {
-          sessionStorage.setItem(key, '1');
-          await report({
-            status: 'running',
-            stage: 'fillTitle',
-            userMessage: getMessage('v2MsgBaijiahaoSecurityVerifyTriggered'),
-          });
+  const deadline = Date.now() + 8 * 60_000;
+  let lastHeartbeat = 0;
+  let lastSecurityHint = '';
+
+  while (Date.now() < deadline) {
+    const pageText = document.body?.innerText || '';
+    const securityHint = pageText.includes('百度安全验证') || pageText.includes('拖动左侧滑块') || pageText.includes('扫码验证');
+    if (securityHint) {
+      const key = `bawei_v2_baijiahao_security_hint_${currentJob?.jobId || ''}`;
+      if (!sessionStorage.getItem(key) || lastSecurityHint !== 'security') {
+        sessionStorage.setItem(key, '1');
+        lastSecurityHint = 'security';
+        await report({
+          status: 'running',
+          stage: 'fillTitle',
+          userMessage: getMessage('v2MsgBaijiahaoSecurityVerifyTriggered'),
+        });
+      }
+      await new Promise((r) => setTimeout(r, 900));
+      continue;
+    }
+
+    const textField = findTitleTextFieldFallback();
+    if (textField) {
+      simulateFocus(textField);
+      try {
+        setNativeTextEntryValue(textField, finalTitle);
+      } catch {
+        try {
+          textField.value = finalTitle;
+        } catch {
+          // ignore
         }
-        throw new Error('security verification pending');
+      }
+      if (normalizeTitleValue(String(textField.value || '')) === finalTitle) {
+        return;
+      }
+    }
+
+    const target = findTitleEditable();
+    if (target) {
+      const editable = target as HTMLElement;
+      setEditableTitleValue(editable, finalTitle);
+
+      try {
+        const simulator = document.querySelector<HTMLTextAreaElement>('textarea._9ddb7e475b559749-simulator');
+        if (simulator) setNativeTextEntryValue(simulator, finalTitle);
+      } catch {
+        // ignore
       }
 
-      const el = findTitleEditable();
-      if (el) return el;
-      const ta = findTitleTextareaFallback();
-      if (ta) return ta;
-      throw new Error('title editable not ready');
-    },
-    // Allow enough time for manual security verification.
-    { timeoutMs: 8 * 60_000, intervalMs: 900 }
-  );
+      if (normalizeTitleValue(editable.textContent || '') !== finalTitle) {
+        try {
+          editable.textContent = finalTitle;
+          editable.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true }));
+          editable.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+        } catch {
+          // ignore
+        }
+      }
 
-  if (target instanceof HTMLTextAreaElement) {
-    simulateFocus(target);
-    try {
-      target.value = title;
-      target.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true, data: title, inputType: 'insertText' }));
-      target.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
-    } catch {
-      // ignore
+      if (normalizeTitleValue(editable.textContent || '') === finalTitle) return;
     }
-    return;
-  }
 
-  const editable = target as HTMLElement;
-  simulateFocus(editable);
-  try {
-    document.execCommand('selectAll', false);
-    document.execCommand('delete', false);
-  } catch {
-    // ignore
-  }
-  try {
-    document.execCommand('insertText', false, title);
-  } catch {
-    // ignore
-  }
-
-  // The editor also mirrors title into a hidden textarea (simulator). Update it to satisfy submit validation.
-  try {
-    const simulator = document.querySelector<HTMLTextAreaElement>('textarea._9ddb7e475b559749-simulator');
-    if (simulator) {
-      simulator.value = title;
-      simulator.dispatchEvent(
-        new InputEvent('input', { bubbles: true, cancelable: true, data: title, inputType: 'insertText' })
-      );
-      simulator.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+    if (Date.now() - lastHeartbeat > 10_000) {
+      lastHeartbeat = Date.now();
+      await report({
+        status: 'running',
+        stage: 'fillTitle',
+        userMessage: getMessage('v2MsgFillingTitle'),
+      });
     }
-  } catch {
-    // ignore
+    await new Promise((r) => setTimeout(r, 900));
   }
 
-  // Fallback: direct textContent
-  if (!pageContainsTitle(title)) {
-    try {
-      editable.textContent = title;
-      editable.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true }));
-    } catch {
-      // ignore
-    }
-  }
+  throw new Error('title editable not ready');
 }
 
 async function stageFillContent(contentHtml: string, sourceUrl: string): Promise<void> {
@@ -400,21 +673,14 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
   if (!iframe?.contentDocument?.body) throw new Error('未找到正文编辑器（iframe 未就绪）');
 
   const body = iframe.contentDocument.body;
-
-  const jobTokens = currentJob?.article?.contentTokens;
-  const tokens = Array.isArray(jobTokens) ? jobTokens : buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
-
-  const expectedImages = tokens.filter((t) => t?.kind === 'image').length;
-  const needPad = htmlToPlainTextSafe(contentHtml).replace(/\s+/g, '').length < 50;
-  if (needPad) {
-    const padHtml = '<p>（提示：本文内容较短，更多细节请点击下方原文链接查看完整内容。）</p>';
-    const last = tokens[tokens.length - 1];
-    if (last?.kind === 'html' && sourceUrl && String((last as { html?: string }).html || '').includes(sourceUrl)) {
-      tokens.splice(tokens.length - 1, 0, { kind: 'html', html: padHtml });
-    } else {
-      tokens.push({ kind: 'html', html: padHtml });
-    }
-  }
+  const sanitizedContentHtml = sanitizeBaijiahaoRichHtml(contentHtml);
+  const needPad = htmlToPlainTextSafe(sanitizedContentHtml).replace(/\s+/g, '').length < 50;
+  const finalContentHtml = buildBaijiahaoFinalHtml(sanitizedContentHtml, needPad);
+  const expectedImages = (() => {
+    const container = document.createElement('div');
+    container.innerHTML = finalContentHtml;
+    return container.querySelectorAll('img').length;
+  })();
 
   const existingHtml = (() => {
     try {
@@ -423,9 +689,18 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
       return '';
     }
   })();
-  const existingHasSource = !!(sourceUrl && existingHtml.includes(sourceUrl));
+  const existingText = (() => {
+    try {
+      return String(body.innerText || body.textContent || '');
+    } catch {
+      return '';
+    }
+  })();
+  const existingHasSource = !sourceUrl || existingHtml.includes(sourceUrl) || existingText.includes(sourceUrl);
   const existingOk =
     existingHasSource &&
+    !!existingHtml.trim() &&
+    !/^\s*\}/.test(existingHtml) &&
     (expectedImages === 0 ||
       Array.from(body.querySelectorAll<HTMLImageElement>('img')).filter((img) => {
         const src = String(img.getAttribute('src') || '').trim();
@@ -436,28 +711,33 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
 
   if (!existingOk) {
     try {
-      await fillEditorByTokens({
-        jobId: currentJob?.jobId || '',
-        tokens,
-        editorRoot: body as unknown as HTMLElement,
-        writeMode: 'html',
-        onImageProgress: async (current, total) => {
-          await report({
-            status: 'running',
-            stage: 'fillContent',
-            userMessage: getMessage('v3MsgUploadingImageProgress', [String(current), String(total)]),
-          });
+      await setBaijiahaoEditorContent(finalContentHtml, sourceUrl);
+      await retryUntil(
+        async () => {
+          const currentHtml = String(body.innerHTML || '');
+          const currentText = String(body.innerText || body.textContent || '');
+          const hasSource = !sourceUrl || currentHtml.includes(sourceUrl) || currentText.includes(sourceUrl);
+          const hasLeadingBrace = /^\s*\}/.test(currentHtml);
+          const imgCount = body.querySelectorAll('img').length;
+
+          if (!currentHtml.trim()) throw new Error('百家号正文仍为空');
+          if (hasLeadingBrace) throw new Error('百家号正文出现前导 }');
+          if (!hasSource) throw new Error('百家号原文链接未写入');
+          if (expectedImages > 0 && imgCount < expectedImages) {
+            throw new Error(`百家号正文图片缺失：${imgCount}/${expectedImages}`);
+          }
+          return true;
         },
-      });
+        { timeoutMs: 8000, intervalMs: 300 }
+      );
     } catch (e) {
       await report({
-        status: 'waiting_user',
-        stage: 'waitingUser',
-        userMessage: getMessage('v3MsgImageUploadFailed'),
-        userSuggestion: getMessage('v3SugManualUploadImagesThenContinue'),
+        status: 'failed',
+        stage: 'fillContent',
+        userMessage: getMessage('v2MsgFillingContent'),
         devDetails: { message: e instanceof Error ? e.message : String(e) },
       });
-      throw new Error('__BAWEI_V2_STOPPED__');
+      throw e instanceof Error ? e : new Error(String(e));
     }
   }
 
@@ -1160,6 +1440,31 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
     if (okTexts.some((t) => text.includes(t))) return;
     await new Promise((r) => setTimeout(r, 400));
   }
+
+  const bodyText = (document.body?.innerText || '').replace(/\s+/g, ' ').trim();
+  const clues = [
+    '请选择内容分类',
+    '请选择封面',
+    '请先上传封面',
+    '请输入摘要',
+    '请完善摘要',
+    '发布失败',
+    '内容过短',
+    '请先完成安全验证',
+    '百度安全验证',
+    '拖动左侧滑块',
+    '扫码验证',
+    '确认',
+    '去验证',
+    '已完成验证',
+    '审核未通过',
+  ].filter((t) => bodyText.includes(t));
+  const compactText = bodyText.slice(0, 300);
+  throw new Error(
+    `未检测到${action === 'draft' ? '存草稿' : '发布'}成功信号` +
+      (clues.length ? `（线索：${clues.join(' / ')}）` : '') +
+      (compactText ? `：${compactText}` : '')
+  );
 }
 
 async function runEditorFlow(job: AnyJob): Promise<void> {

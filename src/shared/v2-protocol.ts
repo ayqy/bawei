@@ -10,6 +10,7 @@ export const V2_REQUEST_STOP = 'V2_REQUEST_STOP' as const;
 export const V2_FOCUS_CHANNEL_TAB = 'V2_FOCUS_CHANNEL_TAB' as const;
 
 export const V3_FETCH_IMAGE = 'V3_FETCH_IMAGE' as const;
+export const V3_EXECUTE_MAIN_WORLD = 'V3_EXECUTE_MAIN_WORLD' as const;
 
 export type StartJobRequest = {
   type: typeof V2_START_JOB;
@@ -104,6 +105,24 @@ export type FetchImageResponse =
       mimeType: string;
       bufferBase64: string;
       size: number;
+    }
+  | {
+      success: false;
+      error: string;
+    };
+
+export type ExecuteMainWorldAction = 'tencent-set-title' | 'tencent-set-tag-input' | 'tencent-click-tag-suggestion';
+
+export type ExecuteMainWorldRequest = {
+  type: typeof V3_EXECUTE_MAIN_WORLD;
+  action: ExecuteMainWorldAction;
+  payload?: Record<string, unknown>;
+};
+
+export type ExecuteMainWorldResponse =
+  | {
+      success: true;
+      result?: unknown;
     }
   | {
       success: false;

@@ -16,11 +16,27 @@ const ALL_CHANNELS = [
   'feishu-docs',
 ];
 
+const LIVE_PUBLISH_CHANNELS_RAW = String(process.env.LIVE_PUBLISH_CHANNELS || '').trim();
+
+function parseActiveChannels(raw) {
+  const text = String(raw || '').trim();
+  if (!text) return [...ALL_CHANNELS];
+  const uniq = Array.from(new Set(text.split(',').map((s) => s.trim()).filter(Boolean)));
+  const filtered = uniq.filter((id) => ALL_CHANNELS.includes(id));
+  if (!filtered.length) {
+    throw new Error(`LIVE_PUBLISH_CHANNELS 解析为空（raw=${text || 'empty'}），可用渠道：${ALL_CHANNELS.join(', ')}`);
+  }
+  return filtered;
+}
+
+const ACTIVE_CHANNELS = parseActiveChannels(LIVE_PUBLISH_CHANNELS_RAW);
+const OSCHINA_DIRECT_WRITE_ENTRY_URL = 'https://my.oschina.net/u/1/blog/write';
+
 const CHANNEL_ENTRY_URLS = {
   csdn: 'https://mp.csdn.net/mp_blog/creation/editor',
   'tencent-cloud-dev': 'https://cloud.tencent.com/developer/article/write',
   cnblogs: 'https://i.cnblogs.com/posts/edit',
-  oschina: 'https://www.oschina.net/blog/write',
+  oschina: OSCHINA_DIRECT_WRITE_ENTRY_URL,
   woshipm: 'https://www.woshipm.com/writing',
   mowen: 'https://note.mowen.cn/editor',
   sspai: 'https://sspai.com/write',
@@ -42,10 +58,22 @@ const LOGIN_URL_RULES = {
   'feishu-docs': [/passport\.feishu\.cn/i, /\/login/i, /\/signin/i],
 };
 
+const LOGIN_AUDIT_STRICT_TEXT_RULES = {
+  oschina: /请登录|未登录|登录后继续|登录即可|请先登录|扫码登录|手机号登录|登录|注册|sign in|log in/i,
+  woshipm: /请登录|未登录|登录后继续|登录即可|请先登录|扫码登录|手机号登录|注册\s*\|\s*登录|立即登录|点我注册|登录人人都是产品经理即可获得以下权益|sign in|log in/i,
+};
+
+const LOGIN_AUDIT_LOGGED_HINT_RULES = {
+  oschina: /写博客|我的博客|博客广场|动弹|消息|设置|个人空间|退出登录|我的主页/i,
+  woshipm: /发布文章|我的文章|草稿箱|账号设置|退出登录|个人中心|创作中心/i,
+};
+
 const PER_CHANNEL_TIMEOUT_MS = 9 * 60_000;
 const ACTION_INTERVAL_MS = 15_000;
 const LOOP_INTERVAL_MS = 3000;
 const KEEP_BROWSER_OPEN = String(process.env.KEEP_BROWSER_OPEN || '1') !== '0';
+const PW_EXECUTABLE_PATH = String(process.env.PW_EXECUTABLE_PATH || '').trim();
+const WAIT_FOR_LOGIN = String(process.env.WAIT_FOR_LOGIN || '1') !== '0';
 
 function abs(p) {
   return path.resolve(process.cwd(), p);
@@ -341,7 +369,10 @@ async function readDiagnosis(page, channelId) {
 }
 
 async function inspectLoginStateOnPage(page, channelId) {
-  const info = await page.evaluate(() => {
+  const strictRule = LOGIN_AUDIT_STRICT_TEXT_RULES[channelId] || /请登录|未登录|登录后继续|登录即可|sign in|log in/i;
+  const loggedRule = LOGIN_AUDIT_LOGGED_HINT_RULES[channelId] || /个人中心|退出登录|发文章|创作中心|发布入口|写文章|我的主页/i;
+
+  const info = await page.evaluate(({ strictRuleSource, loggedRuleSource }) => {
     const bodyText = String(document.body?.innerText || '').slice(0, 5000);
     const hasPwd = !!document.querySelector('input[type="password"]');
     const hasLoginBtn = Array.from(document.querySelectorAll('button,a,div,span')).some((el) => {
@@ -350,15 +381,20 @@ async function inspectLoginStateOnPage(page, channelId) {
       return /登录|登入|sign in|log in|继续登录|扫码登录|手机号登录/i.test(t);
     });
     const hasCaptchaHints = /验证码|安全验证|风控|请完成验证|environment|异常/i.test(bodyText);
-    return { bodyText, hasPwd, hasLoginBtn, hasCaptchaHints };
-  });
+    const strictLoginText = new RegExp(strictRuleSource, 'i').test(bodyText);
+    const hasLoggedInHints = new RegExp(loggedRuleSource, 'i').test(bodyText);
+    return { bodyText, hasPwd, hasLoginBtn, hasCaptchaHints, strictLoginText, hasLoggedInHints };
+  }, { strictRuleSource: strictRule.source, loggedRuleSource: loggedRule.source });
 
   const url = String(page.url() || '');
   const lowUrl = url.toLowerCase();
   const urlRules = LOGIN_URL_RULES[channelId] || [];
   const byUrl = urlRules.some((r) => r.test(lowUrl)) || /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i.test(lowUrl);
-  const byDom = (info.hasPwd && info.hasLoginBtn) || /请登录|未登录|登录后继续|登录即可/i.test(info.bodyText || '');
+  const byDom = (info.hasPwd && info.hasLoginBtn) || info.strictLoginText;
 
+  if (info.hasLoggedInHints && !byDom) {
+    return { status: 'logged_in', reason: 'logged-in-dom-hints', url };
+  }
   if (byUrl || byDom) {
     return { status: 'not_logged_in', reason: byUrl ? 'login-url' : 'login-dom', url };
   }
@@ -371,7 +407,7 @@ async function inspectLoginStateOnPage(page, channelId) {
 async function auditLoginStatus(context, audit, auditPath) {
   const loginPages = new Map();
 
-  for (const channelId of ALL_CHANNELS) {
+  for (const channelId of ACTIVE_CHANNELS) {
     const entry = CHANNEL_ENTRY_URLS[channelId];
     const page = await context.newPage();
     try {
@@ -559,7 +595,9 @@ async function main() {
   saveLoginAudit(auditPath, audit);
 
   const context = await chromium.launchPersistentContext(profileDir, {
+    ...(PW_EXECUTABLE_PATH ? { executablePath: PW_EXECUTABLE_PATH } : {}),
     headless: false,
+    ignoreDefaultArgs: ['--disable-extensions'],
     args: [
       `--disable-extensions-except=${distDir}`,
       `--load-extension=${distDir}`,
@@ -601,7 +639,7 @@ async function main() {
   const loginPages = await auditLoginStatus(context, audit, auditPath);
   console.log('[main] login audit done');
 
-  for (const channelId of ALL_CHANNELS) {
+  for (const channelId of ACTIVE_CHANNELS) {
     const auditStatus = audit.channels[channelId]?.status || 'unknown';
     if (auditStatus === 'not_logged_in') {
       updateChannelProgress(progress, channelId, 'not_logged_in', '登录审计判定未登录');
@@ -611,14 +649,28 @@ async function main() {
   }
   saveProgress(progressPath, progress);
 
-  console.log('[main] wait user login if needed...');
-  await waitUserLoginUntilReady(context, wechatPage, loginPages, audit, auditPath, progress, progressPath);
-  console.log('[main] login wait done, start publish loop');
+  if (WAIT_FOR_LOGIN) {
+    console.log('[main] wait user login if needed...');
+    await waitUserLoginUntilReady(context, wechatPage, loginPages, audit, auditPath, progress, progressPath);
+    console.log('[main] login wait done, start publish loop');
+  } else {
+    console.log('[main] WAIT_FOR_LOGIN=0，跳过人工登录等待');
+  }
 
   while (true) {
-    const pending = ALL_CHANNELS.filter((id) => progress.channels[id].status !== 'success');
+    const pending = ACTIVE_CHANNELS.filter((id) => {
+      const status = progress.channels[id].status;
+      if (status === 'success') return false;
+      if (!WAIT_FOR_LOGIN && status === 'not_logged_in') return false;
+      return true;
+    });
+    const blockedByLogin = ACTIVE_CHANNELS.filter((id) => progress.channels[id].status === 'not_logged_in');
     if (!pending.length) {
-      console.log('\n✅ 全部渠道发布成功（10/10）');
+      if (!WAIT_FOR_LOGIN && blockedByLogin.length) {
+        console.log(`\n⏸️ 已完成非登录阻塞渠道；以下渠道仍需人工登录：${blockedByLogin.join(', ')}`);
+      } else {
+        console.log(`\n✅ 全部目标渠道发布成功（${ACTIVE_CHANNELS.length}/${ACTIVE_CHANNELS.length}）`);
+      }
       saveProgress(progressPath, progress);
       if (KEEP_BROWSER_OPEN) {
         await keepAliveForever(context, progress, progressPath);
@@ -695,7 +747,7 @@ async function main() {
       }
     }
 
-    if (loginPages.size > 0) {
+    if (WAIT_FOR_LOGIN && loginPages.size > 0) {
       await waitUserLoginUntilReady(context, wechatPage, loginPages, audit, auditPath, progress, progressPath);
     }
 

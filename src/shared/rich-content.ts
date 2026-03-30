@@ -171,11 +171,13 @@ export function buildRichContentTokens(params: {
   baseUrl: string;
   sourceUrl: string;
   htmlMode?: 'plain' | 'raw';
+  splitBlocks?: boolean;
 }): RcRichContentToken[] {
   const contentHtml = String(params?.contentHtml || '');
   const baseUrl = String(params?.baseUrl || '');
   const sourceUrl = String(params?.sourceUrl || '');
   const htmlMode = params?.htmlMode === 'raw' ? 'raw' : 'plain';
+  const splitBlocks = !!params?.splitBlocks;
 
   const container = document.createElement('div');
   container.innerHTML = contentHtml;
@@ -183,10 +185,10 @@ export function buildRichContentTokens(params: {
   const images = Array.from(container.querySelectorAll<HTMLImageElement>('img'));
   const tokens: RcRichContentToken[] = [];
 
-  const pushHtml = (html: string) => {
+  const pushSingleHtmlToken = (html: string) => {
     const h = String(html || '').trim();
     if (!h) return;
-    if (/<img\b/i.test(h)) return; // safety: html token must not include img
+    if (/<img\b/i.test(h)) return;
 
     if (htmlMode === 'plain') {
       const plain = htmlToPlainTextSafe(h);
@@ -211,6 +213,146 @@ export function buildRichContentTokens(params: {
       // ignore
     }
   };
+
+  const splitRawHtmlToBlocks = (html: string): string[] => {
+    const h = String(html || '').trim();
+    if (!h) return [];
+
+    const tmp = document.createElement('div');
+    tmp.innerHTML = h;
+    for (const node of Array.from(tmp.querySelectorAll('img,script,style,iframe'))) {
+      node.remove();
+    }
+
+    const fragments: string[] = [];
+    const wrapperTags = new Set(['DIV', 'SECTION', 'ARTICLE', 'MAIN']);
+    const blockTags = new Set([
+      'P',
+      'H1',
+      'H2',
+      'H3',
+      'H4',
+      'H5',
+      'H6',
+      'UL',
+      'OL',
+      'PRE',
+      'BLOCKQUOTE',
+      'TABLE',
+      'HR',
+    ]);
+
+    const serializeNode = (node: Node): string => {
+      if (node.nodeType === Node.TEXT_NODE) {
+        return rcEscapeAttr(String(node.textContent || ''));
+      }
+      if (node instanceof HTMLElement) {
+        return node.outerHTML;
+      }
+      return '';
+    };
+
+    const walk = (root: Node): void => {
+      let inlineBuffer = '';
+      const flushInline = () => {
+        const html = inlineBuffer.trim();
+        inlineBuffer = '';
+        if (!html) return;
+        fragments.push(`<p>${html}</p>`);
+      };
+
+      for (const child of Array.from(root.childNodes)) {
+        if (child.nodeType === Node.TEXT_NODE) {
+          const text = String(child.textContent || '');
+          if (!text.trim()) continue;
+          inlineBuffer += rcEscapeAttr(text);
+          continue;
+        }
+
+        if (!(child instanceof HTMLElement)) continue;
+        const tag = child.tagName.toUpperCase();
+
+        if (tag === 'BR') {
+          inlineBuffer += '<br/>';
+          continue;
+        }
+
+        if (wrapperTags.has(tag)) {
+          flushInline();
+          walk(child);
+          continue;
+        }
+
+        if (blockTags.has(tag)) {
+          flushInline();
+          fragments.push(child.outerHTML);
+          continue;
+        }
+
+        inlineBuffer += serializeNode(child);
+      }
+
+      flushInline();
+    };
+
+    walk(tmp);
+
+    return fragments.filter((fragment) => {
+      const normalized = String(fragment || '').trim();
+      if (!normalized) return false;
+      if (normalized === '<p>&nbsp;</p>' || normalized === '<p><br></p>' || normalized === '<p><br/></p>') return false;
+      return !!htmlToPlainTextSafe(normalized) || /<br\s*\/?>/i.test(normalized);
+    });
+  };
+
+  const pushHtml = (html: string) => {
+    const h = String(html || '').trim();
+    if (!h) return;
+    if (/<img\b/i.test(h)) return;
+
+    if (htmlMode === 'raw' && splitBlocks) {
+      const fragments = splitRawHtmlToBlocks(h);
+      if (fragments.length) {
+        for (const fragment of fragments) {
+          pushSingleHtmlToken(fragment);
+        }
+        return;
+      }
+    }
+
+    pushSingleHtmlToken(h);
+  };
+
+  const pushHtmlDirect = (html: string) => {
+    const h = String(html || '').trim();
+    if (!h) return;
+    if (/<img\b/i.test(h)) return;
+    if (htmlMode === 'raw' && splitBlocks) {
+      const fragments = splitRawHtmlToBlocks(h);
+      if (fragments.length) {
+        for (const fragment of fragments) {
+          pushSingleHtmlToken(fragment);
+        }
+        return;
+      }
+    }
+    pushSingleHtmlToken(h);
+  };
+
+  if (images.length === 0) {
+    pushHtmlDirect(contentHtml);
+    if (sourceUrl) {
+      const safe = rcEscapeAttr(sourceUrl);
+      pushHtmlDirect(`\n<p><br/></p><p>原文链接：<a href="${safe}" target="_blank" rel="noreferrer noopener">${safe}</a></p>`);
+    }
+    return tokens;
+  }
+
+  if (htmlMode === 'plain') {
+    // keep existing path below
+  } else {
+    // raw path will continue using block-aware pushHtml
+  }
 
   let startNode: Node = container;
   let startOffset = 0;

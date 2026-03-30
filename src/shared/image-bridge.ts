@@ -163,6 +163,22 @@ function bridgeViewOf(node: unknown): BridgeView {
   }
 }
 
+function moveCaretToEnd(root: HTMLElement): void {
+  try {
+    const doc = root.ownerDocument;
+    const view = bridgeViewOf(root);
+    const selection = view.getSelection?.();
+    if (!selection) return;
+    const range = doc.createRange();
+    range.selectNodeContents(root);
+    range.collapse(false);
+    selection.removeAllRanges();
+    selection.addRange(range);
+  } catch {
+    // ignore
+  }
+}
+
 function pickFileExtension(mimeType: string): string {
   const mt = String(mimeType || '').toLowerCase();
   if (mt.includes('png')) return 'png';
@@ -556,6 +572,9 @@ export async function fillEditorByTokens(params: {
   tokens: BridgeRichContentToken[];
   editorRoot: HTMLElement;
   writeMode: 'html' | 'text';
+  ensureCaretAtEnd?: boolean;
+  directHtmlAppend?: boolean;
+  skipHtmlPasteEvent?: boolean;
   onImageProgress?: (current: number, total: number, imageUrl: string) => Promise<void> | void;
   insertImageAtCursorOverride?: (args: { jobId: string; imageUrl: string; editorRoot: HTMLElement }) => Promise<void>;
 }): Promise<void> {
@@ -584,6 +603,9 @@ export async function fillEditorByTokens(params: {
     simulateFocus(editorRoot);
   } catch {
     // ignore
+  }
+  if (params.ensureCaretAtEnd) {
+    moveCaretToEnd(editorRoot);
   }
   try {
     doc.execCommand('selectAll', false);
@@ -710,7 +732,29 @@ export async function fillEditorByTokens(params: {
       }
     };
 
-    if (tryPasteEvent()) {
+    const tryDirectAppend = () => {
+      try {
+        const tmp = doc.createElement('div');
+        tmp.innerHTML = h;
+        const nodes = Array.from(tmp.childNodes);
+        if (!nodes.length) return false;
+        for (const node of nodes) {
+          editorRoot.appendChild(node);
+        }
+        editorRoot.dispatchEvent(new view.Event('input', { bubbles: true, cancelable: true }));
+        editorRoot.dispatchEvent(new view.Event('change', { bubbles: true, cancelable: true }));
+        return true;
+      } catch {
+        return false;
+      }
+    };
+
+    if (params.directHtmlAppend && tryDirectAppend()) {
+      await waitDomTick();
+      if (hasGrowth()) return;
+    }
+
+    if (!params.skipHtmlPasteEvent && tryPasteEvent()) {
       await waitDomTick();
       if (hasGrowth()) return;
     }
@@ -741,6 +785,9 @@ export async function fillEditorByTokens(params: {
     } catch {
       // ignore
     }
+    if (params.ensureCaretAtEnd) {
+      moveCaretToEnd(editorRoot);
+    }
 
     if (token.kind === 'html') {
       if (params.writeMode === 'html') {
@@ -760,6 +807,9 @@ export async function fillEditorByTokens(params: {
       }
       const insertFn = params.insertImageAtCursorOverride || insertImageAtCursor;
       await insertFn({ jobId: params.jobId, imageUrl: token.src, editorRoot });
+      if (params.ensureCaretAtEnd) {
+        moveCaretToEnd(editorRoot);
+      }
       continue;
     }
   }

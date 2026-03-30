@@ -568,6 +568,47 @@ function isCsdnEditorPlaceholderImage(src: string): boolean {
   return false;
 }
 
+function collapseCursorToEnd(editorRoot: HTMLElement): void {
+  try {
+    const doc = editorRoot.ownerDocument;
+    const view = doc.defaultView;
+    if (!view) return;
+    const sel = view.getSelection();
+    if (!sel) return;
+    const range = doc.createRange();
+    range.selectNodeContents(editorRoot);
+    range.collapse(false);
+    sel.removeAllRanges();
+    sel.addRange(range);
+  } catch {
+    // ignore
+  }
+}
+
+async function waitCsdnImageUploaded(editorRoot: HTMLElement, beforeCount: number, timeoutMs = 120_000): Promise<void> {
+  const isReadySrc = (src: string): boolean => {
+    const s = String(src || '').trim();
+    if (!s) return false;
+    if (s.startsWith('blob:') || s.startsWith('data:')) return false;
+    if (isCsdnEditorPlaceholderImage(s)) return false;
+    return s.startsWith('http://') || s.startsWith('https://') || s.startsWith('//');
+  };
+
+  await retryUntil(
+    async () => {
+      const imgs = Array.from(editorRoot.querySelectorAll<HTMLImageElement>('img'));
+      if (imgs.length <= beforeCount) throw new Error('img not inserted yet');
+
+      // 约定：插图前会把光标折叠到末尾，因此新图通常在最后几张里
+      const tail = imgs.slice(Math.max(0, beforeCount));
+      const ok = tail.some((img) => isReadySrc(img.getAttribute('src') || ''));
+      if (!ok) throw new Error('waiting image upload');
+      return true;
+    },
+    { timeoutMs, intervalMs: 800 }
+  );
+}
+
 function findCsdnDrawerInsertButton(drawer: HTMLElement): HTMLElement | null {
   const nodes = Array.from(drawer.querySelectorAll<HTMLElement>('button,[role="button"],a,div,span'));
   for (const node of nodes) {
@@ -733,13 +774,33 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
         editorRoot,
         writeMode: 'text',
         insertImageAtCursorOverride: async ({ jobId, imageUrl, editorRoot: root }) => {
+          // CKEditor 场景：插图后图片通常会处于选中状态，下一次插图可能会“替换”当前图片，
+          // 从而导致最终仅剩最后一张图/部分文本被覆盖。这里强制光标折叠到末尾并等待上传完成再继续。
+          collapseCursorToEnd(root);
+          const beforeCount = (() => {
+            try {
+              return root.querySelectorAll('img').length;
+            } catch {
+              return 0;
+            }
+          })();
           try {
             await insertImageAtCursor({ jobId, imageUrl, editorRoot: root });
-            return;
           } catch {
             // fallback to CSDN drawer uploader
+            await insertCsdnImageViaDrawer({ jobId, imageUrl, editorRoot: root });
           }
-          await insertCsdnImageViaDrawer({ jobId, imageUrl, editorRoot: root });
+
+          await waitCsdnImageUploaded(root, beforeCount, 120_000);
+
+          // 插图完成后补一个空行，确保下一个 token 的插入点稳定
+          try {
+            collapseCursorToEnd(root);
+            root.ownerDocument.execCommand('insertHTML', false, '<p><br/></p>');
+          } catch {
+            // ignore
+          }
+          collapseCursorToEnd(root);
         },
         onImageProgress: async (current, total) => {
           await report({

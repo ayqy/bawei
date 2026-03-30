@@ -12,6 +12,7 @@ import type { ChannelId, ChannelRuntimeState, PublishJob } from '../shared/v2-ty
 /* INLINE:image-bridge */
 
 const CHANNEL_ID: ChannelId = 'oschina';
+const OSCHINA_DIRECT_WRITE_ENTRY_URL = 'https://my.oschina.net/u/1/blog/write';
 
 type AnyJob = Pick<PublishJob, 'jobId' | 'action' | 'article' | 'stoppedAt'>;
 
@@ -168,6 +169,26 @@ function detectCanonicalSpacePath(): string | null {
   return null;
 }
 
+function getDirectWriteEntryUrl(): string {
+  return OSCHINA_DIRECT_WRITE_ENTRY_URL;
+}
+
+function dismissGuideDrawer(): void {
+  try {
+    const close = Array.from(document.querySelectorAll<HTMLElement>('button,div,span')).find(
+      (node) => (node.textContent || '').trim() === '关闭引导'
+    );
+    if (!close) return;
+    try {
+      simulateClick(close);
+    } catch {
+      close.click();
+    }
+  } catch {
+    // ignore
+  }
+}
+
 async function report(patch: Partial<ChannelRuntimeState>): Promise<void> {
   if (!currentJob) return;
   await chrome.runtime.sendMessage({
@@ -188,13 +209,13 @@ async function stageDetectLogin(): Promise<void> {
   currentStage = 'detectLogin';
   await report({ status: 'running', stage: 'detectLogin', userMessage: getMessage('v3MsgDetectingLogin') });
 
-  const url = String(location.href || '').toLowerCase();
-  const hasLoginUrl = /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i.test(url);
-  const hasPassword = !!document.querySelector('input[type="password"],input[name*="password" i],input[id*="password" i]');
-  const text = String(document.body?.innerText || '');
-  const hardLoginText = /请先登录后继续|请登录后操作|登录后继续/i.test(text);
+  const loginState = detectPageLoginState({
+    loginUrlPattern: /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i,
+    strictLoginPattern: /请先登录后继续|请登录后操作|登录后继续|账号登录|密码登录|扫码登录/i,
+    loggedInPattern: /写博客|我的博客|博客广场|动弹|消息|设置|个人空间|退出登录|我的主页/i,
+  });
 
-  if (hasLoginUrl || hasPassword || hardLoginText) {
+  if (loginState.status === 'not_logged_in') {
     await report({
       status: 'not_logged_in',
       stage: 'detectLogin',
@@ -210,7 +231,7 @@ async function ensureEditorPage(): Promise<boolean> {
 
   if (!location.pathname.startsWith('/blog/write')) {
     const detected = detectWriteEntryUrlOnWww();
-    const target = detected || 'https://www.oschina.net/blog/write';
+    const target = detected || getDirectWriteEntryUrl();
     const retryKey = currentJob ? getWwwEntryRetryKey(currentJob.jobId) : '';
     if (!detected && retryKey) {
       const n = Number(getSessionValue(retryKey) || '0') + 1;
@@ -243,25 +264,25 @@ async function ensureEditorPage(): Promise<boolean> {
   }
 
   // /blog/write 是入口页：需要跳转到 my.oschina.net 的个人空间写作页
-  const target = await retryUntil(
-    async () => {
-      const direct = document.querySelector<HTMLAnchorElement>('a[href*="my.oschina.net"][href*="/blog/write"]');
-      if (direct?.href) return direct;
+  const target =
+    (await retryUntil(
+      async () => {
+        const direct = document.querySelector<HTMLAnchorElement>('a[href*="my.oschina.net"][href*="/blog/write"]');
+        if (direct?.href) return direct;
 
-      const anchors = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href]'));
-      const byText = anchors.find((a) => ((a.textContent || '').trim() || '').includes('写博客'));
-      if (byText?.href) return byText;
+        const anchors = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href]'));
+        const byText = anchors.find((a) => ((a.textContent || '').trim() || '').includes('写博客'));
+        if (byText?.href) return byText;
 
-      // 有些情况下入口是按钮/卡片，先点一下触发跳转
-      const maybe = Array.from(document.querySelectorAll<HTMLElement>('button,a,div')).find((n) =>
-        ((n.textContent || '').trim() || '').includes('写博客')
-      );
-      if (maybe) return maybe;
+        const maybe = Array.from(document.querySelectorAll<HTMLElement>('button,a,div')).find((n) =>
+          ((n.textContent || '').trim() || '').includes('写博客')
+        );
+        if (maybe) return maybe;
 
-      throw new Error('write entry not ready');
-    },
-    { timeoutMs: 20000, intervalMs: 400 }
-  );
+        throw new Error('write entry not ready');
+      },
+      { timeoutMs: 4000, intervalMs: 300 }
+    ).catch(() => null)) || null;
 
   if (target instanceof HTMLAnchorElement && target.href) {
     if (currentJob) removeSessionValue(getWwwEntryRetryKey(currentJob.jobId));
@@ -269,17 +290,31 @@ async function ensureEditorPage(): Promise<boolean> {
     return true;
   }
 
-  try {
-    simulateClick(target as unknown as HTMLElement);
-  } catch {
-    (target as unknown as HTMLElement).click();
+  if (target instanceof HTMLElement) {
+    try {
+      simulateClick(target);
+    } catch {
+      target.click();
+    }
+    return true;
   }
+
+  const fallback = getDirectWriteEntryUrl();
+  if (currentJob) removeSessionValue(getWwwEntryRetryKey(currentJob.jobId));
+  await report({
+    status: 'running',
+    stage: 'openEntry',
+    userMessage: getMessage('v2MsgOschinaGoProfileWriteBlogPage'),
+    devDetails: { from: location.href, to: fallback, reason: 'fallback-direct-write-entry' },
+  });
+  location.href = fallback;
   return true;
 }
 
 async function stageFillTitle(title: string): Promise<void> {
   currentStage = 'fillTitle';
   await report({ status: 'running', stage: 'fillTitle' });
+  dismissGuideDrawer();
   const input = (await waitForElement('input[name="title"], input[placeholder*="文章标题"]', 15000)) as HTMLInputElement;
   simulateFocus(input);
   simulateType(input, title);
@@ -297,19 +332,34 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
   const jobTokens = currentJob?.article?.contentTokens;
   const tokens = Array.isArray(jobTokens) ? jobTokens : buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
 
-  // 回退：直接写入 iframe body
-  const iframe = (await waitForElement<HTMLIFrameElement>('iframe.cke_wysiwyg_frame, iframe', 15000)) as HTMLIFrameElement;
+  dismissGuideDrawer();
 
-  // 等待 iframe body 可写（避免 document_end 时机过早）
-  const deadline = Date.now() + 15000;
-  while (Date.now() < deadline) {
-    if (iframe?.contentDocument?.body) break;
-    await new Promise((r) => setTimeout(r, 200));
+  let editorRoot: HTMLElement | null = null;
+  let isProseMirrorEditor = false;
+
+  const iframe = document.querySelector<HTMLIFrameElement>('iframe.cke_wysiwyg_frame, iframe');
+  if (iframe) {
+    const deadline = Date.now() + 15000;
+    while (Date.now() < deadline) {
+      if (iframe.contentDocument?.body) {
+        editorRoot = iframe.contentDocument.body as HTMLElement;
+        break;
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
   }
 
-  if (!iframe?.contentDocument?.body) throw new Error('未找到正文编辑器（iframe 未就绪）');
+  if (!editorRoot) {
+    editorRoot =
+      (await waitForElement<HTMLElement>(
+        '.tiptap.ProseMirror.aie-content, .ProseMirror[role="textbox"], .tiptap.ProseMirror, [role="textbox"].aie-content',
+        15000
+      ).catch(() => null)) || null;
+    isProseMirrorEditor = !!editorRoot;
+  }
 
-  const editorRoot = iframe.contentDocument.body as HTMLElement;
+  if (!editorRoot) throw new Error('未找到正文编辑器（iframe / ProseMirror 未就绪）');
+
   const expectedImages = tokens.filter((t) => t?.kind === 'image').length;
   const existingHtml = (() => {
     try {
@@ -336,6 +386,8 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
         tokens,
         editorRoot,
         writeMode: 'html',
+        ensureCaretAtEnd: isProseMirrorEditor,
+        directHtmlAppend: isProseMirrorEditor,
         onImageProgress: async (current, total) => {
           await report({
             status: 'running',
@@ -379,6 +431,16 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
     // ignore
   }
 
+  if (isProseMirrorEditor) {
+    try {
+      editorRoot.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+      editorRoot.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+      editorRoot.dispatchEvent(new FocusEvent('blur', { bubbles: true }));
+    } catch {
+      // ignore
+    }
+  }
+
   await report({ userMessage: getMessage('v2MsgAppendedSourceLinkKeepOriginal') });
 }
 
@@ -414,11 +476,16 @@ async function stageSubmitPublish(): Promise<void> {
 
   const confirm = await retryUntil(
     async () => {
-      const nodes = Array.from(document.querySelectorAll<HTMLElement>('button,a,div'));
+      const nodes = Array.from(document.querySelectorAll<HTMLElement>('button,a,div,span,label'));
       const byText = (text: string) => nodes.find((n) => (n.textContent || '').trim() === text) || null;
-      const btn = byText('确认并发布') || byText('确认发布') || null;
+      const btn =
+        byText('确定并发布') ||
+        byText('确认并发布') ||
+        byText('确定发布') ||
+        byText('确认发布') ||
+        null;
       if (!btn) throw new Error('confirm not ready');
-      return btn;
+      return (btn.closest('button') as HTMLElement | null) || btn;
     },
     { timeoutMs: 15000, intervalMs: 400 }
   );
@@ -437,10 +504,31 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
   const okTexts =
     action === 'draft'
       ? ['草稿', '保存成功', '已保存']
-      : ['发布成功', '已发布', '提交成功'];
+      : ['发布成功', '已发布', '提交成功', '待审核', '正在审核中', '重新编辑'];
 
   const deadline = Date.now() + 20000;
   while (Date.now() < deadline) {
+    if (action === 'publish') {
+      if (location.hostname === 'my.oschina.net' && /\/blog\/\d+/.test(location.pathname)) {
+        await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgSuccessDetectedStartVerify') });
+        return;
+      }
+
+      const text = document.body?.innerText || '';
+      const hit = okTexts.some((t) => text.includes(t));
+      if (hit) {
+        if (isWritePage()) {
+          await new Promise((r) => setTimeout(r, 300));
+          continue;
+        }
+        await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgSuccessDetectedStartVerify') });
+        return;
+      }
+
+      await new Promise((r) => setTimeout(r, 300));
+      continue;
+    }
+
     const text = document.body?.innerText || '';
     if (okTexts.some((t) => text.includes(t))) {
       await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgSuccessDetectedStartVerify') });
@@ -459,9 +547,9 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
 
 async function runFlow(job: AnyJob): Promise<void> {
   await report({ status: 'running', stage: 'openEntry', userMessage: getMessage('v2MsgEnteredEditorPage') });
-  await stageDetectLogin();
   const redirected = await ensureEditorPage();
   if (redirected) return;
+  await stageDetectLogin();
 
   if (location.hostname === 'www.oschina.net') {
     await report({
@@ -534,22 +622,22 @@ async function bootstrap(): Promise<void> {
     }
 
     if (isMyOschinaPage()) {
-      // 空间迁移：如果当前在旧空间（/u/账号ID），优先切到实际空间（/u/spaceId）
-      const canonicalSpacePath = detectCanonicalSpacePath();
-      const curSpacePath = location.pathname.match(/^\/u\/[^/]+/)?.[0] || null;
-      if (canonicalSpacePath && curSpacePath && canonicalSpacePath !== curSpacePath) {
-        const nextUrl = `${location.origin}${canonicalSpacePath}${location.search || ''}`;
-        await report({
-          status: 'running',
-          stage: 'confirmSuccess',
-          userMessage: getMessage('v2MsgVerifyOschinaSpaceMigrationSwitchToList'),
-          devDetails: { from: location.href, to: nextUrl },
-        });
-        location.href = nextUrl;
-        return;
+      const isDetailPage = /\/blog\/\d+/.test(location.pathname);
+
+      // detail page: 先等正文加载，再验原文链接；避免 document_end 过早回退
+      if (isDetailPage) {
+        await retryUntil(
+          async () => {
+            if (pageContainsSourceUrlLoose(currentJob.article.sourceUrl)) return true;
+            const text = document.body?.innerText || '';
+            if (/待审核|正在审核中|重新编辑|原文链接/.test(text)) return true;
+            throw new Error('detail not ready');
+          },
+          { timeoutMs: 12000, intervalMs: 500 }
+        ).catch(() => null);
       }
 
-      // detail page: 直接包含原文链接即可通过
+      // detail page: 直接包含原文链接即可通过，避免先做空间迁移把详情页误跳走
       const containsSource = pageContainsSourceUrlLoose(currentJob.article.sourceUrl);
       if (containsSource) {
         removeSessionValue(getProbeActiveKey(currentJob.jobId));
@@ -563,8 +651,23 @@ async function bootstrap(): Promise<void> {
         return;
       }
 
+      // 空间迁移：列表页优先切到实际空间（/u/spaceId），详情页验收失败后只把 canonical path 用于后续列表兜底
+      const canonicalSpacePath = detectCanonicalSpacePath();
+      const curSpacePath = location.pathname.match(/^\/u\/[^/]+/)?.[0] || null;
+      if (!isDetailPage && canonicalSpacePath && curSpacePath && canonicalSpacePath !== curSpacePath) {
+        const nextUrl = `${location.origin}${canonicalSpacePath}${location.search || ''}`;
+        await report({
+          status: 'running',
+          stage: 'confirmSuccess',
+          userMessage: getMessage('v2MsgVerifyOschinaSpaceMigrationSwitchToList'),
+          devDetails: { from: location.href, to: nextUrl },
+        });
+        location.href = nextUrl;
+        return;
+      }
+
       const m = location.pathname.match(/^\/u\/[^/]+/);
-      const userBasePath = m?.[0] || null;
+      const userBasePath = canonicalSpacePath || m?.[0] || null;
       const base = userBasePath ? `${location.origin}${userBasePath}` : null;
       const listUrl = base ? `${base}?tab=newest` : location.href;
       setSessionValue(getListUrlKey(currentJob.jobId), listUrl);

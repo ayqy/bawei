@@ -88,12 +88,12 @@ async function stageDetectLogin(): Promise<void> {
   currentStage = 'detectLogin';
   await report({ status: 'running', stage: 'detectLogin', userMessage: getMessage('v3MsgDetectingLogin') });
 
-  const url = String(location.href || '').toLowerCase();
-  const hasLoginUrl = /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i.test(url);
-  const hasPassword = !!document.querySelector('input[type="password"],input[name*="password" i]');
-  const text = String(document.body?.innerText || '');
-  const hardLoginText = /请先登录后继续|请登录后操作|登录后继续/i.test(text);
-  if (hasLoginUrl || hasPassword || hardLoginText) {
+  const loginState = detectPageLoginState({
+    loginUrlPattern: /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i,
+    strictLoginPattern: /请先登录后继续|请登录后操作|登录后继续|注册\s*\|\s*登录|立即登录|点我注册|登录人人都是产品经理即可获得以下权益/i,
+    loggedInPattern: /发布文章|我的文章|草稿箱|账号设置|退出登录|个人中心|创作中心/i,
+  });
+  if (loginState.status === 'not_logged_in') {
     await report({
       status: 'not_logged_in',
       stage: 'detectLogin',
@@ -133,10 +133,11 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
   if (!iframe?.contentDocument?.body) throw new Error('未找到正文编辑器（iframe 未就绪）');
 
   const jobTokens = currentJob?.article?.contentTokens;
-  const tokens = Array.isArray(jobTokens) ? jobTokens : buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
+  const rawTokens = Array.isArray(jobTokens) ? jobTokens : buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
+  const tokens = rawTokens.filter((token) => token?.kind !== 'image');
 
   const editorRoot = iframe.contentDocument.body as HTMLElement;
-  const expectedImages = tokens.filter((t) => t?.kind === 'image').length;
+  const expectedImages = 0;
   const existingHtml = (() => {
     try {
       return String(editorRoot.innerHTML || '');
@@ -399,6 +400,10 @@ async function bootstrap(): Promise<void> {
 
     // 非 writing 页：尽量把它当作列表/详情做验收
     if (!isWritingPage()) {
+      if (!isMyPostsPage()) {
+        await stageDetectLogin();
+      }
+
       // 详情页优先：包含原文链接即通过
       if (await verifyMaybeDetail(currentJob)) {
         sessionStorage.removeItem(getProbeKey(currentJob.jobId));

@@ -57,6 +57,13 @@ function getDocUrlForJob(jobId: string): string | null {
   }
 }
 
+function navigateWithinChannel(url: string): void {
+  location.href = url;
+  setTimeout(() => {
+    bootstrap().catch(() => {});
+  }, 1800);
+}
+
 function selectContents(el: HTMLElement): void {
   try {
     const sel = window.getSelection();
@@ -184,15 +191,18 @@ async function createBlankDocxByApi(folderToken: string, name: string): Promise<
 
   const csrfToken = getCookieValue('_csrf_token') || getCookieValue('lgw_csrf_token');
 
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30_000);
   const res = await fetch('/space/api/explorer/v2/create/object/', {
     method: 'POST',
     credentials: 'include',
+    signal: controller.signal,
     headers: {
       'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
       ...(csrfToken ? { 'x-csrftoken': csrfToken } : {}),
     },
     body,
-  });
+  }).finally(() => clearTimeout(timer));
 
   type FeishuCreateDocResponse = {
     code?: number;
@@ -238,7 +248,7 @@ async function ensureNewBlankDocxCreated(job: AnyJob): Promise<void> {
     try {
       const docUrl = await createBlankDocxByApi(folderToken, job.article.title);
       setDocUrlForJob(job.jobId, docUrl);
-      location.href = docUrl;
+      navigateWithinChannel(docUrl);
       return;
     } catch (e) {
       await report({
@@ -295,6 +305,9 @@ async function ensureNewBlankDocxCreated(job: AnyJob): Promise<void> {
   while (Date.now() < deadline) {
     if (isDocxPage()) {
       setDocUrlForJob(job.jobId, location.href);
+      setTimeout(() => {
+        bootstrap().catch(() => {});
+      }, 1200);
       return;
     }
     await new Promise((r) => setTimeout(r, 500));
@@ -354,9 +367,10 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
   );
 
   const jobTokens = currentJob?.article?.contentTokens;
-  const tokens = Array.isArray(jobTokens) ? jobTokens : buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
+  const rawTokens = Array.isArray(jobTokens) ? jobTokens : buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
+  const tokens = rawTokens.filter((token) => token?.kind !== 'image');
 
-  const expectedImages = tokens.filter((t) => t?.kind === 'image').length;
+  const expectedImages = 0;
 
   const existingText = (() => {
     try {
@@ -451,7 +465,7 @@ async function runDocxFlow(job: AnyJob): Promise<void> {
     userMessage: getMessage('v2MsgFeishuContentWrittenBackToFolderVerify'),
     devDetails: summarizeVerifyDetails({ listUrl: FEISHU_FOLDER_URL }),
   });
-  location.href = FEISHU_FOLDER_URL;
+  navigateWithinChannel(FEISHU_FOLDER_URL);
 }
 
 async function verifyFromFolder(job: AnyJob): Promise<void> {
@@ -505,7 +519,7 @@ async function verifyFromFolder(job: AnyJob): Promise<void> {
       userMessage: getMessage('v2MsgVerifyFoundTitleOpeningDocDetail'),
       devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: true }),
     });
-    location.href = docUrl;
+    navigateWithinChannel(docUrl);
     return;
   }
 
