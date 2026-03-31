@@ -334,7 +334,15 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
   });
 
   const jobTokens = currentJob?.article?.contentTokens;
-  const tokens = Array.isArray(jobTokens) ? jobTokens : buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
+  const tokens = Array.isArray(jobTokens)
+    ? jobTokens
+    : buildRichContentTokens({
+        contentHtml,
+        baseUrl: sourceUrl,
+        sourceUrl,
+        htmlMode: 'raw',
+        splitBlocks: true,
+      });
 
   dismissGuideDrawer();
 

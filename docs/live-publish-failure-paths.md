@@ -43,7 +43,7 @@
    - `csdn`：`draft-audit.json` 报 `root not found`，但此前直接 iframe probe 已看见标题与正文落入编辑器；自动 extractor 目前不足以把它判成“已一致”。
    - `baijiahao`：`draft-audit.json` 报 `baijiahao root not found`，但此前直接页面 probe 已确认标题、图片与原文链接可见；当前仍需更稳的 extractor 才能纳入自动验收。
    - `cnblogs`：当前页仍停在 `https://i.cnblogs.com/posts/edit?postId=19798784` 且 DOM 只有“编辑器加载中...”，这轮自动取证无法确认正文是否完整落稿。
-   - `sspai`：当前页落在 `https://sspai.com/whoops`，拿不到稳定的文章详情页 / article id，自动验收不足。
+   - `sspai`：历史入口 `https://sspai.com/my` 会落到 `https://sspai.com/whoops`；现已改为统一从 `https://sspai.com/write` 进入。若当前会话仍停在 `whoops`，自动验收仍拿不到稳定的文章详情页 / article id。
    - `woshipm`：自动审计仍取不到稳定正文 root；结合既有策略，该渠道目前仍是“先保提交流程，不保正文图片 fidelity”。
 
 4. **本轮审计新增结论**
@@ -140,6 +140,16 @@
    - 2026-03-31 本轮再次确认：即使 `dist/src/content/wechat-content.js` 已包含新按钮和新逻辑，当前 Chrome for Testing 会话里的微信文章页仍可能继续跑旧 content script。
    - 直接表现为：页面上仍只有旧版 `#bawei-v2-panel`，没有 `#bawei-v2-check-login`，而 `verify-wechat-ui.cjs` 会报 `未找到检查登录按钮`。
    - 这类问题不能靠读源码判断已生效；必须把“扩展 reload + 微信文章页刷新后重新取样 DOM”纳入真实回归步骤。
+
+19. **草稿与发布的正文填充链路必须共用**
+   - 2026-03-31 复核后确认：大多数渠道当前都是 `stageFillTitle -> stageFillContent` 之后，才在末尾分叉到 `saveDraft` 或 `submitPublish`；也就是正文写入链路本来就应被 draft / publish 共用。
+   - 因此凡是发生在 `stageFillContent` 的问题——例如段落粘连、图片缺失、原文链接落点错误——原则上都不应只修 `draft` 或只修 `publish`，否则另一条链路会继续带病。
+   - 真正允许分叉的阶段只应是：最终保存/发布按钮、发布前附加必填项、以及详情页/列表页验收。
+
+20. **微信公众号 payload 的 `contentTokens` 颗粒度过粗，会把所有渠道一起带偏**
+   - 2026-03-31 新确认的共性根因：微信侧 `buildArticlePayload()` 之前用默认 `buildRichContentTokens()` 生成 `contentTokens`，没有开启 `htmlMode='raw' + splitBlocks=true`。
+   - 结果是：下游渠道即使复用了同一套 `contentTokens`，拿到的也只是粗粒度大段文本，天然更容易出现“段落被压成几大块”的问题。
+   - 修复原则：优先在微信源头把 `contentTokens` 拆成保留块级结构的 token，再让各渠道共享这一份结构化输入；不要每个渠道各自继续消费粗粒度 token。
 
 ## 观测依据
 

@@ -40,7 +40,7 @@ function getMessage(key: string, substitutions?: string[]): string {
 }
 
 const WRITE_URL = 'https://sspai.com/write';
-const ENTRY_URL = 'https://sspai.com/my';
+const ENTRY_URL = WRITE_URL;
 
 type SspaiArticleInfo = {
   data?: {
@@ -1562,7 +1562,7 @@ async function bootstrap(): Promise<void> {
       return;
     }
 
-    // 非写作页（推荐入口：/my）：用 API 流程避免“编辑窗口已打开(3006)”锁。
+    // 兜底：如果当前落在 /my 或 /whoops，仍走 API 流程，避免“编辑窗口已打开(3006)”锁。
     if (isMyPage()) {
       await runApiFlow(currentJob);
       return;

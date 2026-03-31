@@ -169,7 +169,7 @@ const CHANNEL_ENTRY_URLS: Record<ChannelId, string> = {
   oschina: 'https://www.oschina.net/blog/write',
   woshipm: 'https://www.woshipm.com/writing',
   mowen: 'https://note.mowen.cn/editor',
-  sspai: 'https://sspai.com/my',
+  sspai: 'https://sspai.com/write',
   baijiahao: 'https://baijiahao.baidu.com/builder/rc/edit?type=news&is_from_cms=1',
   toutiao: 'https://mp.toutiao.com/profile_v4/graphic/publish',
   'feishu-docs': 'https://wuxinxuexi.feishu.cn/drive/folder/PyWAfSFwrlMgiydvlHectMn2nSd',

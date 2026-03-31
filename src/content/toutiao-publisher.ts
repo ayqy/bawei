@@ -183,9 +183,16 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
   });
 
   const jobTokens = currentJob?.article?.contentTokens;
-  const rawTokens = Array.isArray(jobTokens) ? jobTokens : buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
-  const tokens = rawTokens.filter((token) => token?.kind !== 'image');
-  const expectedImages = 0;
+  const tokens = Array.isArray(jobTokens)
+    ? jobTokens
+    : buildRichContentTokens({
+        contentHtml,
+        baseUrl: sourceUrl,
+        sourceUrl,
+        htmlMode: 'raw',
+        splitBlocks: true,
+      });
+  const expectedImages = tokens.filter((token) => token?.kind === 'image').length;
 
   const plainLen = tokens
     .filter((t) => t?.kind === 'html')
@@ -246,7 +253,7 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
         jobId: currentJob?.jobId || '',
         tokens,
         editorRoot: editor,
-        writeMode: 'text',
+        writeMode: 'html',
         onImageProgress: async (current, total) => {
           closeOverlaysBestEffort();
           await report({

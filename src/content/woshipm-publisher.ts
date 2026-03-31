@@ -137,11 +137,18 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
   if (!iframe?.contentDocument?.body) throw new Error('未找到正文编辑器（iframe 未就绪）');
 
   const jobTokens = currentJob?.article?.contentTokens;
-  const rawTokens = Array.isArray(jobTokens) ? jobTokens : buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
-  const tokens = rawTokens.filter((token) => token?.kind !== 'image');
+  const tokens = Array.isArray(jobTokens)
+    ? jobTokens
+    : buildRichContentTokens({
+        contentHtml,
+        baseUrl: sourceUrl,
+        sourceUrl,
+        htmlMode: 'raw',
+        splitBlocks: true,
+      });
 
   const editorRoot = iframe.contentDocument.body as HTMLElement;
-  const expectedImages = 0;
+  const expectedImages = tokens.filter((token) => token?.kind === 'image').length;
   const existingHtml = (() => {
     try {
       return String(editorRoot.innerHTML || '');

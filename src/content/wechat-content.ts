@@ -194,6 +194,8 @@ function buildArticlePayload(): { title: string; sourceUrl: string; contentHtml:
     contentHtml,
     baseUrl: sourceUrl,
     sourceUrl,
+    htmlMode: 'raw',
+    splitBlocks: true,
   });
 
   if (!title.trim()) {
