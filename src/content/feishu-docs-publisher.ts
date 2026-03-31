@@ -89,6 +89,21 @@ function isDocxPage(): boolean {
   return location.hostname === 'wuxinxuexi.feishu.cn' && location.pathname.startsWith('/docx/');
 }
 
+function findFeishuBodyEditor(): HTMLElement | null {
+  const direct = document.querySelector<HTMLElement>(
+    '.page-block-children .block.docx-text-block .zone-container.text-editor[contenteditable="true"], .page-block-children .zone-container.text-editor[contenteditable="true"]'
+  );
+  if (direct) return direct;
+
+  const editors = Array.from(
+    document.querySelectorAll<HTMLElement>('.zone-container.text-editor[contenteditable="true"], .zone-container.text-editor')
+  );
+  const bodyCandidates = editors.filter((el) => !el.closest('h1') && !el.closest('.page-block-header') && !!el.closest('.page-block-children'));
+  if (bodyCandidates.length) return bodyCandidates[0];
+
+  return editors.find((el) => !el.closest('h1') && !el.closest('.page-block-header')) || null;
+}
+
 async function appendSourceUrlToFeishuEditor(editor: HTMLElement, sourceUrl: string): Promise<void> {
   const text = String(sourceUrl || '').trim();
   if (!text) return;
@@ -432,33 +447,24 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
 
   const editor = await retryUntil(
     async () => {
+      const fallback = findContentEditor(document) as HTMLElement | null;
       const el =
-        (document.querySelector<HTMLElement>('.zone-container.text-editor') as HTMLElement | null) ||
-        (document.querySelector<HTMLElement>('.zone-container.text-editor[contenteditable="true"]') as HTMLElement | null) ||
-        (document.querySelector<HTMLElement>('[contenteditable="true"].zone-container.text-editor') as HTMLElement | null) ||
-        (findContentEditor(document) as HTMLElement | null);
+        findFeishuBodyEditor() ||
+        (fallback && !fallback.closest('h1') && !fallback.closest('.page-block-header') ? fallback : null);
       if (!el) throw new Error('editor not ready');
       return el;
     },
     { timeoutMs: 60_000, intervalMs: 800 }
   );
 
-  const jobTokens = currentJob?.article?.contentTokens;
-  const tokens = Array.isArray(jobTokens)
-    ? jobTokens
-    : buildRichContentTokens({
-        contentHtml,
-        baseUrl: sourceUrl,
-        sourceUrl,
-        htmlMode: 'raw',
-        splitBlocks: true,
-      });
+  const rawTokens = buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
+  const tokens = rawTokens.filter((token) => token?.kind !== 'image');
   const sourceToken = buildFeishuSourceToken(sourceUrl);
   if (sourceToken && !tokens.some((token) => token?.kind === 'html' && String(token.html || '').includes(sourceUrl))) {
     tokens.push(sourceToken);
   }
 
-  const expectedImages = tokens.filter((token) => token?.kind === 'image').length;
+  const expectedImages = 0;
 
   const existingText = (() => {
     try {
@@ -484,7 +490,7 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
         jobId: currentJob?.jobId || '',
         tokens,
         editorRoot: editor,
-        writeMode: 'html',
+        writeMode: 'text',
         onImageProgress: async (current, total) => {
           await report({
             status: 'running',

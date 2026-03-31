@@ -53,6 +53,12 @@ function getHomeRetryKey(jobId: string): string {
   return `bawei_v2_woshipm_home_retry_${jobId}`;
 }
 
+function normalizeWoshipmFormText(value: unknown): string {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function buildBackHash(jobId: string, backUrl: string): string {
   return `#bawei_v2=1&job=${encodeURIComponent(jobId)}&back=${encodeURIComponent(backUrl)}`;
 }
@@ -278,54 +284,84 @@ async function stageSaveDraft(): Promise<void> {
   (btn as HTMLButtonElement).click();
 }
 
-async function stageSubmitPublish(): Promise<void> {
-  currentStage = 'submitPublish';
-  await report({ status: 'running', stage: 'submitPublish', userMessage: getMessage('v2MsgSubmittingReview') });
+async function ensureWoshipmReviewAgreements(): Promise<void> {
+  const required = [
+    { name: 'copyright', text: '我承诺图片、字体、内容等不存在侵权行为，如侵权愿承担法律风险。' },
+    { name: 'copyright_other', text: '知晓并同意发布后的内容会同步到头条号/网易号/搜狐号等平台。' },
+    { name: 'copyright_pm', text: '已阅读并同意条款' },
+  ];
 
-  // 勾选协议/承诺项（必须勾选，否则提交无效且列表始终为空）
-  try {
-    const inputs = Array.from(
-      document.querySelectorAll<HTMLInputElement>(
-        'input[type="checkbox"][name="copyright"], input[type="checkbox"][name="copyright_other"], input[type="checkbox"][name="copyright_pm"]'
-      )
-    );
-    for (const input of inputs) {
-      if (input.checked) continue;
-      // 优先点 input 自身；若 UI 需要点 label，再点最近的 label/父容器
+  for (const item of required) {
+    const input = document.querySelector<HTMLInputElement>(`input[type="checkbox"][name="${item.name}"]`);
+    if (!input) throw new Error(`未找到审核勾选项：${item.name}`);
+    if (input.checked) continue;
+
+    const label = input.closest<HTMLElement>('label.demo--label, label');
+    const clickTarget =
+      label?.querySelector<HTMLElement>('.demo--radioInput.demo--checkbox') ||
+      label ||
+      (input.parentElement as HTMLElement | null) ||
+      (input as unknown as HTMLElement);
+
+    try {
+      (label || clickTarget)?.scrollIntoView({ block: 'center', inline: 'nearest' });
+    } catch {
+      // ignore
+    }
+    await new Promise((r) => setTimeout(r, 120));
+
+    if (label && !normalizeWoshipmFormText(label.textContent).includes(item.text)) {
+      throw new Error(`审核勾选项文案不匹配：${item.name}`);
+    }
+
+    try {
+      simulateClick(clickTarget);
+    } catch {
       try {
-        simulateClick(input as unknown as HTMLElement);
-      } catch {
-        try {
-          input.click();
-        } catch {
-          // ignore
-        }
-      }
-      if (!input.checked) {
-        const wrap = (input.closest('label') as HTMLElement | null) || (input.parentElement as HTMLElement | null);
-        if (wrap) {
-          try {
-            simulateClick(wrap);
-          } catch {
-            wrap.click();
-          }
-        }
-      }
-      // 触发表单监听
-      try {
-        input.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
-        input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+        clickTarget.click();
       } catch {
         // ignore
       }
     }
-  } catch {
-    // ignore
+
+    if (!input.checked && label) {
+      try {
+        label.click();
+      } catch {
+        // ignore
+      }
+    }
+
+    try {
+      input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+    } catch {
+      // ignore
+    }
+
+    await new Promise((r) => setTimeout(r, 120));
+    if (!input.checked) throw new Error(`未勾选审核勾选项：${item.name}`);
   }
+}
+
+async function stageSubmitPublish(): Promise<void> {
+  currentStage = 'submitPublish';
+  await report({ status: 'running', stage: 'submitPublish', userMessage: getMessage('v2MsgSubmittingReview') });
+
+  await ensureWoshipmReviewAgreements();
 
   const link = Array.from(document.querySelectorAll('a,button')).find((n) => (n.textContent || '').includes('提交审核'));
   if (!link) throw new Error('未找到提交审核按钮');
-  (link as HTMLElement).click();
+  try {
+    (link as HTMLElement).scrollIntoView({ block: 'center', inline: 'nearest' });
+  } catch {
+    // ignore
+  }
+  try {
+    simulateClick(link as HTMLElement);
+  } catch {
+    (link as HTMLElement).click();
+  }
 
   if (hasRealNameBlocker()) {
     await report({
