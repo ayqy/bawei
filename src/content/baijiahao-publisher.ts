@@ -403,6 +403,83 @@ async function dismissOnboardingBestEffort(): Promise<void> {
   }
 }
 
+function clickBaijiahaoPointerTarget(target: HTMLElement): void {
+  try {
+    target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' as ScrollBehavior });
+  } catch {
+    // ignore
+  }
+
+  const rect = target.getBoundingClientRect();
+  const clientX = rect.left + Math.max(1, Math.min(rect.width - 1, rect.width / 2));
+  const clientY = rect.top + Math.max(1, Math.min(rect.height - 1, rect.height / 2));
+  const view = target.ownerDocument?.defaultView || window;
+
+  const fireMouse = (type: string) => {
+    try {
+      target.dispatchEvent(
+        new view.MouseEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          view,
+          button: 0,
+          buttons: 1,
+          clientX,
+          clientY,
+        })
+      );
+    } catch {
+      // ignore
+    }
+  };
+
+  const firePointer = (type: string) => {
+    try {
+      const PointerCtor = (view as Window & typeof globalThis & { PointerEvent?: typeof PointerEvent }).PointerEvent;
+      if (typeof PointerCtor !== 'function') return;
+      target.dispatchEvent(
+        new PointerCtor(type, {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          view,
+          pointerId: 1,
+          pointerType: 'mouse',
+          isPrimary: true,
+          button: 0,
+          buttons: 1,
+          clientX,
+          clientY,
+        })
+      );
+    } catch {
+      // ignore
+    }
+  };
+
+  firePointer('pointerover');
+  firePointer('pointerenter');
+  fireMouse('mouseover');
+  fireMouse('mouseenter');
+  firePointer('pointerdown');
+  fireMouse('mousedown');
+  firePointer('pointerup');
+  fireMouse('mouseup');
+  fireMouse('click');
+
+  try {
+    simulateClick(target);
+  } catch {
+    // ignore
+  }
+  try {
+    target.click();
+  } catch {
+    // ignore
+  }
+}
+
 function findTitleEditable(): HTMLElement | null {
   const explicit = Array.from(
     document.querySelectorAll<HTMLElement>([
@@ -1023,60 +1100,41 @@ async function stageEnsureEventSourceSelected(): Promise<void> {
 }
 
 async function stageEnsureCoverSelected(): Promise<void> {
-  // Cover is required in current editor: "单图/三图" + "选择封面".
-  // We cannot upload images automatically in this phase; if no cover already selected, we stop and ask the user.
   const text = document.body?.innerText || '';
   const hasCoverUi = text.includes('封面') && (text.includes('单图') || text.includes('三图'));
   if (!hasCoverUi) return;
   const coverApplied = () => !findCoverSelectButton() || !!findAnyElementContainingText('更换封面') || !!findAnyElementContainingText('编辑');
-
-  // If cover already chosen, "选择封面" is replaced by "更换封面/编辑" buttons; treat that as ok.
   if (coverApplied()) return;
 
-  const selectBtn = findCoverSelectButton();
-  if (!selectBtn) return;
-
   await dismissOnboardingBestEffort();
-  // simulateClick 不会抛错，但某些页面只响应原生 click() / pointer 事件；这里两种都触发以提高成功率
-  try {
-    simulateClick(selectBtn);
-  } catch {
-    // ignore
-  }
-  try {
-    selectBtn.click();
-  } catch {
-    // ignore
+  let modal =
+    (document.querySelector<HTMLElement>('.cheetah-modal[role="dialog"]') as HTMLElement | null) ||
+    (document.querySelector<HTMLElement>('.cheetah-modal') as HTMLElement | null) ||
+    null;
+
+  if (!modal || !(modal.textContent || '').includes('封面预览')) {
+    const selectBtn = findCoverSelectButton();
+    if (!selectBtn) return;
+    clickBaijiahaoPointerTarget(selectBtn);
+
+    modal = await retryUntil(
+      async () => {
+        await dismissOnboardingBestEffort();
+        const dlg =
+          (document.querySelector<HTMLElement>('.cheetah-modal[role="dialog"]') as HTMLElement | null) ||
+          (document.querySelector<HTMLElement>('.cheetah-modal') as HTMLElement | null) ||
+          null;
+        if (!dlg) throw new Error('cover modal not ready');
+        if (!(dlg.textContent || '').includes('封面预览')) throw new Error('cover modal content not ready');
+        return dlg;
+      },
+      { timeoutMs: 30_000, intervalMs: 600 }
+    );
   }
 
-  // Wait for cover picker modal.
-  const modal = await retryUntil(
-    async () => {
-      await dismissOnboardingBestEffort();
-      const dlg =
-        (document.querySelector<HTMLElement>('.cheetah-modal[role="dialog"]') as HTMLElement | null) ||
-        (document.querySelector<HTMLElement>('.cheetah-modal') as HTMLElement | null) ||
-        null;
-      if (!dlg) throw new Error('cover modal not ready');
-      if (!(dlg.textContent || '').includes('封面预览')) throw new Error('cover modal content not ready');
-      return dlg;
-    },
-    { timeoutMs: 30_000, intervalMs: 600 }
-  );
-
-  // Prefer AI cover generation (doesn't require local uploads).
   const aiTab = Array.from(modal.querySelectorAll<HTMLElement>('[role="tab"]')).find((t) => (t.textContent || '').includes('AI封图'));
   if (aiTab) {
-    try {
-      simulateClick(aiTab);
-    } catch {
-      // ignore
-    }
-    try {
-      aiTab.click();
-    } catch {
-      // ignore
-    }
+    clickBaijiahaoPointerTarget(aiTab);
     await new Promise((r) => setTimeout(r, 800));
   }
 
@@ -1107,18 +1165,8 @@ async function stageEnsureCoverSelected(): Promise<void> {
 
   const gen = genCandidates[0]?.n || null;
   if (gen) {
-    try {
-      simulateClick(gen);
-    } catch {
-      // ignore
-    }
-    try {
-      (gen as HTMLElement).click();
-    } catch {
-      // ignore
-    }
+    clickBaijiahaoPointerTarget(gen);
 
-    // Wait for "图片生成完成" and enabled confirm button.
     await retryUntil(
       async () => {
         const dlg = document.querySelector<HTMLElement>('.cheetah-modal[role="dialog"], .cheetah-modal');
@@ -1136,29 +1184,17 @@ async function stageEnsureCoverSelected(): Promise<void> {
     );
   }
 
-  // Click confirm ("确定" or "确定 (1)").
   const dlg = document.querySelector<HTMLElement>('.cheetah-modal[role="dialog"], .cheetah-modal') || modal;
   const confirmBtn =
     (Array.from(dlg.querySelectorAll<HTMLButtonElement>('button')).find((b) => (b.textContent || '').includes('确定')) as
       | HTMLButtonElement
       | undefined) || null;
   if (!confirmBtn) throw new Error('未找到封面弹窗的“确定”按钮');
-  try {
-    simulateClick(confirmBtn);
-  } catch {
-    // ignore
-  }
-  try {
-    confirmBtn.click();
-  } catch {
-    // ignore
-  }
+  clickBaijiahaoPointerTarget(confirmBtn);
 
-  // Wait until modal closes and cover section shows "更换封面" or "编辑".
   await retryUntil(
     async () => {
       await dismissOnboardingBestEffort();
-      // If cover is already applied, we are done even if the modal DOM lingers.
       const applied = coverApplied();
       if (applied) {
         const dlg = document.querySelector<HTMLElement>('.cheetah-modal[role="dialog"], .cheetah-modal');
@@ -1166,41 +1202,23 @@ async function stageEnsureCoverSelected(): Promise<void> {
           const rect = dlg.getBoundingClientRect();
           const visible = rect.width > 0 && rect.height > 0;
           if (visible) {
-            const close =
-              (dlg.querySelector<HTMLElement>('.cheetah-modal-close') as HTMLElement | null) ||
-              (dlg.querySelector<HTMLElement>('button[aria-label="Close"]') as HTMLElement | null) ||
-              null;
-            if (close) {
-              try {
-                simulateClick(close);
-              } catch {
-                // ignore
-              }
-              try {
-                close.click();
-              } catch {
-                // ignore
-              }
-            }
-            const mask =
-              (document.querySelector<HTMLElement>('.cheetah-modal-mask') as HTMLElement | null) ||
-              (dlg.parentElement?.querySelector<HTMLElement>('.cheetah-modal-mask') as HTMLElement | null) ||
-              null;
-            if (mask) {
-              try {
-                simulateClick(mask);
-              } catch {
-                // ignore
-              }
-              try {
-                mask.click();
-              } catch {
-                // ignore
-              }
-            }
-            try {
-              document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Escape', code: 'Escape' }));
-              document.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true, key: 'Escape', code: 'Escape' }));
+          const close =
+            (dlg.querySelector<HTMLElement>('.cheetah-modal-close') as HTMLElement | null) ||
+            (dlg.querySelector<HTMLElement>('button[aria-label="Close"]') as HTMLElement | null) ||
+            null;
+          if (close) {
+            clickBaijiahaoPointerTarget(close);
+          }
+          const mask =
+            (document.querySelector<HTMLElement>('.cheetah-modal-mask') as HTMLElement | null) ||
+            (dlg.parentElement?.querySelector<HTMLElement>('.cheetah-modal-mask') as HTMLElement | null) ||
+            null;
+          if (mask) {
+            clickBaijiahaoPointerTarget(mask);
+          }
+          try {
+            document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Escape', code: 'Escape' }));
+            document.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true, key: 'Escape', code: 'Escape' }));
             } catch {
               // ignore
             }
@@ -1228,16 +1246,7 @@ async function stageEnsureCoverSelected(): Promise<void> {
           (dlg?.querySelector<HTMLElement>('button[aria-label="Close"]') as HTMLElement | null) ||
           null;
         if (close) {
-          try {
-            simulateClick(close);
-          } catch {
-            // ignore
-          }
-          try {
-            close.click();
-          } catch {
-            // ignore
-          }
+          clickBaijiahaoPointerTarget(close);
         }
         try {
           document.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Escape', code: 'Escape' }));

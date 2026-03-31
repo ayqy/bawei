@@ -140,6 +140,34 @@ function canonicalUrlKey(raw) {
   }
 }
 
+const LOGIN_AUDIT_EXISTING_PAGE_RULES = {
+  csdn: [/^https:\/\/mp\.csdn\.net\/mp_blog\/creation\/editor/i],
+  'tencent-cloud-dev': [/^https:\/\/cloud\.tencent\.com\/developer\/article\/write/i, /^https:\/\/cloud\.tencent\.com\/developer\/creator\/article/i],
+  cnblogs: [/^https:\/\/i\.cnblogs\.com\/posts\/edit/i],
+  oschina: [/^https:\/\/(?:www|my)\.oschina\.net\/.*\/blog\/write/i, /^https:\/\/www\.oschina\.net\/blog\/write/i],
+  woshipm: [/^https:\/\/www\.woshipm\.com\/writing/i],
+  mowen: [/^https:\/\/note\.mowen\.cn\/editor/i],
+  sspai: [/^https:\/\/sspai\.com\/write/i],
+  baijiahao: [/^https:\/\/baijiahao\.baidu\.com\/builder\/rc\/edit/i],
+  toutiao: [/^https:\/\/mp\.toutiao\.com\/profile_v4\/graphic\/publish/i],
+  'feishu-docs': [/^https:\/\/wuxinxuexi\.feishu\.cn\/docx\//i, /^https:\/\/wuxinxuexi\.feishu\.cn\/drive\/folder\//i],
+};
+
+function findExistingChannelAuditPage(context, channelId) {
+  const rules = LOGIN_AUDIT_EXISTING_PAGE_RULES[channelId] || [];
+  const pages = context
+    .pages()
+    .slice()
+    .reverse()
+    .filter((page) => {
+      const url = String(page.url() || '');
+      if (!url || /mp\.weixin\.qq\.com\/s\//i.test(url)) return false;
+      return rules.some((rule) => rule.test(url));
+    });
+
+  return pages[0] || null;
+}
+
 function dumpArticlePayloadToArtifacts(articlePayload, articleUrl) {
   try {
     if (!articlePayload) return;
@@ -1131,22 +1159,6 @@ async function gotoWithRetry(page, url) {
   throw lastErr || new Error(`goto failed: ${url}`);
 }
 
-async function readRuntimeState(page) {
-  try {
-    return await page.evaluate(() => {
-      const el = document.querySelector('#bawei-v2-runtime-state');
-      if (!el) return null;
-      const raw = String(el.textContent || '').trim();
-      if (!raw) return null;
-      const parsed = JSON.parse(raw);
-      if (!parsed || typeof parsed !== 'object') return null;
-      return parsed;
-    });
-  } catch {
-    return null;
-  }
-}
-
 async function waitForPanel(page) {
   await page.waitForLoadState('domcontentloaded');
   const deadline = Date.now() + 12 * 60_000;
@@ -1748,25 +1760,35 @@ async function auditLoginStatus(context, audit, auditPath) {
 
   for (const channelId of ACTIVE_CHANNELS) {
     const entry = LOGIN_AUDIT_ENTRY_URLS[channelId] || CHANNEL_ENTRY_URLS[channelId];
-    const page = await context.newPage();
+    let page = findExistingChannelAuditPage(context, channelId);
+    let createdForAudit = false;
     try {
-      await gotoWithRetry(page, entry);
-      await sleep(2200);
+      if (page) {
+        await page.waitForLoadState('domcontentloaded', { timeout: 15_000 }).catch(() => {});
+        await sleep(1200);
+        console.log(`[login-audit] ${channelId}: reuse existing page ${page.url()}`);
+      } else {
+        page = await context.newPage();
+        createdForAudit = true;
+        await gotoWithRetry(page, entry);
+        await sleep(2200);
+      }
+
       const result = await inspectLoginStateOnPage(page, channelId);
       audit.channels[channelId] = { status: result.status, reason: result.reason, url: result.url, updatedAt: nowIso() };
       const needManual =
         result.status === 'not_logged_in' || (result.status === 'unknown' && String(result.reason || '').includes('captcha-or-risk-page'));
       if (needManual) loginPages.set(channelId, page);
-      else await page.close().catch(() => {});
+      else if (createdForAudit) await page.close().catch(() => {});
       console.log(`[login-audit] ${channelId}: ${result.status} (${result.reason}) ${result.url}`);
     } catch (error) {
       audit.channels[channelId] = {
         status: 'unknown',
         reason: `audit-error: ${error instanceof Error ? error.message : String(error)}`,
-        url: String(page.url() || entry),
+        url: String(page?.url() || entry),
         updatedAt: nowIso(),
       };
-      await page.close().catch(() => {});
+      if (createdForAudit && page) await page.close().catch(() => {});
       console.log(`[login-audit] ${channelId}: unknown (${error instanceof Error ? error.message : String(error)})`);
     }
     saveLoginAudit(auditPath, audit);

@@ -127,7 +127,39 @@ function setProbeIndexInWindowName(jobId: string, nextIndex: number): void {
 function isElementDisplayed(el: Element): el is HTMLElement {
   if (!(el instanceof HTMLElement)) return false;
   const style = window.getComputedStyle(el);
-  return style.display !== 'none' && style.visibility !== 'hidden' && el.offsetParent !== null;
+  if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+  const rect = el.getBoundingClientRect();
+  return rect.width > 0 && rect.height > 0;
+}
+
+function normalizeNodeText(node: Element | null | undefined): string {
+  return String(node?.textContent || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function findVisibleActionButton(texts: string[]): HTMLElement | null {
+  const wanted = new Set(texts.map((text) => String(text || '').trim()).filter(Boolean));
+  if (!wanted.size) return null;
+
+  const exactCandidates = Array.from(
+    document.querySelectorAll<HTMLElement>('button, [role="button"], a, .el_mcm-button, .btn-outline-danger, .btn-outline-secondary')
+  ).filter((node) => isElementDisplayed(node) && wanted.has(normalizeNodeText(node)));
+  if (exactCandidates.length) {
+    return exactCandidates[0];
+  }
+
+  const nestedText = Array.from(document.querySelectorAll<HTMLElement>('span, div')).find((node) => {
+    if (!isElementDisplayed(node)) return false;
+    if (!wanted.has(normalizeNodeText(node))) return false;
+    const clickable = node.closest<HTMLElement>('button, [role="button"], a, .el_mcm-button');
+    return !!clickable && isElementDisplayed(clickable);
+  });
+  if (nestedText) {
+    return nestedText.closest<HTMLElement>('button, [role="button"], a, .el_mcm-button');
+  }
+
+  return null;
 }
 
 function shouldRunOnThisPage(): boolean {
@@ -696,6 +728,249 @@ async function insertCsdnImageViaDrawer(params: { jobId: string; imageUrl: strin
   );
 }
 
+function pickCsdnCoverImageUrl(): string | null {
+  const tokens = Array.isArray(currentJob?.article?.contentTokens)
+    ? (currentJob?.article?.contentTokens as Array<{ kind?: string; src?: string }>)
+    : [];
+
+  for (const token of tokens) {
+    if (!token || token.kind !== 'image') continue;
+    const src = String(token.src || '').trim();
+    if (!src) continue;
+    const low = src.toLowerCase();
+    if (low.includes('res.wx.qq.com/t/wx_fed/we-emoji')) continue;
+    return src;
+  }
+
+  try {
+    return chrome.runtime.getURL('icons/icon-128.png');
+  } catch {
+    return null;
+  }
+}
+
+function clickCsdnPointerTarget(target: HTMLElement): void {
+  try {
+    target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' as ScrollBehavior });
+  } catch {
+    // ignore
+  }
+
+  const rect = target.getBoundingClientRect();
+  const clientX = rect.left + Math.max(1, Math.min(rect.width - 1, rect.width / 2));
+  const clientY = rect.top + Math.max(1, Math.min(rect.height - 1, rect.height / 2));
+  const view = target.ownerDocument?.defaultView || window;
+
+  const fireMouse = (type: string) => {
+    try {
+      target.dispatchEvent(
+        new view.MouseEvent(type, {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          view,
+          button: 0,
+          buttons: 1,
+          clientX,
+          clientY,
+        })
+      );
+    } catch {
+      // ignore
+    }
+  };
+
+  const firePointer = (type: string) => {
+    try {
+      const PointerCtor = (view as Window & typeof globalThis & { PointerEvent?: typeof PointerEvent }).PointerEvent;
+      if (typeof PointerCtor !== 'function') return;
+      target.dispatchEvent(
+        new PointerCtor(type, {
+          bubbles: true,
+          cancelable: true,
+          composed: true,
+          view,
+          pointerId: 1,
+          pointerType: 'mouse',
+          isPrimary: true,
+          button: 0,
+          buttons: 1,
+          clientX,
+          clientY,
+        })
+      );
+    } catch {
+      // ignore
+    }
+  };
+
+  firePointer('pointerover');
+  firePointer('pointerenter');
+  fireMouse('mouseover');
+  fireMouse('mouseenter');
+  firePointer('pointerdown');
+  fireMouse('mousedown');
+  firePointer('pointerup');
+  fireMouse('mouseup');
+  fireMouse('click');
+
+  try {
+    simulateClick(target);
+  } catch {
+    // ignore
+  }
+  try {
+    target.click();
+  } catch {
+    // ignore
+  }
+}
+
+function findCsdnCoverUploadInput(): HTMLInputElement | null {
+  return (
+    Array.from(document.querySelectorAll<HTMLInputElement>('input[type="file"]')).find((input) => {
+      const accept = String(input.accept || '').toLowerCase();
+      if (!(accept.includes('.png') || accept.includes('.jpg') || accept.includes('image'))) return false;
+      const text = String(input.parentElement?.textContent || input.closest('div,section,aside')?.textContent || '');
+      return text.includes('封面') || text.includes('上传') || text.includes('从本地上传');
+    }) || null
+  );
+}
+
+function findCsdnCoverScope(input?: HTMLInputElement | null): HTMLElement | null {
+  let node = (input?.parentElement as HTMLElement | null) || null;
+  while (node && node !== document.body) {
+    const text = String(node.innerText || node.textContent || '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (text.includes('封面') || text.includes('从本地上传') || text.includes('确认上传')) return node;
+    node = node.parentElement;
+  }
+  return (input?.parentElement as HTMLElement | null) || null;
+}
+
+function isCsdnCoverImageReady(src: string): boolean {
+  const normalized = String(src || '').trim();
+  if (!normalized) return false;
+  if (normalized.startsWith('blob:') || normalized.startsWith('data:')) return false;
+  if (isCsdnEditorPlaceholderImage(normalized)) return false;
+  return true;
+}
+
+function findVisibleCsdnCoverCropModal(scope?: HTMLElement | null): HTMLElement | null {
+  const roots = [scope, scope?.parentElement as HTMLElement | null, document.body].filter(Boolean) as HTMLElement[];
+  for (const root of roots) {
+    const modal = Array.from(root.querySelectorAll<HTMLElement>('.vue-image-crop-upload')).find((node) => isElementDisplayed(node));
+    if (modal) return modal;
+  }
+  return null;
+}
+
+function findCsdnCoverPreviewImage(scope?: HTMLElement | null): HTMLImageElement | null {
+  const roots = [scope, scope?.parentElement as HTMLElement | null, document.body].filter(Boolean) as HTMLElement[];
+  for (const root of roots) {
+    const preview = Array.from(root.querySelectorAll<HTMLImageElement>('img.preview')).find((img) =>
+      isCsdnCoverImageReady(img.getAttribute('src') || '')
+    );
+    if (preview) return preview;
+  }
+  return null;
+}
+
+function findCsdnCoverSelectionItem(modal?: HTMLElement | null): HTMLElement | null {
+  const root = modal || document.body;
+  const selected = Array.from(root.querySelectorAll<HTMLElement>('.img-selection-item.selected')).find((item) => isElementDisplayed(item));
+  if (selected) return selected;
+  return (
+    Array.from(root.querySelectorAll<HTMLElement>('.img-selection-item')).find((item) => {
+      if (!isElementDisplayed(item)) return false;
+      return item.querySelector('img.select-cover') instanceof HTMLImageElement;
+    }) || null
+  );
+}
+
+function hasCsdnCoverApplied(): boolean {
+  const input = findCsdnCoverUploadInput();
+  const scope = findCsdnCoverScope(input);
+  if (findCsdnCoverPreviewImage(scope)) return true;
+
+  if (findVisibleCsdnCoverCropModal(scope)) return false;
+
+  const bodyText = String(document.body?.innerText || '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  return bodyText.includes('编辑封面') || bodyText.includes('更换封面');
+}
+
+function findCsdnCoverConfirmButton(scope?: HTMLElement | null): HTMLElement | null {
+  const modal = findVisibleCsdnCoverCropModal(scope);
+  const exact = modal?.querySelector<HTMLElement>('.vicp-operate-btn');
+  if (exact && isElementDisplayed(exact)) return exact;
+
+  const roots = [modal, scope, scope?.parentElement as HTMLElement | null, document.body].filter(Boolean) as HTMLElement[];
+  for (const root of roots) {
+    const button = Array.from(root.querySelectorAll<HTMLElement>('button,a,div,span')).find((node) => {
+      if (!isElementDisplayed(node)) return false;
+      const text = String(node.textContent || '').replace(/\s+/g, ' ').trim();
+      return text === '确认上传' || text === '确定上传' || text === '完成';
+    });
+    if (button) return button;
+  }
+  return null;
+}
+
+async function stageEnsureCoverSelected(): Promise<void> {
+  if (hasCsdnCoverApplied()) return;
+
+  const input = await retryUntil(
+    async () => {
+      const target = findCsdnCoverUploadInput();
+      if (!target) throw new Error('csdn cover upload input not found');
+      return target;
+    },
+    { timeoutMs: 10_000, intervalMs: 400 }
+  );
+
+  const imageUrl = pickCsdnCoverImageUrl();
+  if (!imageUrl) throw new Error('csdn cover image url unavailable');
+
+  const scope = findCsdnCoverScope(input);
+  const file = await fetchImageAsFile(currentJob?.jobId || '', imageUrl);
+  setFilesToInput(input, [file]);
+
+  await retryUntil(
+    async () => {
+      if (hasCsdnCoverApplied()) return true;
+
+      const text = String(scope?.innerText || document.body?.innerText || '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      if (text.includes('上传失败')) throw new Error('csdn cover upload failed');
+
+      const modal = findVisibleCsdnCoverCropModal(scope);
+      if (modal) {
+        const selectionItem = findCsdnCoverSelectionItem(modal);
+        if (selectionItem && !modal.querySelector('.img-selection-item.selected')) {
+          clickCsdnPointerTarget(selectionItem);
+          const selectionImage = selectionItem.querySelector<HTMLElement>('img.select-cover');
+          if (selectionImage) clickCsdnPointerTarget(selectionImage);
+        }
+
+        const confirmBtn = findCsdnCoverConfirmButton(scope);
+        if (confirmBtn) {
+          clickCsdnPointerTarget(confirmBtn);
+          await new Promise((resolve) => setTimeout(resolve, 250));
+          if (hasCsdnCoverApplied()) return true;
+        }
+      }
+
+      if (findCsdnCoverPreviewImage(scope)) return true;
+      throw new Error('csdn cover not applied yet');
+    },
+    { timeoutMs: 45_000, intervalMs: 900 }
+  );
+}
+
 async function stageFillContent(contentHtml: string, sourceUrl: string): Promise<void> {
   currentStage = 'fillContent';
   await report({
@@ -851,8 +1126,7 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
 async function stageSaveDraft(): Promise<void> {
   currentStage = 'saveDraft';
   await report({ status: 'running', stage: 'saveDraft', userMessage: getMessage('v2MsgSavingDraftToGenerateId') });
-  const btn = Array.from(document.querySelectorAll('button'))
-    .find((b) => (b.textContent || '').includes('保存草稿')) as HTMLButtonElement | undefined;
+  const btn = findVisibleActionButton(['保存草稿']);
   if (!btn) throw new Error('未找到保存草稿按钮');
   try {
     simulateClick(btn);
@@ -864,24 +1138,10 @@ async function stageSaveDraft(): Promise<void> {
 async function stageSubmitPublish(): Promise<void> {
   currentStage = 'submitPublish';
   await report({ status: 'running', stage: 'submitPublish', userMessage: getMessage('v2MsgTryingToPublish') });
-  // CSDN 真正提交发布通常是“发布博客”（底部按钮）
-  const publishBlogCandidates = Array.from(document.querySelectorAll<HTMLElement>('button,a,div'))
-    .filter((n) => isElementDisplayed(n))
-    .filter((n) => ((n.textContent || '').trim() || '').includes('发布博客'));
-  const publishBlog = publishBlogCandidates.length ? publishBlogCandidates[0] : undefined;
-
-  // 顶部“发布文章”通常只是展开发布设置，不一定提交
-  const publishArticleCandidates = Array.from(document.querySelectorAll<HTMLElement>('button,div[role="button"],a,div,span'))
-    .filter((n) => isElementDisplayed(n))
-    .filter((n) => ((n.textContent || '').trim() || '').includes('发布文章'));
-  const publishArticle = publishArticleCandidates.length ? publishArticleCandidates[0] : undefined;
-
-  const raw = publishBlog || publishArticle;
-  if (!raw) throw new Error('未找到发布按钮（发布博客/发布文章）');
-  const btn =
-    (raw.closest('button') as HTMLElement | null) ||
-    (raw.getAttribute('role') === 'button' ? raw : null) ||
-    (raw as HTMLElement);
+  await stageEnsureCoverSelected();
+  // CSDN 真正提交发布是底部精确文案“发布博客”；不能命中祖先容器，否则点击无效。
+  const btn = findVisibleActionButton(['发布博客']) || findVisibleActionButton(['发布文章']);
+  if (!btn) throw new Error('未找到发布按钮（发布博客/发布文章）');
   try {
     simulateClick(btn);
   } catch {
@@ -929,6 +1189,10 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<boolean
 
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
+    if (action === 'publish' && (isSuccessPage() || isManagePage() || isDetailPage())) {
+      await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgSuccessDetectedStartVerify') });
+      return true;
+    }
     const text = document.body?.innerText || '';
     if (okTexts.some((t) => text.includes(t))) {
       await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgSuccessDetectedStartVerify') });
