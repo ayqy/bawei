@@ -1,6 +1,6 @@
 # Chrome商店生产环境构建
 
-本文档说明如何创建适合Chrome Web Store提交的Copylot生产环境构建。
+本文档说明如何创建适合Chrome Web Store提交的bawei生产环境构建。
 
 ## 背景
 

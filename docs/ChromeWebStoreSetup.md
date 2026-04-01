@@ -43,7 +43,7 @@ https://chrome.google.com/webstore/devconsole/<publisherId>/edit/<extensionId>
 ## 3. 在 Google Cloud Console 创建项目并启用 API
 
 1. 访问 <https://console.cloud.google.com>，点击顶部项目下拉，选择 **「新建项目」**。  
-2. 命名如 `MagicCopy-CWS`，创建后进入该项目。
+2. 命名如 `bawei-CWS`，创建后进入该项目。
 3. 在左侧导航 **「API 与服务 → 库」** 搜索 **Chrome Web Store API** 并 **启用**。
 
 ## 4. 配置 OAuth 同意屏幕

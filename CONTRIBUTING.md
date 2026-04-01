@@ -1,25 +1,14 @@
-# Copylot
+# bawei
 
-A Chrome browser extension that intelligently copies web page content in AI-friendly formats.
+A Chrome browser extension that extracts WeChat Official Account articles and cross-posts them to multiple platforms (CSDN, Juejin, etc.) concurrently.
 
 ## Features
 
-- 🎯 **Smart Content Detection**: Automatically identifies viable content blocks on web pages.
-- ✨ **Smart Table Conversion**: Intelligently copies tables into Markdown or CSV formats.
-- 📝 **Multiple Output Formats**: Copy content as clean Markdown or plain text.
-- ✨ **Professional Code Block Cleaning**: Automatically removes line numbers, prompts, and other "clutter" from copied code blocks, delivering clean, runnable code.
-- 🔄 **Customizable Prompts**: Create, manage, and use your own prompts to format copied text for AI models.
-- 🖱️ **Flexible Interaction Modes**: Activate by single-click or double-click, configurable via settings.
-- ✨ **Hover-to-Copy for Media**: Instantly copy images, videos, and other media elements just by hovering over them.
-- 🌐 **Full Page Conversion**: Convert the entire page content with a single click from the context menu.
-- 🔧 **Developer Tools**: Inspect element details, including selectors and attributes, directly in Chrome DevTools.
+- 🎯 **One-Click Content Extraction**: Intelligently extracts title, content, and images from WeChat articles.
+- 🚀 **Multi-Platform Concurrent Publishing**: Opens multiple target platforms simultaneously and automatically fills in the content.
+- 🖼️ **Automated Image Handling**: Downloads and re-uploads images sequentially to bypass anti-hotlinking.
+- ⚙️ **Customizable Settings**: Support for auto-publishing and auto-closing original pages.
 - 🌍 **Internationalization**: Supports English and Chinese interfaces.
-- ⚙️ **Customizable & Controllable**:
-  - Enable or disable the Magic Copy feature entirely with a single switch.
-  - Configure output format, what metadata to attach (title, URL), and interaction preferences.
-- 🎨 **Modern UI**: Beautiful and responsive popup interface.
-- 🚀 **High Performance**: Built with performance in mind, ensuring a smooth user experience.
-- ➕ **Clipboard Accumulator**: Consecutively copy multiple blocks of content and merge them into a single clipboard entry.
 
 ## Installation
 
@@ -27,7 +16,7 @@ A Chrome browser extension that intelligently copies web page content in AI-frie
 
 1. Clone the repository:
    ```bash
-   git clone https://github.com/ayqy/copy.git
+   git clone https://github.com/ayqy/bawei.git
    cd copy
    ```
 
@@ -210,8 +199,8 @@ For web developers and QA engineers, Magic Copy includes a handy DevTools panel.
 
 1.  **Open DevTools**: Press `F12` or right-click on the page and select "Inspect".
 2.  **Go to Elements Panel**: Select the "Elements" tab.
-3.  **Find MagicCopy Sidebar**: In the right-hand pane (where you usually see Styles, Computed, etc.), find and click on the "MagicCopy" tab.
-4.  **Inspect Elements**: As you select different elements in the Elements panel, the MagicCopy sidebar will display a structured JSON object containing:
+3.  **Find bawei Sidebar**: In the right-hand pane (where you usually see Styles, Computed, etc.), find and click on the "bawei" tab.
+4.  **Inspect Elements**: As you select different elements in the Elements panel, the bawei sidebar will display a structured JSON object containing:
     - `tagName`
     - Important `attributes` (like `id`, `class`, `data-*`, etc.)
     - `innerText`
@@ -303,6 +292,6 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## Support
 
-- Report bugs: [GitHub Issues](https://github.com/ayqy/copy/issues)
-- Feature requests: [GitHub Discussions](https://github.com/ayqy/copy/discussions)
-- Documentation: [GitHub Wiki](https://github.com/ayqy/copy/wiki)
+- Report bugs: [GitHub Issues](https://github.com/ayqy/bawei/issues)
+- Feature requests: [GitHub Discussions](https://github.com/ayqy/bawei/discussions)
+- Documentation: [GitHub Wiki](https://github.com/ayqy/bawei/wiki)

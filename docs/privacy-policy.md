@@ -1,16 +1,16 @@
-# Privacy Policy for MagicCopy
+# Privacy Policy for bawei
 
 **Last Updated:** December 2024
 
 ## Overview
 
-MagicCopy is a Chrome browser extension that helps users intelligently copy web page content in AI-friendly formats. This privacy policy explains how we handle your information when you use our extension.
+bawei is a Chrome browser extension that helps users extract WeChat Official Account articles and seamlessly cross-post them to multiple technical platforms (like CSDN, Juejin, etc.). This privacy policy explains how we handle your information when you use our extension.
 
 ## Information We Collect
 
 ### Data We DO NOT Collect
 
-MagicCopy is designed with privacy in mind. We **do not collect, store, or transmit** any of the following:
+bawei is designed with privacy in mind. We **do not collect, store, or transmit** any of the following:
 
 - Personal information (name, email, phone number, address)
 - Browsing history or website visits
@@ -24,10 +24,9 @@ MagicCopy is designed with privacy in mind. We **do not collect, store, or trans
 The extension only stores the following data **locally on your device**:
 
 - **User Preferences**: Your chosen settings such as:
-  - Output format preference (Markdown or Plain Text)
+  - Auto-publish configuration
+  - Auto-close original page setting
   - Language preference (English or Chinese)
-  - Additional information settings (whether to include page title/URL)
-  - Extension enable/disable status
 
 This data is stored using Chrome's local storage API (`chrome.storage.local`) and **never leaves your device**.
 
@@ -35,7 +34,7 @@ This data is stored using Chrome's local storage API (`chrome.storage.local`) an
 
 The locally stored preferences are used solely to:
 
-- Remember your preferred output format and language settings
+- Remember your preferred auto-publish and interface language settings
 - Provide a consistent user experience across browser sessions
 - Enable/disable extension functionality based on your preferences
 
@@ -83,7 +82,7 @@ We may update this privacy policy from time to time. Any changes will be posted 
 
 If you have any questions about this privacy policy or our data practices, please contact us:
 
-- **GitHub Issues**: [https://github.com/ayqy/MagicCopy/issues/new](https://github.com/ayqy/MagicCopy/issues/new)
+- **GitHub Issues**: [https://github.com/ayqy/bawei/issues/new](https://github.com/ayqy/bawei/issues/new)
 
 ## Compliance
 
@@ -96,4 +95,4 @@ This privacy policy is designed to comply with:
 
 ## Summary
 
-MagicCopy is built with privacy as a core principle. We do not collect, store, or transmit any personal information or browsing data. All functionality operates locally on your device, ensuring your privacy and data security. 
+bawei is built with privacy as a core principle. We do not collect, store, or transmit any personal information or browsing data. All functionality operates locally on your device, ensuring your privacy and data security. 

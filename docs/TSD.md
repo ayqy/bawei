@@ -1,128 +1,53 @@
-### **技术规格文档 (Technical Specification Document) - "AI Copilot" V1.1 (最终修订版)**
+### **技术规格文档 (Technical Specification Document) - bawei 浏览器插件**
 
-| **文档版本** | **V1.2 (Revised)** | **状态** | **已确认** |
+| **文档版本** | **V3.0** | **状态** | **已确认** |
 | :--- | :--- | :--- | :--- |
-| **创建日期** | 2023-10-27 | **技术负责人** | [你的名字] |
-| **对应PRD** | V1.1 | **项目代号** | Project "MagicCopy" |
+| **创建日期** | 2024-12-01 | **技术负责人** | bawei 团队 |
+| **对应PRD** | V3.0 | **项目代号** | Project "bawei" |
 
 ---
 
 ### **1. 概述 (Overview)**
 
-本文档旨在为 "AI Copilot" V1.1 版本的开发提供全面的技术设计和任务分解方案。核心目标是实现 PRD 中定义的功能，并确保开发过程高效、可控，以缩短交付周期。本文档已根据最终评审意见进行修订。
+本文档描述了 bawei 浏览器插件（版本 V3）的技术架构、核心流程和主要实现细节。该插件主要用于从微信公众号文章页面提取内容，并自动分发（草稿/发布）到多个目标技术社区平台。
 
-### **2. 设计决策与澄清 (Design Decisions \u0026 Clarifications)**
+### **2. 架构设计 (Architecture)**
 
-1.  **父子元素竞合逻辑 (FR2.1.1):** 交互逻辑明确为：当鼠标悬停时，插件将只分析鼠标指针正下方的DOM元素 (`event.target`)。如果该元素满足“有效内容区块”的条件，则为其显示复制按钮。
-2.  **内容清理规则 (FR2.2.1):** 纯文本模式下的清理规则为：合并连续空白为单空格、保留段落间空行、移除首尾空白。
-3.  **“反馈与建议”链接 (FR2.3.1):** Popup面板中的链接指向 GitHub Issues: `https://github.com/ayqy/copy/issues/new`。
+采用基于 Manifest V3 的标准 Chrome 插件架构：
 
-### **3. 系统架构 (System Architecture)**
+1.  **Content Script (内容脚本):**
+    *   **注入层:** 仅在 `mp.weixin.qq.com/s*` 页面注入 UI 悬浮面板（基于 Preact + Shadow DOM 实现，隔离样式）。
+    *   **提取层:** 负责解析当前页面的 DOM 结构，提取标题、正文 HTML 及原文链接，并替换图片为代理 URL。
+2.  **Background Service Worker (后台服务):**
+    *   作为协调中心，接收 Content Script 传来的发布指令和数据。
+    *   负责批量打开/聚焦各个目标渠道的编辑页面 (`chrome.tabs.create` / `chrome.windows.update`)。
+    *   维护全局状态机，追踪每个渠道 Tab 的执行进度。
+3.  **Publisher Content Scripts (渠道执行脚本):**
+    *   在各目标平台（如 CSDN、博客园等）的编辑/发布页面上执行。
+    *   根据预定义的各平台发布者策略（Strategy Pattern），利用 DOM 自动化操作（查找输入框、模拟点击、处理富文本编辑器 iframe 等）进行内容注入和发布提交。
+    *   处理平台特定的图片上传逻辑（拖拽模拟、剪贴板粘贴模拟或平台特定按钮点击）。
 
-我们将采用一个标准的、解耦的浏览器插件架构，由以下几个核心部分组成。
+### **3. 核心流程与技术细节 (Core Workflows)**
 
-*   **Content Script (`content.js`):** 注入到用户浏览的页面中，作为核心控制器，负责监听事件、编排调用各功能模块、操作DOM。
-*   **Popup Script (`popup.js`):** 插件工具栏图标的弹出窗口逻辑，负责配置项的UI展示与持久化。
-*   **共享模块 (Shared Modules):** 一系列可被独立开发的纯逻辑JS模块，包括区块识别、内容处理等。
+#### **3.1. 内容提取与清洗**
+*   在微信文章页，提取 `.rich_media_title` 和 `#js_content` 的内容。
+*   清理不必要的格式标签，将内联样式和特殊的微信自定义标签做标准化转换，确保在目标平台编辑器的兼容性。
 
-#### **3.1. 第三方库选型**
+#### **3.2. 图片代理与上传机制 (Image Handling)**
+*   由于微信图片防盗链机制，直接复制图片链接到其他平台无法显示。
+*   插件通过代理服务（如 `read.useai.online`）将原始 `data-src` 转化为可跨域访问的 URL。
+*   在渠道编辑器端，优先采用**模拟粘贴/拖拽 (DataTransfer)** 技术进行图片自动上传。对于处于 iframe 内部的编辑器，或者拦截了通用事件的编辑器，执行特定的后备上传策略。
 
-*   **`turndown.js`**: 为了高质量地实现从HTML到Markdown的转换（PRD FR2.2.2），我们将集成 `turndown` 库。这是本次开发中的核心技术选型，能确保输出的Markdown保留原文的丰富语义。
+#### **3.3. 并发控制与状态同步**
+*   插件基于 `chrome.tabs` API 并发打开最多 10 个渠道编辑页。
+*   使用 `chrome.runtime.sendMessage` 和 `chrome.runtime.onMessage` 在后台和各渠道 Tab 之间进行双向通信。
+*   建立状态机，跟踪：`init` -> `login_check` -> `filling_title` -> `filling_content` -> `uploading_images` -> `submitting` -> `success` / `failed`。
 
-### **4. 核心模块技术设计 (Module Design)**
+#### **3.4. 诊断系统**
+*   由于前端 DOM 自动化易受目标网站 UI 更新影响，插件内置详细的诊断日志输出功能。
+*   在遇到未知弹窗（如验证码、实名认证等）或节点查找超时时，触发暂停状态，并将错误信息传递回微信页的控制面板，允许用户手动介入（例如手动滑块验证）后点击“继续执行”。
 
-#### **4.1. 模块A: 区块识别模块 (`block-identifier.js`)**
+### **4. 开发与测试 (Development \u0026 Testing)**
 
-*   **职责:** 判断一个给定的DOM元素是否为“有效内容区块”。
-*   **接口:** `isViableBlock(element: HTMLElement): boolean`
-*   **实现细节:** 严格按照PRD中的黑名单、尺寸、内容密度和元素类型规则进行过滤。
-
-#### **4.2. 模块B: UI注入模块 (`ui-injector.js`)**
-
-*   **职责:** 在指定元素旁创建、定位、显示和移除“复制”按钮。
-*   **接口:**
-    *   `createCopyButton(): HTMLElement`
-    *   `showButton(button: HTMLElement, targetElement: HTMLElement)`
-    *   `hideButton(button: HTMLElement)`
-    *   `setButtonState(button: HTMLElement, state: \u0027copy\u0027 | \u0027copied\u0027)`
-*   **实现细节:** 创建可复用的按钮实例，通过CSS和JS动态计算位置，内联SVG图标以减少依赖。
-
-#### **4.3. 模块C: 内容处理模块 (`content-processor.js`)**
-
-*   **职责:** 根据用户设置，从DOM元素生成最终待复制的字符串。
-*   **接口:** `processContent(element: HTMLElement, settings: object): string`
-*   **实现细节:**
-    *   **Markdown模式:** 获取`element.innerHTML`，并使用`turndown`库进行转换。
-    *   **纯文本模式:** 获取`element.innerText`，并执行已确认的文本清理逻辑。
-    *   根据设置拼接附加的标题和URL信息。
-
-#### **4.4. 模块D: 设置管理模块 (`settings-manager.js`)**
-
-*   **职责:** 封装对`chrome.storage`的读写，提供统一的配置接口。
-*   **接口:**
-    *   `getSettings(): Promise\u003cobject\u003e`
-    *   `saveSettings(newSettings: object): Promise\u003cvoid\u003e`
-*   **实现细节:** 封装`chrome.storage.local` API，并提供默认配置。
-
-### **5. 数据结构与接口定义 (Data \u0026 APIs)**
-
-#### **5.1. `chrome.storage.local` 数据结构**
-
-*   **Key:** `"copilot_settings"`
-*   **Value (Object):**
-    ```json
-    {
-      "outputFormat": "markdown", // "markdown" | "plaintext"
-      "attachTitle": false,       // boolean
-      "attachURL": false          // boolean
-    }
-    ```
-*   **默认值:** 如上所示。
-
----
-
-### **6. 开发任务拆分 (Development Task Breakdown)**
-
-开发过程将分为三个主要阶段，其中第二阶段包含可并行的开发任务。
-
-1.  **阶段一：项目初始化 (串行)**
-    *   **T0 - 项目框架搭建:**
-        *   **描述:** 使用标准脚手架（如 Vite + TypeScript）初始化浏览器插件项目。配置 `manifest.json` (V3)，建立基本的项目目录结构（`src/content`, `src/popup`, `src/shared-modules`等），并集成代码格式化与检查工具（ESLint, Prettier）。
-        *   **产出:** 一个可供所有开发者克隆并开始工作的、干净的基础项目仓库。
-        *   **说明:** 这是所有后续开发任务的基础，必须最先完成。
-
-2.  **阶段二：核心功能开发 (并行)**
-    *   **T1 - 核心技术：HTML转Markdown模块:**
-        *   **描述:** 独立开发内容处理模块 (`content-processor.js`)。核心任务是集成并精细配置 `turndown.js` 库，确保其能稳定、高质量地将HTML片段转换为Markdown。同时，实现纯文本的清理逻辑。
-        *   **产出:** 一个经过充分单元测试的、可靠的内容处理函数，能接收DOM元素和配置，输出格式正确的字符串。
-    *   **T2 - 核心功能：内容脚本与区块交互:**
-        *   **描述:** 开发 `content.js` 及其依赖的 `block-identifier.js` 和 `ui-injector.js`。此任务包含整个核心交互逻辑：监听鼠标`mousemove`事件（含300ms防抖），调用区块识别算法，在识别成功时注入并定位复制按钮，处理按钮的点击事件（调用内容处理模块、写入剪贴板、更新按钮状态）。
-        *   **产出:** 注入到页面后，能够实现完整的悬停识别、按钮显示、点击复制功能。
-    *   **T3 - 配置功能：Popup设置面板:**
-        *   **描述:** 开发Popup的完整功能，包括 `popup.html`, `popup.css`, `popup.js` 以及其依赖的 `settings-manager.js`。此任务包含UI的构建、从`chrome.storage`读取并渲染用户配置、监听用户操作并实时将新配置写回`storage`。
-        *   **产出:** 一个功能完备、可持久化用户设置的弹出式设置面板。
-    *   **T4 - 工程化：构建与打包配置:**
-        *   **描述:** 完善项目的构建流程。配置`Vite`或`Webpack`，确保能正确处理TypeScript、CSS，并能将`turndown.js`等第三方库正确打包。最终目标是能通过一条命令生成可直接加载到浏览器的、生产环境就绪的插件包。
-        *   **产出:** 稳定可靠的`build`脚本和打包流程。
-
-3.  **阶段三：集成验收 (串行)**
-    *   **T5 - 技术方案符合度审查 (Code Review) (由技术经理负责):**
-        *   **描述:** 在所有开发任务完成后，技术经理将对最终的代码库进行全面的审查。审查内容包括：是否完整实现了PRD和TSD中定义的所有功能和逻辑；代码质量、可读性、可维护性是否达标；非功能性需求（特别是性能）是否得到满足。
-        *   **产出:** 最终确认版本或一份包含必要修改意见的审查报告。
-
----
-
-### **7. 非功能性需求考量 (Non-functional Considerations)**
-
-*   **性能 (Performance):**
-    *   **事件监听:** `mousemove` 事件监听严格使用**Debounce**机制（延迟`300ms`），这是确保页面不卡顿的核心。
-    *   **`turndown` 性能:** 转换操作将在debounce的回调中执行，避免对主线程的长时间占用。
-    *   **资源:** 插件总体积将保持在KB级别。`turndown`库体积小巧，影响可控。所有图标使用内联SVG。
-
-*   **兼容性 (Compatibility):**
-    *   **浏览器:** 目标为 Chrome Manifest V3。
-    *   **API:** 使用 `navigator.clipboard.writeText()` API。
-
-*   **隐私与安全 (Privacy \u0026 Security):**
-    *   **权限:** `manifest.json`中只申请最小权限：`storage`、`clipboardWrite` 和 `contextMenus`。
-    *   **数据:** 严格遵守PRD，所有操作均在客户端本地进行，无任何数据上报服务器。
+*   **技术栈:** TypeScript, Preact, Vite.
+*   **自动化测试:** 集成 Playwright 进行 E2E 测试 (`npm run e2e:v3`)，支持基于 CDP (Chrome DevTools Protocol) 在真实带登录态的浏览器配置文件中进行真跑测试 (`npm run publish:live`)。

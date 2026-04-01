@@ -77,12 +77,12 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ayqy/copy.git"
+    "url": "https://github.com/ayqy/bawei.git"
   },
   "bugs": {
-    "url": "https://github.com/ayqy/copy/issues"
+    "url": "https://github.com/ayqy/bawei/issues"
   },
-  "homepage": "https://github.com/ayqy/copy#readme",
+  "homepage": "https://github.com/ayqy/bawei#readme",
   "lint-staged": {
     "src/**/*.{ts,tsx}": [
       "eslint --max-warnings 0",
