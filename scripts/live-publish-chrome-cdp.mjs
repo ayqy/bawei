@@ -5,6 +5,7 @@ import http from 'node:http';
 import os from 'node:os';
 import { execSync, spawn } from 'node:child_process';
 import { chromium } from 'playwright';
+import { prepareLocalMarkdown } from './local-markdown.mjs';
 
 const ALL_CHANNELS = [
   'csdn',
@@ -1985,6 +1986,11 @@ function parseCli() {
     const articleUrl = String(process.argv[3] || DEFAULT_ARTICLE_URL).trim();
     return { mode: 'publish', articleUrl };
   }
+  if (first === 'markdown') {
+    const markdownPath = String(process.argv[3] || '').trim();
+    if (!markdownPath) throw new Error('缺少 Markdown 文件路径；用法：npm run publish:markdown -- /绝对或相对路径/article.md');
+    return { mode: 'markdown', markdownPath };
+  }
   const articleUrl = String(process.argv[2] || DEFAULT_ARTICLE_URL).trim();
   return { mode: 'legacy', articleUrl };
 }
@@ -2047,6 +2053,7 @@ async function runOpenChannelEditors() {
 async function runPublishOnce(articleUrl, options) {
   forceBypassProxyForLocalCdp();
 
+  const suppliedArticle = options?.articlePayload || null;
   const distDir = abs('dist');
   const progressPath = abs('artifacts/live-publish/mcp-publish-progress.json');
   const auditPath = abs('artifacts/live-publish/mcp-login-audit.json');
@@ -2112,7 +2119,7 @@ async function runPublishOnce(articleUrl, options) {
       }
     }
 
-    const existingWechatPage = options?.preserveExistingPages
+    const existingWechatPage = options?.preserveExistingPages && !suppliedArticle
       ? context.pages().find((p) => canonicalUrlKey(p.url()) === canonicalUrlKey(articleUrl)) ||
         context.pages().find((p) => /mp\.weixin\.qq\.com\/s\//i.test(String(p.url() || '')))
       : null;
@@ -2143,12 +2150,17 @@ async function runPublishOnce(articleUrl, options) {
     await wechatPage.bringToFront().catch(() => {});
     if (existingWechatPage) {
       console.log('[main] reuse article page', wechatPage.url());
+    } else if (suppliedArticle) {
+      console.log('[main] 使用本地 Markdown payload，跳过文章网页加载');
     } else {
       console.log('[main] open article', articleUrl);
       await gotoWithRetry(wechatPage, articleUrl).catch(() => {});
     }
 
     let directMode = USE_BACKGROUND_DIRECT;
+    if (suppliedArticle && !directMode) {
+      throw new Error('本地 Markdown 发布必须使用 background 直连模式；请移除 USE_BACKGROUND_DIRECT=0');
+    }
     if (!directMode) {
       console.log('[main] wait panel...');
       await ensureWechatPanelReady(wechatPage, articleUrl, 'main');
@@ -2161,23 +2173,32 @@ async function runPublishOnce(articleUrl, options) {
     let backgroundBridge = await withTimeout(createBackgroundBridge(), 120_000, 'createBackgroundBridge');
     console.log('[main] background bridge ready');
 
-    let articlePayloadForRun = null;
-    if (directMode) {
-      articlePayloadForRun = await withTimeout(
-        loadArticlePayloadFromBackground(backgroundBridge, articleUrl).catch(() => null),
-        45_000,
-        'loadArticlePayloadFromBackground'
-      ).catch(() => null);
-
-      try {
-        const expectedKey = canonicalUrlKey(articleUrl);
-        const gotKey = canonicalUrlKey(articlePayloadForRun?.sourceUrl || '');
-        if (expectedKey && gotKey && expectedKey !== gotKey) {
-          console.log(`[main] warning: background payload mismatch; fallback to page extract (expected=${articleUrl} got=${articlePayloadForRun?.sourceUrl})`);
-          articlePayloadForRun = null;
+    let articlePayloadForRun = suppliedArticle
+      ? {
+          title: String(suppliedArticle.title || ''),
+          contentHtml: String(suppliedArticle.contentHtml || ''),
+          sourceUrl: String(suppliedArticle.sourceUrl || ''),
+          contentTokens: Array.isArray(suppliedArticle.contentTokens) ? suppliedArticle.contentTokens : undefined,
         }
-      } catch {
-        // ignore
+      : null;
+    if (directMode) {
+      if (!articlePayloadForRun) {
+        articlePayloadForRun = await withTimeout(
+          loadArticlePayloadFromBackground(backgroundBridge, articleUrl).catch(() => null),
+          45_000,
+          'loadArticlePayloadFromBackground'
+        ).catch(() => null);
+
+        try {
+          const expectedKey = canonicalUrlKey(articleUrl);
+          const gotKey = canonicalUrlKey(articlePayloadForRun?.sourceUrl || '');
+          if (expectedKey && gotKey && expectedKey !== gotKey) {
+            console.log(`[main] warning: background payload mismatch; fallback to page extract (expected=${articleUrl} got=${articlePayloadForRun?.sourceUrl})`);
+            articlePayloadForRun = null;
+          }
+        } catch {
+          // ignore
+        }
       }
 
       if (!articlePayloadForRun?.title || !articlePayloadForRun?.contentHtml) {
@@ -2411,6 +2432,26 @@ async function main() {
       requireExistingChrome: LIVE_PUBLISH_REQUIRE_EXISTING_CHROME,
       preserveExistingPages: LIVE_PUBLISH_PRESERVE_EXISTING_PAGES,
     });
+    return;
+  }
+  if (cli.mode === 'markdown') {
+    runBuildOrThrow();
+    const prepared = await prepareLocalMarkdown(cli.markdownPath);
+    console.log(
+      `[markdown] ready: title=${prepared.article.title} images=${prepared.assetCount} source=${prepared.article.sourceUrl}`
+    );
+    if (!prepared.hasDurableSourceUrl) {
+      console.log('[markdown] 提示：未声明 source_url，将使用本次运行的本地临时链接；如需永久原文链接，请在 Markdown front matter 中添加 source_url。');
+    }
+    try {
+      await runPublishOnce(prepared.identity, {
+        requireExistingChrome: LIVE_PUBLISH_REQUIRE_EXISTING_CHROME,
+        preserveExistingPages: LIVE_PUBLISH_PRESERVE_EXISTING_PAGES,
+        articlePayload: prepared.article,
+      });
+    } finally {
+      await prepared.close();
+    }
     return;
   }
   await runPublishOnce(cli.articleUrl, {

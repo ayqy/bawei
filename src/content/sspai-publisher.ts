@@ -285,6 +285,27 @@ function extractOriginalImageUrlFromProxyUrl(proxyUrl: string): string {
   }
 }
 
+function isLoopbackPictureUrl(pictureUrl: string): boolean {
+  try {
+    const url = new URL(String(pictureUrl || '').trim());
+    return url.protocol === 'http:' && (url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '[::1]');
+  } catch {
+    return false;
+  }
+}
+
+function isStableUploadedPictureUrl(pictureUrl: string): boolean {
+  const raw = String(pictureUrl || '').trim();
+  if (!raw || raw.startsWith('blob:') || raw.startsWith('data:') || isLoopbackPictureUrl(raw)) return false;
+  try {
+    const url = new URL(raw);
+    if (url.protocol !== 'https:' && url.protocol !== 'http:') return false;
+    return !(url.hostname === 'read.useai.online' && url.pathname.startsWith('/api/image-proxy'));
+  } catch {
+    return false;
+  }
+}
+
 async function fetchJsonWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<unknown> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
@@ -345,6 +366,78 @@ async function uploadPictureUrlToSspaiCdn(pictureUrl: string): Promise<string> {
     }
   }
   throw new Error(lastErr || 'attachment upload failed');
+}
+
+async function findVisibleSspaiEditor(): Promise<HTMLElement | null> {
+  if (!isWritePage()) return null;
+  return await retryUntil(
+    async () => {
+      const el =
+        (document.querySelector<HTMLElement>('.ck-editor__editable[contenteditable="true"]') as HTMLElement | null) ||
+        (document.querySelector<HTMLElement>('.ck-editor__editable') as HTMLElement | null) ||
+        (document.querySelector<HTMLElement>('.x-editor-inst.wangEditor-txt') as HTMLElement | null) ||
+        (document.querySelector<HTMLElement>('[class*="ck-editor__editable"]') as HTMLElement | null) ||
+        (findContentEditor(document) as HTMLElement | null) ||
+        null;
+      if (!el) throw new Error('editor not ready');
+      const rect = el.getBoundingClientRect();
+      if (rect.width < 200 || rect.height < 80) throw new Error('editor not visible');
+
+      try {
+        simulateClick(el);
+        simulateFocus(el);
+        if (el.getAttribute('contenteditable') !== 'true') el.setAttribute('contenteditable', 'true');
+      } catch {
+        // ignore
+      }
+      return el;
+    },
+    { timeoutMs: 30_000, intervalMs: 800 }
+  ).catch(() => null);
+}
+
+async function uploadLoopbackPicturesViaEditor(pictureUrls: string[], editor: HTMLElement): Promise<Map<string, string>> {
+  const uniqueUrls = Array.from(new Set(pictureUrls.map((url) => String(url || '').trim()).filter(Boolean)));
+  if (!uniqueUrls.length) return new Map();
+
+  await fillEditorByTokens({
+    jobId: currentJob?.jobId || '',
+    tokens: uniqueUrls.map((src) => ({ kind: 'image' as const, src })),
+    editorRoot: editor,
+    writeMode: 'html',
+    onImageProgress: async (current, total) => {
+      await report({
+        status: 'running',
+        stage: 'fillContent',
+        userMessage: getMessage('v3MsgUploadingImageProgress', [String(current), String(total)]),
+      });
+    },
+  });
+
+  const uploadedUrls = await retryUntil(
+    async () => {
+      const urls = Array.from(editor.querySelectorAll<HTMLImageElement>('img'))
+        .map((img) => {
+          const candidates = [
+            img.currentSrc,
+            img.src,
+            img.getAttribute('src'),
+            img.getAttribute('data-src'),
+            img.getAttribute('data-url'),
+            img.getAttribute('data-original'),
+          ];
+          return candidates.map((value) => String(value || '').trim()).find(isStableUploadedPictureUrl) || '';
+        })
+        .filter(Boolean);
+      if (urls.length < uniqueUrls.length) {
+        throw new Error(`waiting SSPAI local image upload (${urls.length}/${uniqueUrls.length})`);
+      }
+      return urls.slice(0, uniqueUrls.length);
+    },
+    { timeoutMs: 180_000, intervalMs: 1000 }
+  );
+
+  return new Map(uniqueUrls.map((sourceUrl, index) => [sourceUrl, uploadedUrls[index]]));
 }
 
 async function saveBodyLastViaUpdateApi(articleId: string, bodyLast: string): Promise<void> {
@@ -1105,13 +1198,25 @@ async function stageFillContent(contentHtml: string, sourceUrl: string, articleI
   );
 
   const imageUrlMap = new Map<string, string>();
-  for (let i = 0; i < uniqueImages.length; i += 1) {
+  const loopbackImages = uniqueImages.filter(isLoopbackPictureUrl);
+  let writeEditor: HTMLElement | null = null;
+  if (loopbackImages.length) {
+    writeEditor = await findVisibleSspaiEditor();
+    if (!writeEditor) {
+      throw new Error('SSPAI 本地图片需要在可见写作页上传，但编辑器当前不可用');
+    }
+    const uploaded = await uploadLoopbackPicturesViaEditor(loopbackImages, writeEditor);
+    for (const [sourceUrl, uploadedUrl] of uploaded) imageUrlMap.set(sourceUrl, uploadedUrl);
+  }
+
+  const remoteImages = uniqueImages.filter((src) => !isLoopbackPictureUrl(src));
+  for (let i = 0; i < remoteImages.length; i += 1) {
     await report({
       status: 'running',
       stage: 'fillContent',
-      userMessage: getMessage('v3MsgUploadingImageProgress', [String(i + 1), String(uniqueImages.length)]),
+      userMessage: getMessage('v3MsgUploadingImageProgress', [String(loopbackImages.length + i + 1), String(uniqueImages.length)]),
     });
-    const src = uniqueImages[i];
+    const src = remoteImages[i];
     if (imageUrlMap.has(src)) continue;
     const downloadUrl = await uploadPictureUrlToSspaiCdn(src);
     if (downloadUrl) imageUrlMap.set(src, downloadUrl);
@@ -1122,32 +1227,7 @@ async function stageFillContent(contentHtml: string, sourceUrl: string, articleI
 
   // 非写作页（例如 /my）不需要操作编辑器 DOM；写作页仅用于“可视化回填”，失败也不阻塞。
   if (isWritePage()) {
-    const editor = await retryUntil(
-      async () => {
-        const el =
-          (document.querySelector<HTMLElement>('.ck-editor__editable[contenteditable="true"]') as HTMLElement | null) ||
-          (document.querySelector<HTMLElement>('.ck-editor__editable') as HTMLElement | null) ||
-          (document.querySelector<HTMLElement>('.x-editor-inst.wangEditor-txt') as HTMLElement | null) ||
-          (document.querySelector<HTMLElement>('[class*="ck-editor__editable"]') as HTMLElement | null) ||
-          (findContentEditor(document) as HTMLElement | null) ||
-          null;
-        if (!el) throw new Error('editor not ready');
-        const rect = el.getBoundingClientRect();
-        if (rect.width < 200 || rect.height < 80) throw new Error('editor not visible');
-
-        try {
-          simulateClick(el);
-          simulateFocus(el);
-          if (el.getAttribute('contenteditable') !== 'true') {
-            el.setAttribute('contenteditable', 'true');
-          }
-        } catch {
-          // ignore
-        }
-        return el;
-      },
-      { timeoutMs: 30_000, intervalMs: 800 }
-    ).catch(() => null);
+    const editor = writeEditor || (await findVisibleSspaiEditor());
 
     if (editor) {
       const existingHtml = (() => {

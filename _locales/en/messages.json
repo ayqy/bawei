@@ -144,7 +144,7 @@
     "description": "Publish action label"
   },
   "panelStart": {
-    "message": "Start (concurrent all channels)",
+    "message": "Start (serial all channels)",
     "description": "Start button"
   },
   "panelStop": {
@@ -168,7 +168,7 @@
     "description": "Starting state"
   },
   "panelStarted": {
-    "message": "Job started: opening editors for all channels...",
+    "message": "Job started: focusing and running each channel in sequence...",
     "description": "Started toast"
   },
   "panelCheckLogin": {

@@ -747,7 +747,7 @@ function createPublishPanel(): void {
 
   const startBtn = document.createElement('button');
   startBtn.id = 'bawei-v2-start';
-  startBtn.textContent = getMessage('panelStart') || '开始执行（并发全渠道）';
+  startBtn.textContent = getMessage('panelStart') || '开始执行（串行全渠道）';
   startBtn.style.cssText = `
     flex: 1;
     background: #1677ff;
@@ -915,7 +915,7 @@ async function handleStartClick(): Promise<void> {
     renderDiagnosis();
     refreshPanelControls();
     writeRuntimeStateMirror();
-    showInfo(getMessage('panelStarted') || '任务已启动：正在并发打开各渠道编辑页...');
+    showInfo(getMessage('panelStarted') || '任务已启动：正在逐个聚焦并执行各渠道...');
 
     
   } catch (error) {
@@ -1073,14 +1073,17 @@ function statusLabel(status: string): string {
   return getMessage('statusNotStarted') || '未开始';
 }
 
-function hasRunningChannels(): boolean {
+function hasActiveOrQueuedChannels(): boolean {
   if (!latestState) return false;
-  return Object.values(latestState).some((s) => s?.status === 'running');
+  return Array.from(runChannels).some((channelId) => {
+    const status = latestState?.[channelId]?.status || 'not_started';
+    return status === 'not_started' || status === 'running';
+  });
 }
 
 function isExecutingNow(): boolean {
   if (isJobStopped) return false;
-  return isStartingJob || isAwaitingFirstBroadcast || hasRunningChannels();
+  return isStartingJob || isAwaitingFirstBroadcast || hasActiveOrQueuedChannels();
 }
 
 function refreshPanelControls(): void {
@@ -1113,7 +1116,7 @@ function refreshPanelControls(): void {
     } else {
       const canStart = runChannels.size > 0;
       startBtn.disabled = !canStart;
-      startBtn.textContent = getMessage('panelStart') || '开始执行（并发全渠道）';
+      startBtn.textContent = getMessage('panelStart') || '开始执行（串行全渠道）';
       startBtn.style.background = canStart ? '#1677ff' : '#999';
     }
 
@@ -1221,7 +1224,7 @@ function renderStatusList(): void {
       color: ${badgeColor};
     `;
     badge.textContent = useLoginAudit ? loginAuditStatusLabel(status as LoginAuditStatus) : statusLabel(status);
-    if (!useLoginAudit && currentJobId) {
+    if (!useLoginAudit && currentJobId && status !== 'not_started') {
       badge.style.cursor = 'pointer';
       badge.title = getMessage('panelDiagnosisHint') || '点击跳转到该渠道页面';
       badge.addEventListener('click', async () => {

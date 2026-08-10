@@ -88,8 +88,9 @@ function pageTemplate({ title, body, head = '', script = '' }) {
 </html>`;
 }
 
-function imageHandlersScript(selector) {
+function imageHandlersScript(selector, uploadedImagePrefix = 'https://img-blog.csdnimg.cn/bawei-e2e-upload-') {
   const sel = JSON.stringify(selector);
+  const imagePrefix = JSON.stringify(uploadedImagePrefix);
   return `
     (function(){
       const root = document.querySelector(${sel});
@@ -99,11 +100,8 @@ function imageHandlersScript(selector) {
       const insertImageFromFile = (file) => {
         const img = document.createElement('img');
         img.alt = 'e2e';
-        try {
-          img.src = URL.createObjectURL(file);
-        } catch {
-          img.src = 'data:image/png;base64,${PNG_1x1_BASE64}';
-        }
+        root.__baweiImageSequence = Number(root.__baweiImageSequence || 0) + 1;
+        img.src = ${imagePrefix} + root.__baweiImageSequence + '.png';
         img.style.maxWidth = '260px';
         img.style.display = 'block';
         img.style.margin = '8px 0';
@@ -195,6 +193,11 @@ function buildCsdnEditorHtml({ action, title, sourceUrl, detailUrl }) {
       <label style="display:flex;align-items:center;gap:6px;"><input type="radio" name="origin" />原创</label>
       <input type="hidden" name="tags" value='["前端"]' />
     </div>
+    <div id="csdn-cover" class="box">
+      <div>封面</div>
+      <input id="csdn-cover-upload" type="file" accept="image/png,image/jpeg,.png,.jpg" />
+      <img class="preview" alt="封面预览" style="display:none;max-width:180px;" />
+    </div>
     <div class="bar">
       <button id="csdn-save" class="btn">保存草稿</button>
       <button id="csdn-publish" class="btn primary">发布博客</button>
@@ -208,6 +211,13 @@ function buildCsdnEditorHtml({ action, title, sourceUrl, detailUrl }) {
     const MANAGE_URL = 'https://mp.csdn.net/mp_blog/manage/article';
 
     ${imageHandlersScript('#csdn-editor')}
+
+    document.querySelector('#csdn-cover-upload')?.addEventListener('change', () => {
+      const preview = document.querySelector('#csdn-cover img.preview');
+      if (!preview) return;
+      preview.src = 'https://img-blog.csdnimg.cn/bawei-e2e-cover.png';
+      preview.style.display = 'block';
+    });
 
     document.querySelector('#csdn-save')?.addEventListener('click', () => {
       try { document.querySelector('#csdn-status').textContent = '保存成功'; } catch {}
@@ -256,7 +266,7 @@ function buildTencentEditorHtml({ action, title, sourceUrl, detailUrl }) {
   const body = `
     <h1>腾讯云编辑器（E2E）</h1>
     <div class="bar">
-      <input placeholder="标题" style="flex:1; padding:8px; border:1px solid #ddd; border-radius:8px;" />
+      <textarea class="article-title" placeholder="标题" style="flex:1; min-height:42px; padding:8px; border:1px solid #ddd; border-radius:8px;"></textarea>
     </div>
     <div class="public-DraftEditor-content editor" contenteditable="true" style="min-height:160px;"></div>
     <div class="bar">
@@ -412,9 +422,9 @@ function buildWoshipmWriteHtml({ action, title, detailUrl }) {
     </div>
     <iframe style="width:100%; height:220px; border:1px solid #ddd; border-radius:8px;" srcdoc="${iframeEditorSrcdoc().replaceAll('"', '&quot;')}"></iframe>
     <div class="bar">
-      <label><input type="checkbox" name="copyright" />同意协议</label>
-      <label><input type="checkbox" name="copyright_other" />承诺</label>
-      <label><input type="checkbox" name="copyright_pm" />原创</label>
+      <label><input type="checkbox" name="copyright" />我承诺图片、字体、内容等不存在侵权行为，如侵权愿承担法律风险。</label>
+      <label><input type="checkbox" name="copyright_other" />知晓并同意发布后的内容会同步到头条号/网易号/搜狐号等平台。</label>
+      <label><input type="checkbox" name="copyright_pm" />已阅读并同意条款</label>
     </div>
     <div class="bar">
       <button id="woshipm-draft" class="btn">保存草稿</button>
@@ -473,7 +483,7 @@ function buildSspaiWriteHtml({ title }) {
     <div class="hint">本页会自动生成 #文章ID，用于模拟 SSPAI 行为。</div>
   `;
   const script = `
-    ${imageHandlersScript('.ck-editor__editable')}
+    ${imageHandlersScript('.ck-editor__editable', 'https://cdnfile.sspai.com/bawei-e2e-upload-')}
     if (!location.hash) {
       try { location.hash = '#123'; } catch {}
     }
@@ -631,10 +641,15 @@ function pickOpenFocusChannel(channelId) {
 }
 
 async function setChannelCheckboxes(page, wantId) {
+  await setSelectedChannelCheckboxes(page, [wantId]);
+}
+
+async function setSelectedChannelCheckboxes(page, wantedIds) {
+  const wanted = new Set(wantedIds);
   for (const id of ALL_CHANNELS) {
     const sel = `#bawei-v2-run-${id}`;
     if (!(await page.locator(sel).count())) continue;
-    await page.setChecked(sel, id === wantId);
+    await page.setChecked(sel, wanted.has(id));
   }
 }
 
@@ -758,11 +773,33 @@ async function main() {
       return;
     }
 
-    // 1) Mock image CDN for V3_FETCH_IMAGE.
+    // 1) Mock local Markdown assets and remote image CDNs.
+    if (u.hostname === '127.0.0.1' && u.pathname.startsWith('/bawei-e2e-assets/')) {
+      if (currentRun && url.includes(currentRun.runId) && req.resourceType() === 'fetch') {
+        serviceWorkerImageFetchCount += 1;
+      }
+      await route.fulfill({
+        status: 200,
+        headers: { 'content-type': 'image/png' },
+        body: PNG_1x1,
+      });
+      return;
+    }
+
     if (u.hostname.endsWith('.qpic.cn') || u.hostname.endsWith('.qlogo.cn')) {
       if (currentRun && url.includes(currentRun.runId) && req.resourceType() === 'fetch') {
         serviceWorkerImageFetchCount += 1;
       }
+      await route.fulfill({
+        status: 200,
+        headers: { 'content-type': 'image/png' },
+        body: PNG_1x1,
+      });
+      return;
+    }
+
+    // Mock the remote URL produced after an editor finishes uploading a local image.
+    if (u.hostname === 'img-blog.csdnimg.cn' || u.hostname === 'cdnfile.sspai.com') {
       await route.fulfill({
         status: 200,
         headers: { 'content-type': 'image/png' },
@@ -972,6 +1009,40 @@ async function main() {
 
     // MoWen
     if (u.hostname === 'note.mowen.cn') {
+      if (u.pathname === '/api/note/wxa/v1/note/show') {
+        await route.fulfill({
+          status: 200,
+          headers: { 'content-type': 'application/json; charset=utf-8' },
+          body: JSON.stringify({
+            detail: {
+              noteBase: {
+                title,
+                content: `<p>${title}</p><p>原文链接：<a href="${sourceUrl}">${sourceUrl}</a></p><img uuid="e2e-image-1"><img uuid="e2e-image-2">`,
+              },
+            },
+          }),
+        });
+        return;
+      }
+      if (u.pathname === '/api/note/wxa/v1/note/draft') {
+        const imageCount = await req
+          .frame()
+          .evaluate(() => document.querySelectorAll('.ProseMirror img').length)
+          .catch(() => 0);
+        const content = JSON.stringify({
+          type: 'doc',
+          content: Array.from({ length: imageCount }, (_item, index) => ({
+            type: 'image',
+            attrs: { uuid: `e2e-image-${index + 1}` },
+          })),
+        });
+        await route.fulfill({
+          status: 200,
+          headers: { 'content-type': 'application/json; charset=utf-8' },
+          body: JSON.stringify({ content }),
+        });
+        return;
+      }
       if (u.pathname.startsWith('/editor')) {
         if (action === 'not_logged_in') {
           await route.fulfill({ status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: buildLoginHtml() });
@@ -995,14 +1066,71 @@ async function main() {
 
     // SSPAI (API + pages)
     if (u.hostname === 'sspai.com') {
+      if (u.pathname.startsWith('/api/v1/matrix/editor/attachment/batch/upload')) {
+        const payload = (() => {
+          try {
+            return req.postDataJSON();
+          } catch {
+            return {};
+          }
+        })();
+        const sourcePicture = String(payload?.pictures?.[0] || '');
+        currentRun.sspaiUploadCount = Number(currentRun.sspaiUploadCount || 0) + 1;
+        await route.fulfill({
+          status: 200,
+          headers: { 'content-type': 'application/json; charset=utf-8' },
+          body: JSON.stringify({
+            error: 0,
+            msg: 'ok',
+            data: [
+              {
+                source_url: sourcePicture,
+                download_url: `https://cdnfile.sspai.com/e2e-${runId}-${currentRun.sspaiUploadCount}.png`,
+                status: 2,
+              },
+            ],
+          }),
+        });
+        return;
+      }
+      if (u.pathname.startsWith('/api/v1/matrix/editor/article/update')) {
+        const payload = (() => {
+          try {
+            return req.postDataJSON();
+          } catch {
+            return {};
+          }
+        })();
+        currentRun.sspaiBodyLast = String(payload?.body_last || payload?.body || currentRun.sspaiBodyLast || '');
+        currentRun.sspaiType = Number(payload?.type || currentRun.sspaiType || 4);
+        if (currentRun.sspaiType === 5) currentRun.sspaiReleasedAt = Date.now();
+        await route.fulfill({
+          status: 200,
+          headers: { 'content-type': 'application/json; charset=utf-8' },
+          body: JSON.stringify({ error: 0, msg: 'ok', data: { id: 123, token: 'e2e-token' } }),
+        });
+        return;
+      }
+      if (u.pathname.startsWith('/api/v1/matrix/editor/article/add')) {
+        await route.fulfill({
+          status: 200,
+          headers: { 'content-type': 'application/json; charset=utf-8' },
+          body: JSON.stringify({ error: 0, msg: 'ok', data: { id: 123, token: 'e2e-token' } }),
+        });
+        return;
+      }
       if (u.pathname.startsWith('/api/v1/matrix/editor/article/single/info/get')) {
         const payload = {
           error: 0,
           msg: 'ok',
           data: {
             id: 123,
-            released_at: action === 'publish' ? Date.now() : 0,
-            body_last: `<p>原文链接：${sourceUrl}</p>`,
+            token: 'e2e-token',
+            type: Number(currentRun.sspaiType || 4),
+            released_at: Number(currentRun.sspaiReleasedAt || 0),
+            body: String(currentRun.sspaiBodyLast || ''),
+            body_last: String(currentRun.sspaiBodyLast || ''),
+            title,
             title_last: title,
           },
         };
@@ -1164,14 +1292,20 @@ async function main() {
     const runId = `${channelId}_${action}_${Date.now()}`;
     const title = `E2E ${channelId} ${action} ${runId}`;
     const wechatUrl = `https://mp.weixin.qq.com/s/${runId}`;
+    const useLocalSspaiImages = channelId === 'sspai' && action === 'draft';
     currentRun = {
       runId,
       channelId,
       action,
       title,
       sourceUrl: wechatUrl,
-      imgA: `https://mmbiz.qpic.cn/mmbiz_png/bawei_e2e_${runId}_a/0?wx_fmt=png`,
-      imgB: `https://mmbiz.qpic.cn/mmbiz_png/bawei_e2e_${runId}_b/0?wx_fmt=png`,
+      useLocalSspaiImages,
+      imgA: useLocalSspaiImages
+        ? `http://127.0.0.1:43119/bawei-e2e-assets/${runId}-a.png`
+        : `https://mmbiz.qpic.cn/mmbiz_png/bawei_e2e_${runId}_a/0?wx_fmt=png`,
+      imgB: useLocalSspaiImages
+        ? `http://127.0.0.1:43119/bawei-e2e-assets/${runId}-b.png`
+        : `https://mmbiz.qpic.cn/mmbiz_png/bawei_e2e_${runId}_b/0?wx_fmt=png`,
     };
 
     console.log(`\n=== [V3 E2E] channel=${channelId} action=${action} ===`);
@@ -1207,14 +1341,25 @@ async function main() {
       return;
     }
 
-    // 图片上传进度（面板诊断文案）至少出现一次
-    await waitForDiagnosisContains(wechatPage, '正在上传图片（', 60_000);
+    // 百家号通过主世界 UEditor 整段写入；飞书当前只写文本；两者都不产生逐图上传提示。
+    if (channelId !== 'baijiahao' && channelId !== 'feishu-docs') {
+      await waitForDiagnosisContains(wechatPage, '正在上传图片（', 60_000);
+    }
 
     // 等待成功
     await waitForBadgeText(wechatPage, channelId, '成功', 60_000);
 
-    // 每次运行必须真实触发一次图片下载（证明 V3_FETCH_IMAGE 全链路走通）
-    assert(serviceWorkerImageFetchCount > 0, `未触发 service-worker 图片下载：channel=${channelId} action=${action}`);
+    // SSPAI 的远程图片走官方 URL 批量转存；百家号由 UEditor 验收；飞书当前只写文本；其余渠道走 V3_FETCH_IMAGE。
+    if (channelId === 'sspai') {
+      if (currentRun?.useLocalSspaiImages) {
+        assert(serviceWorkerImageFetchCount >= 2, 'SSPAI 本地图片未通过扩展读取');
+        assert(Number(currentRun?.sspaiUploadCount || 0) === 0, 'SSPAI loopback 图片不应发送给公网 URL 转存接口');
+      } else {
+        assert(Number(currentRun?.sspaiUploadCount || 0) >= 2, `未触发 SSPAI 图片转存：action=${action}`);
+      }
+    } else if (channelId !== 'baijiahao' && channelId !== 'feishu-docs') {
+      assert(serviceWorkerImageFetchCount > 0, `未触发 service-worker 图片下载：channel=${channelId} action=${action}`);
+    }
     assert(proxyFetchCount === 0, `检测到代理回退请求：channel=${channelId} action=${action} proxyFetchCount=${proxyFetchCount}`);
 
     // 验证：点击 badge 可跳转聚焦到渠道 tab
@@ -1227,17 +1372,89 @@ async function main() {
     await wechatPage.close().catch(() => {});
   }
 
+  async function runSerialAllChannels() {
+    serviceWorkerImageFetchCount = 0;
+    proxyFetchCount = 0;
+
+    const action = 'draft';
+    const runId = `serial_all_${Date.now()}`;
+    const title = `E2E serial all ${runId}`;
+    const wechatUrl = `https://mp.weixin.qq.com/s/${runId}`;
+    currentRun = {
+      runId,
+      channelId: 'serial-all',
+      action,
+      title,
+      sourceUrl: wechatUrl,
+      imgA: `https://mmbiz.qpic.cn/mmbiz_png/bawei_e2e_${runId}_a/0?wx_fmt=png`,
+      imgB: `https://mmbiz.qpic.cn/mmbiz_png/bawei_e2e_${runId}_b/0?wx_fmt=png`,
+    };
+
+    console.log('\n=== [V3 E2E] serial all 10 channels action=draft ===');
+
+    const baselinePages = new Set(context.pages());
+    const wechatPage = await context.newPage();
+    await gotoWithRetry(wechatPage, wechatUrl);
+    await openPanel(wechatPage);
+    await wechatPage.check('input[name="bawei_v2_action"][value="draft"]');
+    await setSelectedChannelCheckboxes(wechatPage, ALL_CHANNELS);
+    await wechatPage.evaluate((channelId) => {
+      const select = document.querySelector('#bawei-v2-focus-channel');
+      if (!select) return;
+      select.value = channelId;
+      select.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+    }, ALL_CHANNELS[0]);
+
+    const firstPagePromise = context.waitForEvent('page', { timeout: 15_000 });
+    await wechatPage.click('#bawei-v2-start');
+    let channelPage = await firstPagePromise;
+    const openedChannelPages = [];
+
+    for (let index = 0; index < ALL_CHANNELS.length; index += 1) {
+      const channelId = ALL_CHANNELS[index];
+      const createdPages = context.pages().filter((page) => page !== wechatPage && !baselinePages.has(page));
+      assert(createdPages.length === index + 1, `串行第 ${index + 1} 步不应预开后续渠道 Tab`);
+
+      const nextPagePromise =
+        index + 1 < ALL_CHANNELS.length ? context.waitForEvent('page', { timeout: 120_000 }) : null;
+      await gotoWithRetry(channelPage, CHANNEL_ENTRY_URLS[channelId]);
+      await channelPage.waitForFunction(() => document.visibilityState === 'visible', null, { timeout: 15_000 });
+      assert((await channelPage.evaluate(() => document.visibilityState)) === 'visible', `串行第 ${index + 1} 步未聚焦 ${channelId}`);
+
+      await waitForBadgeText(wechatPage, channelId, '成功', 120_000);
+      openedChannelPages.push(channelPage);
+      if (nextPagePromise) channelPage = await nextPagePromise;
+    }
+
+    for (const channelId of ALL_CHANNELS) {
+      const badge = await readChannelBadge(wechatPage, channelId);
+      assert(badge?.ok && badge.badge.includes('成功'), `串行十渠道最终状态异常：${channelId} ${JSON.stringify(badge)}`);
+    }
+    assert(proxyFetchCount === 0, `串行十渠道检测到代理回退请求：${proxyFetchCount}`);
+
+    for (const page of openedChannelPages) await page.close().catch(() => {});
+    await wechatPage.close().catch(() => {});
+  }
+
   const onlyChannelArg = String(process.argv[2] || '').trim();
   const onlyActionArg = String(process.argv[3] || '').trim();
+  const serialOnly = onlyChannelArg === 'serial-all';
   const onlyChannel = onlyChannelArg && ALL_CHANNELS.includes(onlyChannelArg) ? onlyChannelArg : '';
   const onlyAction =
     onlyActionArg && ['not_logged_in', 'draft', 'publish'].includes(onlyActionArg) ? onlyActionArg : '';
 
-  if (onlyChannelArg && !onlyChannel) {
+  if (onlyChannelArg && !onlyChannel && !serialOnly) {
     throw new Error(`未知渠道参数：${onlyChannelArg}（可选：${ALL_CHANNELS.join(', ')}）`);
   }
   if (onlyActionArg && !onlyAction) {
     throw new Error(`未知 action 参数：${onlyActionArg}（可选：not_logged_in, draft, publish）`);
+  }
+
+  if (serialOnly) {
+    await runSerialAllChannels();
+    await context.close();
+    console.log('\n✅ v3 serial-all e2e test passed');
+    return;
   }
 
   const channelsToRun = onlyChannel ? [onlyChannel] : ALL_CHANNELS;
@@ -1247,6 +1464,10 @@ async function main() {
     for (const action of actionsToRun) {
       await runOne(channelId, action);
     }
+  }
+
+  if (!onlyChannel && !onlyAction) {
+    await runSerialAllChannels();
   }
 
   await context.close();

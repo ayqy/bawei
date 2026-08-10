@@ -1,6 +1,7 @@
 import { getSettings } from './shared/settings-manager';
 import { cleanExpiredData, getJobData, getJobState, markJobStopped, storeJobData, storeJobState } from './shared/article-data-manager';
 import type { ChannelId, ChannelRuntimeState, PublishAction, PublishJob } from './shared/v2-types';
+import { getNextSerialChannel, getRunningSerialChannel, isSerialTerminalStatus } from './shared/serial-channel-queue';
 import {
   V2_AUDIT_CHANNEL_LOGIN,
   V2_CHANNEL_UPDATE,
@@ -161,6 +162,7 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
 const tabIdToContext = new Map<number, { jobId: string; channelId: ChannelId }>();
 const jobIdToSourceTabId = new Map<string, number>();
 const jobStateCache = new Map<string, Record<ChannelId, ChannelRuntimeState>>();
+const serialAdvanceLocks = new Map<string, Promise<void>>();
 
 const CHANNEL_ENTRY_URLS: Record<ChannelId, string> = {
   csdn: 'https://mp.csdn.net/mp_blog/creation/editor',
@@ -197,7 +199,10 @@ function urlPrefix(url: string): string {
   }
 }
 
-async function openOrReuseChannelTab(channelId: ChannelId, options: { active: boolean }): Promise<chrome.tabs.Tab> {
+async function openOrReuseChannelTab(
+  channelId: ChannelId,
+  options: { active: boolean; beforeNavigate?: (tabId: number) => void }
+): Promise<chrome.tabs.Tab> {
   const url = CHANNEL_ENTRY_URLS[channelId];
   const prefix = urlPrefix(url);
   try {
@@ -213,13 +218,23 @@ async function openOrReuseChannelTab(channelId: ChannelId, options: { active: bo
       await chrome.tabs.remove(toClose).catch(() => {});
     }
     if (keep?.id) {
+      options.beforeNavigate?.(keep.id);
+      if (options.active && keep.windowId != null) {
+        await chrome.windows.update(keep.windowId, { focused: true }).catch(() => {});
+      }
       return await chrome.tabs.update(keep.id, { url, active: options.active });
     }
   } catch {
     // ignore and fallback create
   }
 
-  return await chrome.tabs.create({ url, active: options.active });
+  const created = await chrome.tabs.create({ url: 'about:blank', active: options.active });
+  if (!created.id) throw new Error(`Failed to create channel tab: ${channelId}`);
+  options.beforeNavigate?.(created.id);
+  if (options.active && created.windowId != null) {
+    await chrome.windows.update(created.windowId, { focused: true }).catch(() => {});
+  }
+  return await chrome.tabs.update(created.id, { url, active: options.active });
 }
 
 function newJobId(): string {
@@ -275,6 +290,10 @@ async function patchJobChannelState(jobId: string, channelId: ChannelId, patch: 
   jobStateCache.set(jobId, current);
   await storeJobState(jobId, current);
   await broadcastJobState(jobId);
+
+  if (isSerialTerminalStatus(next.status)) {
+    await enqueueSerialAdvance(jobId);
+  }
 }
 
 async function broadcastJobState(jobId: string): Promise<void> {
@@ -294,8 +313,92 @@ async function broadcastJobState(jobId: string): Promise<void> {
   }
 }
 
+async function focusOpenedChannelTab(tab: chrome.tabs.Tab): Promise<void> {
+  if (!tab.id) return;
+  if (tab.windowId != null) {
+    await chrome.windows.update(tab.windowId, { focused: true }).catch(() => {});
+  }
+  await chrome.tabs.update(tab.id, { active: true }).catch(() => {});
+}
+
+async function advanceSerialJob(jobId: string): Promise<void> {
+  const job = await getJobData(jobId);
+  if (!job || job.stoppedAt) return;
+
+  const channels = (job.channels || ALL_CHANNELS).filter((channelId): channelId is ChannelId => ALL_CHANNELS.includes(channelId));
+  const state = jobStateCache.get(jobId) || (await getJobState(jobId)) || buildInitialState();
+  jobStateCache.set(jobId, state);
+
+  while (!getRunningSerialChannel(channels, state)) {
+    const channelId = getNextSerialChannel(channels, state);
+    if (!channelId) {
+      cleanupImagesForJob(jobId);
+      return;
+    }
+
+    state[channelId] = {
+      ...state[channelId],
+      channelId,
+      status: 'running',
+      stage: 'openEntry',
+      userMessage: chrome.i18n.getMessage('redirectingToTarget'),
+      userSuggestion: undefined,
+      devDetails: undefined,
+      updatedAt: Date.now(),
+    };
+    await storeJobState(jobId, state);
+    await broadcastJobState(jobId);
+
+    try {
+      const tab = await openOrReuseChannelTab(channelId, {
+        active: true,
+        beforeNavigate: (tabId) => {
+          tabIdToContext.set(tabId, { jobId, channelId });
+        },
+      });
+      if (!tab.id) throw new Error(`Channel tab has no id: ${channelId}`);
+
+      tabIdToContext.set(tab.id, { jobId, channelId });
+      state[channelId] = {
+        ...state[channelId],
+        tabId: tab.id,
+        updatedAt: Date.now(),
+      };
+      await storeJobState(jobId, state);
+      await focusOpenedChannelTab(tab);
+      await broadcastJobState(jobId);
+      return;
+    } catch (error) {
+      state[channelId] = {
+        ...state[channelId],
+        status: 'failed',
+        userMessage: chrome.i18n.getMessage('v2MsgFailed'),
+        userSuggestion: chrome.i18n.getMessage('v3SugClickStatusToReopen'),
+        devDetails: { message: error instanceof Error ? error.message : String(error) },
+        updatedAt: Date.now(),
+      };
+      await storeJobState(jobId, state);
+      await broadcastJobState(jobId);
+    }
+  }
+}
+
+function enqueueSerialAdvance(jobId: string): Promise<void> {
+  const previous = serialAdvanceLocks.get(jobId) || Promise.resolve();
+  const next = previous.catch(() => {}).then(async () => {
+    await advanceSerialJob(jobId);
+  });
+  serialAdvanceLocks.set(jobId, next);
+
+  const cleanup = () => {
+    if (serialAdvanceLocks.get(jobId) === next) serialAdvanceLocks.delete(jobId);
+  };
+  void next.then(cleanup, cleanup);
+  return next;
+}
+
 /**
- * Handles V2 job start: store job, open channel tabs concurrently, init state and broadcast.
+ * Handles V2 job start: store job, then focus and run one channel at a time.
  */
 async function handleV2StartJob(message: StartJobRequest, sender: chrome.runtime.MessageSender, sendResponse: (response: StartJobResponse) => void) {
   try {
@@ -332,28 +435,7 @@ async function handleV2StartJob(message: StartJobRequest, sender: chrome.runtime
       jobIdToSourceTabId.set(jobId, sourceTabId);
     }
 
-    // Open selected channel tabs concurrently
-    await Promise.all(
-      channelsToRun.map(async (channelId) => {
-        // Ensure the focus channel is opened in the foreground so that sites with strict
-        // user-gesture requirements (e.g. modal dialogs / AI cover pickers) can proceed.
-        const tab = await openOrReuseChannelTab(channelId, { active: channelId === message.focusChannel });
-        if (!tab.id) return;
-        tabIdToContext.set(tab.id, { jobId, channelId });
-        const next: ChannelRuntimeState = {
-          ...initialState[channelId],
-          status: 'running',
-          stage: 'openEntry',
-          updatedAt: Date.now(),
-          tabId: tab.id,
-        };
-        initialState[channelId] = next;
-      })
-    );
-
-    jobStateCache.set(jobId, initialState);
-    await storeJobState(jobId, initialState);
-    await broadcastJobState(jobId);
+    await enqueueSerialAdvance(jobId);
 
     sendResponse({ success: true, jobId });
   } catch (error) {
@@ -408,6 +490,10 @@ async function handleV2ChannelUpdate(message: ChannelUpdate, sender: chrome.runt
     await storeJobState(jobId, current);
     await broadcastJobState(jobId);
 
+    if (isSerialTerminalStatus(next.status)) {
+      await enqueueSerialAdvance(jobId);
+    }
+
     sendResponse({ success: true });
   } catch (error) {
     console.warn('[V2] Failed to handle channel update:', error);
@@ -458,6 +544,9 @@ async function handleV2FocusChannelTab(message: FocusChannelTabRequest, sendResp
     if (!jobId || !channelId) throw new Error('Missing jobId/channelId');
 
     const state = jobStateCache.get(jobId) || (await getJobState(jobId));
+    if ((state?.[channelId]?.status || 'not_started') === 'not_started') {
+      throw new Error(`Channel is waiting in serial queue: ${channelId}`);
+    }
     const tabId = state?.[channelId]?.tabId;
     if (tabId) {
       try {
@@ -1186,7 +1275,31 @@ async function handleV2Control(message: ContinueRequest | RetryRequest, sendResp
     const tabId = state?.[channelId]?.tabId;
     if (!tabId) throw new Error('Channel tab not found');
 
-    await chrome.tabs.sendMessage(tabId, message);
+    const channels = (job?.channels || ALL_CHANNELS).filter((id): id is ChannelId => ALL_CHANNELS.includes(id));
+    const runningChannel = state ? getRunningSerialChannel(channels, state) : null;
+    if (runningChannel && runningChannel !== channelId) {
+      throw new Error(`Serial job is running channel: ${runningChannel}`);
+    }
+
+    const tab = await chrome.tabs.get(tabId);
+    await focusOpenedChannelTab(tab);
+    const previousStatus = state?.[channelId]?.status;
+    const shouldRestoreStatus = !!state && previousStatus !== 'running';
+    if (shouldRestoreStatus) {
+      await patchJobChannelState(jobId, channelId, {
+        status: 'running',
+        userSuggestion: undefined,
+      });
+    }
+
+    try {
+      await chrome.tabs.sendMessage(tabId, message);
+    } catch (error) {
+      if (shouldRestoreStatus && previousStatus) {
+        await patchJobChannelState(jobId, channelId, { status: previousStatus }).catch(() => {});
+      }
+      throw error;
+    }
     sendResponse({ success: true });
   } catch (error) {
     sendResponse({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });

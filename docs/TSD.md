@@ -38,8 +38,8 @@
 *   插件通过代理服务（如 `read.useai.online`）将原始 `data-src` 转化为可跨域访问的 URL。
 *   在渠道编辑器端，优先采用**模拟粘贴/拖拽 (DataTransfer)** 技术进行图片自动上传。对于处于 iframe 内部的编辑器，或者拦截了通用事件的编辑器，执行特定的后备上传策略。
 
-#### **3.3. 并发控制与状态同步**
-*   插件基于 `chrome.tabs` API 并发打开最多 10 个渠道编辑页。
+#### **3.3. 串行控制与状态同步**
+*   插件基于 `chrome.tabs` API 逐个打开渠道编辑页；导航前激活当前 Tab 并聚焦所在窗口，当前渠道结束一次尝试后再推进队列。
 *   使用 `chrome.runtime.sendMessage` 和 `chrome.runtime.onMessage` 在后台和各渠道 Tab 之间进行双向通信。
 *   建立状态机，跟踪：`init` -> `login_check` -> `filling_title` -> `filling_content` -> `uploading_images` -> `submitting` -> `success` / `failed`。
 

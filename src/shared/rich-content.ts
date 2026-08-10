@@ -52,6 +52,15 @@ function rcNormalizeImageUrl(raw: string, baseUrl: string): string {
   }
 }
 
+function rcIsLoopbackImageUrl(rawUrl: string): boolean {
+  try {
+    const u = new URL(rawUrl);
+    return u.protocol === 'http:' && (u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '[::1]');
+  } catch {
+    return false;
+  }
+}
+
 function rcIsProxyUrl(rawUrl: string): boolean {
   try {
     const u = new URL(rawUrl);
@@ -91,6 +100,7 @@ export function toProxyImageUrl(raw: string, baseUrl: string): string {
 
   if (normalized.startsWith('data:') || normalized.startsWith('blob:')) return '';
   if (rcShouldSkipImageUrl(normalized)) return '';
+  if (rcIsLoopbackImageUrl(normalized)) return rcStripHash(normalized);
   if (rcIsProxyUrl(normalized)) return normalized;
 
   try {
@@ -108,6 +118,7 @@ export function toTokenImageUrl(raw: string, baseUrl: string): string {
   if (!normalized) return '';
   if (normalized.startsWith('data:') || normalized.startsWith('blob:')) return '';
   if (rcShouldSkipImageUrl(normalized)) return '';
+  if (rcIsLoopbackImageUrl(normalized)) return rcStripHash(normalized);
 
   if (rcIsProxyUrl(normalized)) {
     const target = rcDecodeProxyTarget(normalized);

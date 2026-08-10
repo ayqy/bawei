@@ -17,8 +17,9 @@ bawei 是一款专为内容同步发布设计的浏览器插件：打开微信�
    - 保持原有的格式和样式
    - 支持富文本内容（图片、链接、格式等）
 
-2. **多平台并发执行**
-   - 一次开始后并发打开 10 个目标平台编辑页
+2. **多平台串行执行**
+   - 一次开始后按顺序打开 10 个目标平台编辑页
+   - 每次只聚焦并执行一个渠道，当前渠道结束一次尝试后再切换下一个
    - 自动检测登录状态（未登录会在面板提示）
    - 自动填充标题与正文
    - 自动下载并上传正文图片（按原文顺序插入）
@@ -57,7 +58,7 @@ bawei 是一款专为内容同步发布设计的浏览器插件：打开微信�
 ### 3. 发布流程（V3）
 
 1. **内容提取**：提取标题、正文渲染后 HTML、原文链接（当前页面 URL）
-2. **并发打开渠道**：同时打开所选平台编辑页并开始执行，并自动检测登录状态
+2. **串行执行渠道**：逐个聚焦所选平台编辑页并开始执行，并自动检测登录状态
 3. **填充与上传**：按原文顺序写入文本段落，并把正文图片下载后上传到各平台
 4. **诊断与处理**：诊断区开始后自动展开；如遇未登录/验证码/实名/风控/图片上传失败等平台要求，按诊断提示手动完成后点击“继续/重试”
 
@@ -89,6 +90,10 @@ bawei 是一款专为内容同步发布设计的浏览器插件：打开微信�
 ## E2E 测试（Playwright）
 
 - 单元测试（tokens 拆分 + 图片插入桥接）：`npm run test:v3:unit`
+- 串行队列单元测试：`npm run test:serial`
+- 十渠道后台串行集成测试：`npm run test:serial:integration`
+- 十渠道真实 Chrome 串行聚焦 E2E：`npm run test:serial:e2e`
+- 本地 Markdown 转换单元测试：`npm run test:markdown`
 - V3 离线可重复 E2E（10/10 渠道）：`npm run e2e:v3`
 - 导出登录态（用于复用已登录站点的 cookie / localStorage）：`npm run e2e:export-state`
 - V2 真实站点 E2E（依赖你的真实登录态/可能需要人工处理验证码等）：`npm run e2e:v2`（可选：`npm run e2e:v2 <channelId>`）
@@ -114,6 +119,8 @@ bawei 是一款专为内容同步发布设计的浏览器插件：打开微信�
   - 若确实要从你日常 Chrome 导入一次登录态，可显式设置 `BOOTSTRAP_PROFILE=1`；脚本默认只在目标 profile 未初始化时引导一次，如需强制再次覆盖可再加 `BOOTSTRAP_PROFILE_REFRESH=1`
   - 若同一篇文章在修复代码后需要强制重跑某个已成功渠道，可加：`LIVE_PUBLISH_FORCE_CHANNELS=tencent-cloud-dev npm run live:publish -- <微信文章URL>`
   - 历史失败路径简表见 `docs/live-publish-failure-paths.md`
+- 本地 Markdown 一键串行发布到默认 10 个渠道：`npm run publish:markdown -- /path/to/article.md`
+  - 命令会先构建扩展，再逐个聚焦渠道并执行正式发布；完整格式、登录准备和本地图片说明见 `docs/local-markdown-publish.md`
 - 基于 Playwright persistent context 的单渠道真跑脚本：`node scripts/mcp-live-publish.mjs <微信文章URL>`
   - 支持只跑指定渠道：`LIVE_PUBLISH_CHANNELS=cnblogs,woshipm node scripts/mcp-live-publish.mjs <微信文章URL>`
   - 如需强制改用本机稳定版 Chrome，可加：`PW_EXECUTABLE_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"`

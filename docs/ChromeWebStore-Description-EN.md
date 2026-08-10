@@ -5,7 +5,7 @@ bawei is a Chrome extension that helps you publish the same WeChat Official Acco
 ## What it does
 
 - Extracts: title, rendered HTML content, and the source URL (current page)
-- Runs multi-platform publishing concurrently (save draft or publish)
+- Runs multi-platform publishing serially, focusing one editor at a time (save draft or publish)
 - “Original-first” behavior: if a platform has no usable source-link field (or it’s not available in original mode), bawei appends `原文链接：<url>` to the end of the content
 - Built-in diagnostics: if you hit login / captcha / identity verification / required fields / risk-control prompts, bawei shows guidance in the panel so you can fix it and continue/retry
 

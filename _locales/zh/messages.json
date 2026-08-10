@@ -144,7 +144,7 @@
     "description": "Publish action label"
   },
   "panelStart": {
-    "message": "开始执行（并发全渠道）",
+    "message": "开始执行（串行全渠道）",
     "description": "Start button"
   },
   "panelStop": {
@@ -168,7 +168,7 @@
     "description": "Starting state"
   },
   "panelStarted": {
-    "message": "任务已启动：正在并发打开各渠道编辑页...",
+    "message": "任务已启动：正在逐个聚焦并执行各渠道...",
     "description": "Started toast"
   },
   "panelCheckLogin": {
