@@ -60,6 +60,13 @@ export function isDurablePublicImageUrl(rawUrl, sourceImageUrls = []) {
   }
 }
 
+export function preferredPublicImageUrl(image = {}) {
+  const candidates = [image.currentSrc, image.src, image.dataSrc, image.dataOriginal]
+    .map((value) => String(value || '').trim())
+    .filter(Boolean);
+  return candidates.find((value) => /^https?:\/\//i.test(value)) || candidates[0] || '';
+}
+
 export function redactEvidenceUrl(rawUrl) {
   const value = String(rawUrl || '').trim();
   if (!value) return '';
@@ -128,7 +135,9 @@ export async function verifyPublicationAnonymously(options) {
   try {
     const response = await page.goto(candidatePublicUrl, { waitUntil: 'domcontentloaded', timeout: 90_000 });
     evidence.responseStatus = response?.status() ?? null;
-    await page.waitForTimeout(2500);
+    // 今日头条等站点会在首个 DOMContentLoaded 后继续从 /item/ 切换到
+    // /article/ 并重建正文 DOM。给客户端路由一个稳定窗口，避免在中间态取证。
+    await page.waitForTimeout(5000);
     evidence.finalUrl = page.url();
     evidence.urlRuleMatched = matchesConfiguredUrl(evidence.finalUrl, config.publicUrlPatterns);
     evidence.loginRedirected = matchesConfiguredUrl(evidence.finalUrl, config.loginUrlPatterns);
@@ -144,6 +153,11 @@ export async function verifyPublicationAnonymously(options) {
       }
       for (const image of images) {
         image.scrollIntoView({ block: 'center', inline: 'nearest' });
+        const currentUrl = image.currentSrc || image.getAttribute('src') || '';
+        const lazyUrl = image.getAttribute('data-src') || image.getAttribute('data-original') || '';
+        if (!/^https?:\/\//i.test(currentUrl) && /^https?:\/\//i.test(lazyUrl)) {
+          image.setAttribute('src', lazyUrl);
+        }
         if (!image.complete) {
           await Promise.race([
             new Promise((resolve) => image.addEventListener('load', resolve, { once: true })),
@@ -153,7 +167,6 @@ export async function verifyPublicationAnonymously(options) {
         }
         await new Promise((resolve) => setTimeout(resolve, 150));
       }
-      window.scrollTo({ top: 0, left: 0 });
     }, config.publicImageSelectors);
 
     const snapshot = await page.evaluate((runtimeConfig) => {
@@ -182,7 +195,10 @@ export async function verifyPublicationAnonymously(options) {
         title: firstText(runtimeConfig.publicTitleSelectors) || document.title,
         bodyText,
         images: imageNodes.map((image) => ({
-          src: image.currentSrc || image.getAttribute('src') || image.getAttribute('data-src') || image.getAttribute('data-original') || '',
+          currentSrc: image.currentSrc || '',
+          src: image.getAttribute('src') || '',
+          dataSrc: image.getAttribute('data-src') || '',
+          dataOriginal: image.getAttribute('data-original') || '',
           complete: image.complete,
           naturalWidth: image.naturalWidth,
           naturalHeight: image.naturalHeight,
@@ -192,7 +208,9 @@ export async function verifyPublicationAnonymously(options) {
 
     evidence.titleObserved = normalizePublicationText(snapshot.title);
     evidence.anchorsMatched = anchors.filter((anchor) => normalizePublicationText(snapshot.bodyText).includes(anchor));
-    const durableImages = snapshot.images.filter((image) => isDurablePublicImageUrl(image.src, sourceImageUrls));
+    const durableImages = snapshot.images
+      .map((image) => ({ ...image, resolvedSrc: preferredPublicImageUrl(image) }))
+      .filter((image) => isDurablePublicImageUrl(image.resolvedSrc, sourceImageUrls));
     evidence.observedImageCount = durableImages.length;
     evidence.loadedImageCount = durableImages.filter(
       (image) => image.complete && Number(image.naturalWidth || 0) > 0 && Number(image.naturalHeight || 0) > 0

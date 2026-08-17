@@ -1,0 +1,44 @@
+{
+  "app_name": "bawei",
+  "mode": "direct-imagegen",
+  "source_manifest": "release/cws/1.0.3/visual/promo-normalize.json",
+  "output_dir": "release/cws/1.0.3/visual/normalized",
+  "assets": [
+    {
+      "source": "release/cws/1.0.3/visual/raw/promo-v1.png",
+      "output_name": "promo-v1-440x280.png",
+      "width": 440,
+      "height": 280,
+      "path": "release/cws/1.0.3/visual/normalized/promo-v1-440x280.png",
+      "actual_width": 440,
+      "actual_height": 280,
+      "color_mode": "RGB",
+      "has_alpha": false,
+      "runtime_screenshot_evidence": null
+    },
+    {
+      "source": "release/cws/1.0.3/visual/raw/promo-v2.png",
+      "output_name": "promo-v2-440x280.png",
+      "width": 440,
+      "height": 280,
+      "path": "release/cws/1.0.3/visual/normalized/promo-v2-440x280.png",
+      "actual_width": 440,
+      "actual_height": 280,
+      "color_mode": "RGB",
+      "has_alpha": false,
+      "runtime_screenshot_evidence": null
+    },
+    {
+      "source": "release/cws/1.0.3/visual/raw/promo-v3.png",
+      "output_name": "promo-v3-440x280.png",
+      "width": 440,
+      "height": 280,
+      "path": "release/cws/1.0.3/visual/normalized/promo-v3-440x280.png",
+      "actual_width": 440,
+      "actual_height": 280,
+      "color_mode": "RGB",
+      "has_alpha": false,
+      "runtime_screenshot_evidence": null
+    }
+  ]
+}

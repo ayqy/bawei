@@ -25,7 +25,7 @@
       "publicTitleSelectors": ["h1", ".com-article-title"],
       "publicImageSelectors": [".com-markdown-collpase-main img", "article img"],
       "pendingPatterns": ["审核中", "待审核", "审核未完成"],
-      "rejectedPatterns": ["审核不通过", "未通过", "已退回", "发布失败"]
+      "rejectedPatterns": ["审核不通过", "未通过", "已退回", "已驳回", "发布失败"]
     },
     "cnblogs": {
       "label": "博客园",
@@ -109,7 +109,7 @@
       "label": "今日头条",
       "entryUrl": "https://mp.toutiao.com/profile_v4/graphic/publish",
       "loginAuditUrl": "https://mp.toutiao.com/profile_v4/graphic/publish",
-      "managementUrl": "https://mp.toutiao.com/profile_v4/graphic/articles",
+      "managementUrl": "https://mp.toutiao.com/profile_v4/manage/content/all",
       "loginUrlPatterns": ["/auth/page/login", "/login"],
       "publicUrlPatterns": ["^https://www\\.toutiao\\.com/article/\\d+", "^https://www\\.toutiao\\.com/item/\\d+"],
       "publicArticleSelectors": [".article-content", ".syl-page-article", "article"],

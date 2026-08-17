@@ -1,7 +1,7 @@
 {
   "name": "bawei",
   "private": true,
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Cross-post WeChat Official Account articles to multiple platforms (draft/publish) with built-in diagnostics.",
   "type": "module",
   "scripts": {

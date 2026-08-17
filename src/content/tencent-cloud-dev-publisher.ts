@@ -39,6 +39,25 @@ function tokenForSearch(title: string): string {
   return titleToken(title);
 }
 
+function getTencentRejectionReason(panel: HTMLElement | null): string {
+  if (!panel) return '';
+  const text = String(panel.innerText || panel.textContent || '')
+    .replace(/\r/g, '')
+    .trim();
+  const rejected = /你的文章已驳回|审核(?:未通过|不通过|驳回|退回)|文章(?:未通过|已退回)/i.test(
+    text
+  );
+  if (!rejected && !panel.classList.contains('failed')) return '';
+
+  const matched = text.match(
+    /(?:你的文章已驳回|审核(?:未通过|不通过|驳回|退回)|文章(?:未通过|已退回))\s*[,，]?\s*(?:原因\s*[:：]\s*)?([^\n]*)/i
+  );
+  const reason = String(matched?.[1] || '')
+    .replace(/(?:立即修改|编辑|删除).*$/i, '')
+    .trim();
+  return reason || getMessage('statusRejected') || '腾讯云审核退回';
+}
+
 function getProbeKey(jobId: string): string {
   return `bawei_v2_tencent_probe_index_${jobId}`;
 }
@@ -1857,6 +1876,29 @@ async function bootstrap(): Promise<void> {
       const hitPanel = panels.find((p) => (p.textContent || '').includes(token)) || null;
       const panelLink =
         hitPanel?.querySelector<HTMLAnchorElement>('a[href*="/developer/article/"]') || null;
+
+      const rejectionReason = getTencentRejectionReason(hitPanel);
+      if (rejectionReason) {
+        removeSessionValue(getProbeActiveKey(currentJob.jobId));
+        removeSessionValue(getProbeKey(currentJob.jobId));
+        removeSessionValue(getListRetryKey(currentJob.jobId));
+        removeSessionValue(getVerifyReadyKey(currentJob.jobId));
+        await report({
+          status: 'rejected',
+          stage: 'done',
+          userMessage: `${getMessage('statusRejected') || '已退回'}：${rejectionReason}`,
+          devDetails: summarizeVerifyDetails({
+            listUrl,
+            listVisible: true,
+            publishedUrl: panelLink?.href,
+            candidatePublicUrl: panelLink?.href,
+            managementUrl: getChannelConfig(CHANNEL_ID).managementUrl,
+            reviewStatus: 'rejected',
+            rejectionReason
+          })
+        });
+        return;
+      }
 
       const tokenLink =
         panelLink ||

@@ -335,7 +335,10 @@ function buildTencentEditorHtml({ action, title, sourceUrl, detailUrl }) {
   return pageTemplate({ title: `${title} - 腾讯云`, body, script });
 }
 
-function buildTencentListHtml({ title, token, detailUrl }) {
+function buildTencentListHtml({ title, token, detailUrl, rejected = false }) {
+  const rejection = rejected
+    ? '<div>你的文章已驳回,原因: 内容包含广告/引流信息</div><button>立即修改</button>'
+    : '';
   const body = `
     <h1>腾讯云文章列表（E2E）</h1>
     <div class="bar">
@@ -348,8 +351,9 @@ function buildTencentListHtml({ title, token, detailUrl }) {
       <button class="cdc-search__btn btn">搜索</button>
     </div>
     <div class="com-2-course-panel-list box">
-      <div class="cdc-2-course-panel">
+      <div class="cdc-2-course-panel${rejected ? ' failed' : ''}">
         <div>${title} ${token}</div>
+        ${rejection}
         <a href="${detailUrl}">${title}</a>
       </div>
     </div>
@@ -1276,7 +1280,12 @@ async function main() {
           await route.fulfill({
             status: 200,
             headers: { 'content-type': 'text/html; charset=utf-8' },
-            body: buildTencentListHtml({ title, token: token12, detailUrl })
+            body: buildTencentListHtml({
+              title,
+              token: token12,
+              detailUrl,
+              rejected: action === 'rejected'
+            })
           });
           return;
         }
@@ -1792,7 +1801,7 @@ async function main() {
 
       const channelPage = await startJobAndWaitChannelTab(context, wechatPage, {
         channelId,
-        action
+        action: action === 'rejected' ? 'publish' : action
       });
 
       if (action === 'not_logged_in') {
@@ -1867,7 +1876,8 @@ async function main() {
       }
 
       // 草稿落盘是成功终态；发布只代表平台已接收，必须保持待审，不能误报公开成功。
-      const expectedBadge = action === 'publish' ? '待审' : '成功';
+      const expectedBadge =
+        action === 'rejected' ? '退回' : action === 'publish' ? '待审' : '成功';
       try {
         await waitForBadgeText(wechatPage, channelId, expectedBadge, 60_000);
       } catch (error) {
@@ -1904,7 +1914,8 @@ async function main() {
         );
       }
       const runtimeState = await readChannelRuntimeState(wechatPage, channelId);
-      const expectedStatus = action === 'publish' ? 'pending_review' : 'success';
+      const expectedStatus =
+        action === 'rejected' ? 'rejected' : action === 'publish' ? 'pending_review' : 'success';
       assert(
         runtimeState?.status === expectedStatus,
         `渠道运行态不符合动作语义：channel=${channelId} action=${action} state=${JSON.stringify(runtimeState)}`
@@ -1914,6 +1925,19 @@ async function main() {
         assert(
           storedState?.status === 'pending_review' && !!storedState?.devDetails?.candidatePublicUrl,
           `投稿结果缺少待审状态或候选公开地址：channel=${channelId} state=${JSON.stringify(storedState)}`
+        );
+      }
+      if (action === 'rejected') {
+        const storedState = await readStoredChannelRuntimeState(context, wechatPage, channelId);
+        assert(
+          storedState?.status === 'rejected' &&
+            storedState?.devDetails?.candidatePublicUrl &&
+            storedState?.devDetails?.rejectionReason === '内容包含广告/引流信息',
+          `退回结果缺少候选地址或实际原因：channel=${channelId} state=${JSON.stringify(storedState)}`
+        );
+        assert(
+          channelPage.url().startsWith('https://cloud.tencent.com/developer/creator/article'),
+          `腾讯云退回稿不应再打开 404 详情页：${channelPage.url()}`
         );
       }
       if (channelId === 'oschina') {
@@ -2153,7 +2177,7 @@ async function main() {
     const onlyChannel =
       onlyChannelArg && ALL_CHANNELS.includes(onlyChannelArg) ? onlyChannelArg : '';
     const onlyAction =
-      onlyActionArg && ['not_logged_in', 'draft', 'publish'].includes(onlyActionArg)
+      onlyActionArg && ['not_logged_in', 'draft', 'publish', 'rejected'].includes(onlyActionArg)
         ? onlyActionArg
         : '';
 
@@ -2161,7 +2185,12 @@ async function main() {
       throw new Error(`未知渠道参数：${onlyChannelArg}（可选：${ALL_CHANNELS.join(', ')}）`);
     }
     if (onlyActionArg && !onlyAction) {
-      throw new Error(`未知 action 参数：${onlyActionArg}（可选：not_logged_in, draft, publish）`);
+      throw new Error(
+        `未知 action 参数：${onlyActionArg}（可选：not_logged_in, draft, publish, rejected）`
+      );
+    }
+    if (onlyAction === 'rejected' && onlyChannel !== 'tencent-cloud-dev') {
+      throw new Error('rejected 夹具仅适用于 tencent-cloud-dev');
     }
 
     if (serialOnly) {
@@ -2180,6 +2209,7 @@ async function main() {
     }
 
     if (!onlyChannel && !onlyAction) {
+      await runOne('tencent-cloud-dev', 'rejected');
       await runSerialAllChannels();
     }
 

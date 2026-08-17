@@ -1,0 +1,12 @@
+{
+  "app_name": "bawei",
+  "mode": "direct-imagegen",
+  "assets": [
+    {
+      "source": "release/cws/1.0.3/visual/raw/promo-v1.png",
+      "output_name": "small-promo.png",
+      "width": 440,
+      "height": 280
+    }
+  ]
+}

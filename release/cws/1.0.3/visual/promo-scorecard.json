@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "asset_type": "cws_small_promo",
+  "target": {
+    "width": 440,
+    "height": 280,
+    "format": "PNG",
+    "color_mode": "RGB",
+    "has_alpha": false
+  },
+  "criteria": [
+    "product_clarity",
+    "visual_specificity",
+    "trust",
+    "store_fit",
+    "distinctiveness"
+  ],
+  "candidates": [
+    {
+      "version": "promo-v1",
+      "asset_type": "cws_small_promo",
+      "scores": {
+        "product_clarity": 5,
+        "visual_specificity": 5,
+        "trust": 5,
+        "store_fit": 5,
+        "distinctiveness": 4
+      },
+      "total": 24,
+      "strengths": [
+        "单一八爪鱼、单篇文章卡和多个目的地节点在缩略尺寸下仍清楚",
+        "深蓝、粉色与浅青延续现有图标的品牌配色",
+        "没有文字、第三方标志、虚构状态或伪造产品界面"
+      ],
+      "weaknesses": ["目的地采用抽象圆点，不能表达具体平台差异"],
+      "selected": true
+    },
+    {
+      "version": "promo-v2",
+      "asset_type": "cws_small_promo",
+      "scores": {
+        "product_clarity": 4,
+        "visual_specificity": 4,
+        "trust": 3,
+        "store_fit": 4,
+        "distinctiveness": 3
+      },
+      "total": 18,
+      "strengths": [
+        "横向卡片序列表达了从单篇内容到多份内容的过程",
+        "留白充足且整体配色友好"
+      ],
+      "weaknesses": [
+        "卡片序列接近产品界面或流程面板，存在伪 UI 误读风险",
+        "品牌主体较小，缩略图辨识度弱于 promo-v1"
+      ],
+      "rejection_reason": "信任与品牌辨识得分低于最高分候选",
+      "selected": false
+    },
+    {
+      "version": "promo-v3",
+      "asset_type": "cws_small_promo",
+      "scores": {
+        "product_clarity": 4,
+        "visual_specificity": 5,
+        "trust": 4,
+        "store_fit": 4,
+        "distinctiveness": 5
+      },
+      "total": 22,
+      "strengths": [
+        "大型八爪鱼与文章卡形成强烈、独特的分发动作",
+        "三个无品牌节点保持了多目的地含义"
+      ],
+      "weaknesses": [
+        "高饱和蓝色与写实触手细节偏离现有圆润克制的品牌语气",
+        "构图动势略强，容易压过单篇文章可靠分发的含义"
+      ],
+      "rejection_reason": "总分低于 promo-v1，且品牌一致性较弱",
+      "selected": false
+    }
+  ],
+  "winner": {
+    "version": "promo-v1",
+    "raw_path": "release/cws/1.0.3/visual/raw/promo-v1.png",
+    "normalized_path": "release/cws/1.0.3/visual/normalized/promo-v1-440x280.png",
+    "adopted_path": "release/cws/1.0.3/assets/small-promo.png",
+    "sha256": "85c85646a5bf2d275b2354cb784f66ff416ec0d46f852daccc4f4d8bec3f6cdc",
+    "selection_reason": "总分最高，并在实际 440×280 尺寸中最清楚地保留品牌主体、单篇文章与多目的地三层信息。"
+  }
+}

@@ -1,0 +1,24 @@
+{
+  "app_name": "bawei",
+  "mode": "direct-imagegen",
+  "assets": [
+    {
+      "source": "release/cws/1.0.3/visual/raw/promo-v1.png",
+      "output_name": "promo-v1-440x280.png",
+      "width": 440,
+      "height": 280
+    },
+    {
+      "source": "release/cws/1.0.3/visual/raw/promo-v2.png",
+      "output_name": "promo-v2-440x280.png",
+      "width": 440,
+      "height": 280
+    },
+    {
+      "source": "release/cws/1.0.3/visual/raw/promo-v3.png",
+      "output_name": "promo-v3-440x280.png",
+      "width": 440,
+      "height": 280
+    }
+  ]
+}

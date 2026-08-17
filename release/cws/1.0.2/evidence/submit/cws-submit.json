@@ -1,0 +1,77 @@
+{
+  "ok": true,
+  "action": "submit",
+  "externalMutation": true,
+  "product": "bawei",
+  "version": "1.0.2",
+  "package": {
+    "path": "plugin-1.0.2.zip",
+    "sha256": "94e46a432510afcd89448813e7c090f6ff49245fbb203b2c1caf667850c51022"
+  },
+  "publishRequest": {
+    "publishType": "DEFAULT_PUBLISH",
+    "skipReview": false,
+    "blockOnWarnings": true
+  },
+  "before": {
+    "itemId": "epgindgpaoemkikhhpbhigjcfgcnhkff",
+    "name": "publishers/301e74b1-6567-4278-a30a-74b31afa142c/items/epgindgpaoemkikhhpbhigjcfgcnhkff",
+    "lastAsyncUploadState": null,
+    "submitted": {
+      "state": null,
+      "versions": []
+    },
+    "published": {
+      "state": "PUBLISHED",
+      "versions": [
+        "1.0.1"
+      ]
+    }
+  },
+  "upload": {
+    "state": "SUCCEEDED",
+    "itemIdMatches": true
+  },
+  "afterUpload": {
+    "itemId": "epgindgpaoemkikhhpbhigjcfgcnhkff",
+    "name": "publishers/301e74b1-6567-4278-a30a-74b31afa142c/items/epgindgpaoemkikhhpbhigjcfgcnhkff",
+    "lastAsyncUploadState": null,
+    "submitted": {
+      "state": null,
+      "versions": []
+    },
+    "published": {
+      "state": "PUBLISHED",
+      "versions": [
+        "1.0.1"
+      ]
+    }
+  },
+  "submission": {
+    "state": "PENDING_REVIEW",
+    "itemIdMatches": true,
+    "publishType": "DEFAULT_PUBLISH",
+    "skipReview": false
+  },
+  "after": {
+    "itemId": "epgindgpaoemkikhhpbhigjcfgcnhkff",
+    "name": "publishers/301e74b1-6567-4278-a30a-74b31afa142c/items/epgindgpaoemkikhhpbhigjcfgcnhkff",
+    "lastAsyncUploadState": null,
+    "submitted": {
+      "state": "PENDING_REVIEW",
+      "versions": [
+        "1.0.2"
+      ]
+    },
+    "published": {
+      "state": "PUBLISHED",
+      "versions": [
+        "1.0.1"
+      ]
+    }
+  },
+  "terminalState": "pending_review",
+  "automaticPublishAfterApproval": true,
+  "publicReleaseTriggered": false,
+  "completedAt": "2026-08-17T12:34:31.463Z"
+}

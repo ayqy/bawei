@@ -1,0 +1,441 @@
+{
+  "schema_version": 2,
+  "product": {
+    "name": "bawei",
+    "platform": "cws",
+    "version": "1.0.3",
+    "root": "/Users/pocket/Documents/project/bawei"
+  },
+  "source": {
+    "commit": "",
+    "commit_policy": "resolve_at_preflight",
+    "require_clean": true
+  },
+  "platform_config": {
+    "cws": {
+      "publisher_id": "301e74b1-6567-4278-a30a-74b31afa142c",
+      "item_id": "epgindgpaoemkikhhpbhigjcfgcnhkff",
+      "primary_locale": "en",
+      "release_method": "automatic_after_review",
+      "publish_type": "DEFAULT_PUBLISH",
+      "skip_review": false
+    }
+  },
+  "metadata": {
+    "name": "bawei",
+    "summary": "Cross-post WeChat Official Account articles to multiple platforms—draft or publish—with built-in diagnostics.",
+    "description": "bawei extracts the WeChat Official Account article selected by the user and sends it to user-selected publishing platforms as a draft or review submission. It processes channels serially, preserves structured text and supported images, reports login and platform blockers, and only marks a formal publication successful after an anonymous public-page check.",
+    "language": "en",
+    "privacy_policy_url": "https://github.com/ayqy/bawei/blob/main/docs/privacy-policy.md",
+    "support_url": "https://github.com/ayqy/bawei/issues",
+    "single_purpose": "Extract the user-selected WeChat Official Account article and serially send it as a draft or publication submission to the publishing platforms selected by that user.",
+    "permission_justification": "storage saves local settings, jobs, publication states, and duplicate-prevention hashes; tabs opens and focuses source and destination pages; scripting performs the user-requested extraction, editor filling, submission, and verification; narrowly scoped host access supports destination editors, image transfer, and local Markdown publishing.",
+    "data_use_summary": "The selected article title, structured body, supported images, optional source URL, destination login state, and publication status are processed locally for the requested workflow. Article data is transmitted only to the publishing platforms selected by the user and to the declared image endpoints needed to preserve images. bawei does not sell user data or use it for advertising, credit, or unrelated profiling."
+  },
+  "rules_researched": [
+    {
+      "url": "https://developer.chrome.com/docs/webstore/publish/",
+      "checked_at": "2026-08-17",
+      "claim": "Package upload, review submission, approval, and public availability are distinct lifecycle states; a submission is not publicly released until its published revision is available from the store.",
+      "topic": "lifecycle",
+      "evidence_kind": "direct"
+    },
+    {
+      "url": "https://developer.chrome.com/docs/webstore/api/reference/rest/v2/publishers.items/publish",
+      "checked_at": "2026-08-17",
+      "claim": "The Chrome Web Store API v2 publish method accepts publishType=DEFAULT_PUBLISH for automatic publication after approval and skipReview=false to submit the revision for review.",
+      "topic": "lifecycle",
+      "evidence_kind": "direct"
+    },
+    {
+      "url": "https://developer.chrome.com/docs/webstore/program-policies/",
+      "checked_at": "2026-08-17",
+      "claim": "The extension, listing, permissions, privacy disclosures, and promotional material must accurately represent a narrow user-facing purpose and the data practices of the submitted product.",
+      "topic": "policy",
+      "evidence_kind": "direct"
+    },
+    {
+      "url": "https://developer.chrome.com/docs/webstore/images/",
+      "checked_at": "2026-08-17",
+      "claim": "A Chrome Web Store listing supports a 128x128 icon, a 440x280 small promotional image, and representative screenshots at 1280x800 or 640x400.",
+      "topic": "assets",
+      "evidence_kind": "direct"
+    }
+  ],
+  "growth": {
+    "keyword_candidates": [
+      {
+        "query": "cross post WeChat article",
+        "intent": "Reuse one WeChat Official Account article across several publishing platforms without rebuilding it in each editor.",
+        "relevance": "This is bawei's primary source-page panel and serial multi-channel publishing workflow.",
+        "proof": "src/content/wechat-content.ts, src/background.ts, config/channels.json, and scripts/v3-e2e.mjs",
+        "evidence_kind": "direct",
+        "scores": {
+          "product_relevance": 5,
+          "user_intent": 5,
+          "proof_strength": 5,
+          "differentiation": 4,
+          "policy_safety": 5
+        }
+      },
+      {
+        "query": "publish WeChat article to multiple platforms",
+        "intent": "Submit a selected article to multiple creator platforms while retaining its text structure and supported images.",
+        "relevance": "bawei serially fills ten supported destination editors and verifies each destination outcome independently.",
+        "proof": "config/channels.json, src/content/*-publisher.ts, scripts/v3-e2e.mjs, and artifacts/live-publish/publication-ledger.json",
+        "evidence_kind": "direct",
+        "scores": {
+          "product_relevance": 5,
+          "user_intent": 5,
+          "proof_strength": 5,
+          "differentiation": 5,
+          "policy_safety": 5
+        }
+      },
+      {
+        "query": "save WeChat article drafts",
+        "intent": "Prepare an article in destination-platform drafts before deciding whether to submit it for publication.",
+        "relevance": "The source-page panel exposes a draft action and every configured channel declares its supported draft behavior.",
+        "proof": "src/content/wechat-content.ts, src/background.ts, config/channels.json, and scripts/channel-config.test.mjs",
+        "evidence_kind": "direct",
+        "scores": {
+          "product_relevance": 4,
+          "user_intent": 4,
+          "proof_strength": 5,
+          "differentiation": 3,
+          "policy_safety": 5
+        }
+      },
+      {
+        "query": "verify multi platform publishing results",
+        "intent": "Know whether each attempted publication is public, pending review, rejected, blocked, or failed without creating duplicates.",
+        "relevance": "bawei records seven terminal categories, performs anonymous public-page verification, and keys duplicate prevention by channel plus content hash.",
+        "proof": "scripts/publication-verifier.mjs, src/shared/publication-ledger.ts, scripts/publication-verifier.test.mjs, and scripts/publication-ledger.test.mjs",
+        "evidence_kind": "direct",
+        "scores": {
+          "product_relevance": 5,
+          "user_intent": 4,
+          "proof_strength": 5,
+          "differentiation": 5,
+          "policy_safety": 5
+        }
+      }
+    ],
+    "claim_evidence": [
+      {
+        "claim": "Processes selected channels serially so only one destination editor is active at a time.",
+        "source": "src/background.ts, src/shared/serial-channel-queue.ts, scripts/serial-channel-queue.test.mjs, and scripts/background-serial.integration.test.mjs",
+        "evidence_kind": "direct"
+      },
+      {
+        "claim": "Preserves structured text and supported images when the destination platform allows it.",
+        "source": "src/content/wechat-content.ts, channel publisher implementations under src/content, and scripts/v3-e2e.mjs",
+        "evidence_kind": "direct"
+      },
+      {
+        "claim": "Supports both saving drafts and submitting formal publications.",
+        "source": "src/content/wechat-content.ts, src/background.ts, config/channels.json, and scripts/channel-config.test.mjs",
+        "evidence_kind": "direct"
+      },
+      {
+        "claim": "Reports public, pending review, rejected, waiting for user verification, technical failure, not logged in, and skipped duplicate as distinct outcomes.",
+        "source": "src/shared/v2-types.ts, scripts/publication-ledger.mjs, scripts/publication-verifier.mjs, and artifacts/live-publish/publication-ledger.json",
+        "evidence_kind": "direct"
+      },
+      {
+        "claim": "Prevents duplicate submissions using channel plus content hash and preserves non-public terminal states for recheck instead of silently reposting.",
+        "source": "scripts/publication-ledger.mjs, scripts/publication-ledger.test.mjs, and scripts/v3-e2e.mjs",
+        "evidence_kind": "direct"
+      },
+      {
+        "claim": "Marks a publication public only after an anonymous detail-page check verifies title, body anchors, and expected hosted images.",
+        "source": "scripts/publication-verifier.mjs, scripts/publication-verifier.test.mjs, and release/cws/1.0.3/assets/screenshot-03.png",
+        "evidence_kind": "direct"
+      },
+      {
+        "claim": "Runs locally and sends article data only to user-selected destination platforms and declared image endpoints for the requested workflow.",
+        "source": "manifest.json, docs/privacy-policy.md, src/background.ts, and production ZIP inspection",
+        "evidence_kind": "direct"
+      }
+    ]
+  },
+  "category_assessment": {
+    "selected": "Tools",
+    "alternatives": [
+      "Workflow & Planning",
+      "Blogging"
+    ],
+    "rationale": "bawei's dominant job is a browser utility that extracts, serially transfers, and verifies user-selected article content across destination editors; editorial planning and blogging are contexts rather than the product's primary function.",
+    "evidence_kind": "inference"
+  },
+  "qualification_assessment": [
+    {
+      "id": "cws_item_and_api_access",
+      "name": "Chrome Web Store item ownership and API access",
+      "scope": "app_once",
+      "status": "ready",
+      "blocking": true,
+      "evidence": "The guarded CWS API v2 status adapter has read publisher 301e74b1-6567-4278-a30a-74b31afa142c and item epgindgpaoemkikhhpbhigjcfgcnhkff successfully for the current public item.",
+      "evidence_kind": "direct"
+    },
+    {
+      "id": "public_privacy_policy",
+      "name": "Public privacy-policy URL",
+      "scope": "version_each",
+      "status": "ready",
+      "blocking": true,
+      "evidence": "The public CWS listing exposes the repository privacy-policy URL, and the same committed policy is anonymously retrievable from raw.githubusercontent.com for the current default branch.",
+      "evidence_kind": "direct"
+    },
+    {
+      "id": "support_surface",
+      "name": "Public product and support surface",
+      "scope": "version_each",
+      "status": "ready",
+      "blocking": true,
+      "evidence": "The public GitHub repository and its README are anonymously accessible and identify the product, usage workflow, and project contact surface.",
+      "evidence_kind": "direct"
+    },
+    {
+      "id": "reviewer_account",
+      "name": "Extension reviewer account",
+      "scope": "version_each",
+      "status": "not_required",
+      "blocking": false,
+      "evidence": "bawei has no first-party account or paywall. Destination-platform accounts are user-selected integrations; the packaged source-page panel, local workflow, permissions, and result handling can be reviewed without a bawei account.",
+      "evidence_kind": "direct"
+    },
+    {
+      "id": "regulated_qualification",
+      "name": "Regulated-domain qualification",
+      "scope": "conditional",
+      "status": "not_required",
+      "blocking": false,
+      "evidence": "bawei is a content-transfer and verification browser tool and does not provide health, finance, gambling, legal, or another regulated service.",
+      "evidence_kind": "inference"
+    },
+    {
+      "id": "remote_code",
+      "name": "Packaged-code requirement",
+      "scope": "build_each",
+      "status": "ready",
+      "blocking": true,
+      "evidence": "manifest.json declares a Manifest V3 packaged service worker and packaged content scripts; the production build contains no remotely hosted executable code.",
+      "evidence_kind": "direct"
+    }
+  ],
+  "assets": [
+    {
+      "role": "icon_128",
+      "path": "public/icons/icon-128.png",
+      "width": 128,
+      "height": 128
+    },
+    {
+      "role": "small_promo",
+      "path": "release/cws/1.0.3/assets/small-promo.png",
+      "width": 440,
+      "height": 280
+    },
+    {
+      "role": "screenshot",
+      "path": "release/cws/1.0.3/assets/screenshot-01.png",
+      "width": 1280,
+      "height": 800
+    },
+    {
+      "role": "screenshot",
+      "path": "release/cws/1.0.3/assets/screenshot-02.png",
+      "width": 1280,
+      "height": 800
+    },
+    {
+      "role": "screenshot",
+      "path": "release/cws/1.0.3/assets/screenshot-03.png",
+      "width": 1280,
+      "height": 800
+    }
+  ],
+  "artifacts": [
+    {
+      "role": "extension_zip",
+      "path": "plugin-1.0.3.zip",
+      "status": "ready",
+      "evidence": "The guarded CWS dry-run rebuilds the production extension from dist, verifies version parity, regenerates this ZIP, and records its SHA-256 immediately before submission."
+    }
+  ],
+  "rejection_plan": {
+    "official_rule_map": "release/cws/1.0.3/release-manifest.json",
+    "code_evidence_paths": "manifest.json; docs/privacy-policy.md; docs/ChromeWebStore-Description-EN.md; config/channels.json; src/background.ts; src/content/wechat-content.ts; src/content/*-publisher.ts; scripts/publication-ledger.mjs; scripts/publication-verifier.mjs; scripts/v3-e2e.mjs",
+    "communication_position": "Explain the single user-invoked article cross-posting purpose, distinguish destination-platform review from bawei's own verification, reproduce the serial reviewer flow, and map every permission, data-use statement, and listing claim to the submitted package and versioned evidence.",
+    "code_change_strategy": "Treat each reviewer finding independently; change code, permissions, metadata, or imagery only when the cited official rule and submitted-version evidence establish a concrete mismatch, then rerun the affected channel regression and the full release gate."
+  },
+  "visual_delivery": {
+    "asset_brief": "release/cws/1.0.3/visual/asset-brief.json",
+    "community_research": "release/cws/1.0.3/visual/community-style-research.md",
+    "prompts": "release/cws/1.0.3/visual/promo-prompts.md",
+    "copy_deck": "release/cws/1.0.3/visual/promo-copy-deck.md",
+    "variant_scorecard": "release/cws/1.0.3/visual/promo-scorecard.json",
+    "review_index": "release/cws/1.0.3/visual/README.md",
+    "release_material_summary": "release/cws/1.0.3/visual/README.md"
+  },
+  "automation": {
+    "preflight": {
+      "commands": [
+        {
+          "label": "Type-check extension and release adapter",
+          "argv": ["npm", "run", "type-check"],
+          "cwd": ".",
+          "required_env": [],
+          "timeout_seconds": 1800,
+          "read_only": true
+        },
+        {
+          "label": "Lint TypeScript source",
+          "argv": ["npm", "run", "lint"],
+          "cwd": ".",
+          "required_env": [],
+          "timeout_seconds": 1800,
+          "read_only": true
+        },
+        {
+          "label": "Run publication-core regression suite",
+          "argv": ["npm", "run", "test:publish-core"],
+          "cwd": ".",
+          "required_env": [],
+          "timeout_seconds": 1800,
+          "read_only": true
+        },
+        {
+          "label": "Run V3 and serial queue unit regressions",
+          "argv": ["npm", "run", "test:v3:unit"],
+          "cwd": ".",
+          "required_env": [],
+          "timeout_seconds": 1800,
+          "read_only": true
+        },
+        {
+          "label": "Run serial queue unit regressions",
+          "argv": ["npm", "run", "test:serial"],
+          "cwd": ".",
+          "required_env": [],
+          "timeout_seconds": 1800,
+          "read_only": true
+        },
+        {
+          "label": "Run serial queue integration regressions",
+          "argv": ["npm", "run", "test:serial:integration"],
+          "cwd": ".",
+          "required_env": [],
+          "timeout_seconds": 1800,
+          "read_only": true
+        },
+        {
+          "label": "Run isolated all-channel browser regressions",
+          "argv": ["npm", "run", "e2e:v3"],
+          "cwd": ".",
+          "required_env": [],
+          "timeout_seconds": 1800,
+          "read_only": true
+        },
+        {
+          "label": "Build and package CWS 1.0.3 without external mutation",
+          "argv": [
+            "npm",
+            "run",
+            "publish:cws",
+            "--",
+            "--dry-run",
+            "--evidence-dir",
+            "{evidence_dir}/cws"
+          ],
+          "cwd": ".",
+          "required_env": [],
+          "timeout_seconds": 1800,
+          "read_only": true
+        }
+      ],
+      "covers": [
+        "source_validation",
+        "permissions",
+        "channel_contracts",
+        "publication_ledger",
+        "anonymous_verification",
+        "serial_execution",
+        "production_build",
+        "package"
+      ]
+    },
+    "configure": {
+      "commands": [],
+      "covers": []
+    },
+    "probe": {
+      "commands": [],
+      "covers": []
+    },
+    "submit": {
+      "commands": [
+        {
+          "label": "Upload bawei 1.0.3 and submit it for automatic publication after review",
+          "argv": [
+            "npm",
+            "run",
+            "publish:cws",
+            "--",
+            "--evidence-dir",
+            "{evidence_dir}/cws"
+          ],
+          "cwd": ".",
+          "required_env": [
+            "CWS_EXTENSION_ID",
+            "CWS_CLIENT_ID",
+            "CWS_CLIENT_SECRET",
+            "CWS_REFRESH_TOKEN"
+          ],
+          "timeout_seconds": 1800
+        }
+      ],
+      "covers": [
+        "package_upload",
+        "listing_fields",
+        "review_submit",
+        "terminal_status"
+      ]
+    },
+    "release": {
+      "commands": [],
+      "covers": []
+    },
+    "respond": {
+      "commands": [],
+      "covers": []
+    },
+    "status": {
+      "commands": [
+        {
+          "label": "Read versioned CWS submitted and published states",
+          "argv": [
+            "npm",
+            "run",
+            "publish:cws",
+            "--",
+            "--status",
+            "--evidence-dir",
+            "{evidence_dir}/cws"
+          ],
+          "cwd": ".",
+          "required_env": [
+            "CWS_EXTENSION_ID",
+            "CWS_CLIENT_ID",
+            "CWS_CLIENT_SECRET",
+            "CWS_REFRESH_TOKEN"
+          ],
+          "timeout_seconds": 1800,
+          "read_only": true
+        }
+      ],
+      "covers": ["terminal_status"]
+    }
+  }
+}

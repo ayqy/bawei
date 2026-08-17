@@ -1,0 +1,20 @@
+{
+  "app_name": "bawei",
+  "mode": "direct-imagegen",
+  "source_manifest": "release/cws/1.0.3/visual/promo-winner.json",
+  "output_dir": "release/cws/1.0.3/assets",
+  "assets": [
+    {
+      "source": "release/cws/1.0.3/visual/raw/promo-v1.png",
+      "output_name": "small-promo.png",
+      "width": 440,
+      "height": 280,
+      "path": "release/cws/1.0.3/assets/small-promo.png",
+      "actual_width": 440,
+      "actual_height": 280,
+      "color_mode": "RGB",
+      "has_alpha": false,
+      "runtime_screenshot_evidence": null
+    }
+  ]
+}
