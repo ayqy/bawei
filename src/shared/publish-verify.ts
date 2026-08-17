@@ -4,7 +4,8 @@ const BAWEI_V2_STOP_ERROR_MESSAGE_PUBLISH_VERIFY = '__BAWEI_V2_STOPPED__';
 
 function baweiV2IsStopRequestedPublishVerify(): boolean {
   try {
-    const fn = (globalThis as unknown as { __BAWEI_V2_IS_STOP_REQUESTED?: () => boolean }).__BAWEI_V2_IS_STOP_REQUESTED;
+    const fn = (globalThis as unknown as { __BAWEI_V2_IS_STOP_REQUESTED?: () => boolean })
+      .__BAWEI_V2_IS_STOP_REQUESTED;
     return typeof fn === 'function' ? !!fn() : false;
   } catch {
     return false;
@@ -12,13 +13,15 @@ function baweiV2IsStopRequestedPublishVerify(): boolean {
 }
 
 async function sleep(ms: number): Promise<void> {
-  if (baweiV2IsStopRequestedPublishVerify()) throw new Error(BAWEI_V2_STOP_ERROR_MESSAGE_PUBLISH_VERIFY);
+  if (baweiV2IsStopRequestedPublishVerify())
+    throw new Error(BAWEI_V2_STOP_ERROR_MESSAGE_PUBLISH_VERIFY);
 
   const start = Date.now();
   while (Date.now() - start < ms) {
     const left = ms - (Date.now() - start);
     await new Promise((r) => setTimeout(r, Math.min(200, left)));
-    if (baweiV2IsStopRequestedPublishVerify()) throw new Error(BAWEI_V2_STOP_ERROR_MESSAGE_PUBLISH_VERIFY);
+    if (baweiV2IsStopRequestedPublishVerify())
+      throw new Error(BAWEI_V2_STOP_ERROR_MESSAGE_PUBLISH_VERIFY);
   }
 }
 
@@ -32,12 +35,14 @@ export async function retryUntil<T>(
   let lastError: unknown = null;
 
   while (Date.now() < deadline) {
-    if (baweiV2IsStopRequestedPublishVerify()) throw new Error(BAWEI_V2_STOP_ERROR_MESSAGE_PUBLISH_VERIFY);
+    if (baweiV2IsStopRequestedPublishVerify())
+      throw new Error(BAWEI_V2_STOP_ERROR_MESSAGE_PUBLISH_VERIFY);
 
     try {
       return await fn();
     } catch (err) {
-      if (err instanceof Error && err.message === BAWEI_V2_STOP_ERROR_MESSAGE_PUBLISH_VERIFY) throw err;
+      if (err instanceof Error && err.message === BAWEI_V2_STOP_ERROR_MESSAGE_PUBLISH_VERIFY)
+        throw err;
       lastError = err;
       options?.onError?.(err);
       await sleep(intervalMs);
@@ -75,7 +80,8 @@ export function pageContainsSourceUrl(sourceUrl: string): boolean {
 
   try {
     const decoded = decodeURIComponent(target);
-    if (decoded && decoded !== target && (html.includes(decoded) || bodyText.includes(decoded))) return true;
+    if (decoded && decoded !== target && (html.includes(decoded) || bodyText.includes(decoded)))
+      return true;
   } catch {
     // ignore
   }
@@ -83,11 +89,10 @@ export function pageContainsSourceUrl(sourceUrl: string): boolean {
   try {
     const u = new URL(target);
     const host = String(u.hostname || '').trim();
-    const path = String(u.pathname || '').replace(/\/+$/g, '').trim();
-    const pathToken = path
-      .split('/')
-      .filter(Boolean)
-      .pop();
+    const path = String(u.pathname || '')
+      .replace(/\/+$/g, '')
+      .trim();
+    const pathToken = path.split('/').filter(Boolean).pop();
     const hostHit = host ? html.includes(host) || bodyText.includes(host) : false;
     if (!hostHit) return false;
     if (!pathToken) return true;
@@ -107,27 +112,49 @@ export function detectPageLoginState(options?: {
 }): { status: 'logged_in' | 'not_logged_in' | 'unknown'; reason: string } {
   const url = String(location.href || '').toLowerCase();
   const text = String(document.body?.innerText || '').slice(0, 12000);
-  const loginUrlPattern = options?.loginUrlPattern || /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i;
+  const loginUrlPattern =
+    options?.loginUrlPattern || /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i;
   const strictLoginPattern =
-    options?.strictLoginPattern || /请登录|请先登录|登录后继续|未登录|扫码登录|账号登录|手机号登录|sign in|log in/i;
+    options?.strictLoginPattern ||
+    /请登录|请先登录|登录后继续|未登录|扫码登录|账号登录|手机号登录|sign in|log in/i;
   const loggedInPattern =
     options?.loggedInPattern ||
     /退出登录|个人中心|创作中心|创作后台|写文章|发布文章|发布管理|内容管理|工作台|我的文章|文章管理|账号设置|消息中心/i;
 
   const hasLoginUrl = loginUrlPattern.test(url);
-  const hasPassword = !!document.querySelector('input[type="password"],input[name*="password" i],input[id*="password" i]');
-  const hasLoginBtn = Array.from(document.querySelectorAll<HTMLElement>('button,a,span,div')).some((el) => {
+  const isVisible = (element: Element): boolean => {
+    if (!(element instanceof HTMLElement)) return false;
     try {
-      const style = window.getComputedStyle(el);
-      const rect = el.getBoundingClientRect();
-      if (style.display === 'none' || style.visibility === 'hidden' || rect.width <= 0 || rect.height <= 0) return false;
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      return (
+        style.display !== 'none' &&
+        style.visibility !== 'hidden' &&
+        Number(style.opacity || '1') !== 0 &&
+        rect.width > 0 &&
+        rect.height > 0
+      );
     } catch {
-      // ignore
+      return false;
     }
-    const t = String(el.textContent || '').trim();
-    if (!t) return false;
-    return /登录|登入|sign in|log in|扫码登录|手机号登录/i.test(t);
-  });
+  };
+  const hasPassword = Array.from(
+    document.querySelectorAll(
+      'input[type="password"],input[name*="password" i],input[id*="password" i]'
+    )
+  ).some(isVisible);
+  const hasLoginBtn = Array.from(document.querySelectorAll<HTMLElement>('button,a,span,div')).some(
+    (el) => {
+      try {
+        if (!isVisible(el)) return false;
+      } catch {
+        // ignore
+      }
+      const t = String(el.textContent || '').trim();
+      if (!t) return false;
+      return /登录|登入|sign in|log in|扫码登录|手机号登录/i.test(t);
+    }
+  );
   const hasStrictLoginText = strictLoginPattern.test(text);
   const hasLoggedInHints = loggedInPattern.test(text);
   const hasStrongLoginSignals =
@@ -168,15 +195,25 @@ export function normalizeForSearch(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 
-export function summarizeVerifyDetails<T extends Record<string, unknown> = Record<string, never>>(details: {
-  publishedUrl?: string;
-  draftUrl?: string;
-  editorUrl?: string;
-  listUrl?: string;
-  listVisible?: boolean;
-  sourceUrlPresent?: boolean;
-  savedToCloud?: boolean;
-} & T): NonNullable<ChannelRuntimeState['devDetails']> {
+export function summarizeVerifyDetails<T extends Record<string, unknown> = Record<string, never>>(
+  details: {
+    publishedUrl?: string;
+    draftUrl?: string;
+    editorUrl?: string;
+    listUrl?: string;
+    listVisible?: boolean;
+    sourceUrlPresent?: boolean;
+    savedToCloud?: boolean;
+    managementUrl?: string;
+    candidatePublicUrl?: string;
+    reviewStatus?: string;
+    rejectionReason?: string;
+    expectedImageCount?: number;
+    observedImageCount?: number;
+    contentHash?: string;
+    anonymousEvidence?: unknown;
+  } & T
+): NonNullable<ChannelRuntimeState['devDetails']> {
   const {
     publishedUrl,
     draftUrl,
@@ -185,6 +222,14 @@ export function summarizeVerifyDetails<T extends Record<string, unknown> = Recor
     listVisible,
     sourceUrlPresent,
     savedToCloud,
+    managementUrl,
+    candidatePublicUrl,
+    reviewStatus,
+    rejectionReason,
+    expectedImageCount,
+    observedImageCount,
+    contentHash,
+    anonymousEvidence,
     ...rest
   } = details;
 
@@ -194,10 +239,64 @@ export function summarizeVerifyDetails<T extends Record<string, unknown> = Recor
     ...(draftUrl ? { draftUrl } : {}),
     ...(editorUrl ? { editorUrl } : {}),
     listUrl,
+    ...(managementUrl ? { managementUrl } : {}),
+    ...(candidatePublicUrl ? { candidatePublicUrl } : {}),
+    ...(reviewStatus ? { reviewStatus } : {}),
+    ...(rejectionReason ? { rejectionReason } : {}),
+    ...(typeof expectedImageCount === 'number' ? { expectedImageCount } : {}),
+    ...(typeof observedImageCount === 'number' ? { observedImageCount } : {}),
+    ...(contentHash ? { contentHash } : {}),
+    ...(anonymousEvidence !== undefined ? { anonymousEvidence } : {}),
     verified: {
       listVisible: !!listVisible,
       sourceUrlPresent: !!sourceUrlPresent,
-      ...(typeof savedToCloud === 'boolean' ? { savedToCloud } : {}),
-    },
+      ...(typeof savedToCloud === 'boolean' ? { savedToCloud } : {})
+    }
+  };
+}
+
+export function classifySubmittedPublishPage(options: {
+  pageText: string;
+  candidatePublicUrl?: string;
+  pendingPatterns?: string[];
+  rejectedPatterns?: string[];
+}): {
+  status: 'pending_review' | 'rejected';
+  reviewStatus: string;
+  rejectionReason?: string;
+  candidatePublicUrl?: string;
+} {
+  const pageText = normalizeForSearch(String(options.pageText || ''));
+  const rejectedPattern = (options.rejectedPatterns || []).find((pattern) => {
+    try {
+      return new RegExp(pattern, 'i').test(pageText);
+    } catch {
+      return pageText.includes(pattern);
+    }
+  });
+  if (rejectedPattern) {
+    return {
+      status: 'rejected',
+      reviewStatus: 'rejected',
+      rejectionReason: rejectedPattern,
+      ...(options.candidatePublicUrl ? { candidatePublicUrl: options.candidatePublicUrl } : {})
+    };
+  }
+
+  const pendingPattern = (options.pendingPatterns || []).find((pattern) => {
+    try {
+      return new RegExp(pattern, 'i').test(pageText);
+    } catch {
+      return pageText.includes(pattern);
+    }
+  });
+  return {
+    status: 'pending_review',
+    reviewStatus: pendingPattern
+      ? 'pending_review'
+      : options.candidatePublicUrl
+        ? 'candidate_public_url'
+        : 'submitted',
+    ...(options.candidatePublicUrl ? { candidatePublicUrl: options.candidatePublicUrl } : {})
   };
 }

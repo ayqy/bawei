@@ -6,7 +6,15 @@
   构建完成后把 .tmp_build/dist 移动到项目根目录的 dist/。
 */
 
-import { cpSync, rmSync, mkdirSync, existsSync, readFileSync, writeFileSync, readdirSync } from 'fs';
+import {
+  cpSync,
+  rmSync,
+  mkdirSync,
+  existsSync,
+  readFileSync,
+  writeFileSync,
+  readdirSync
+} from 'fs';
 import { join } from 'path';
 import { execSync } from 'child_process';
 
@@ -37,6 +45,7 @@ log(`Created temporary directory ${isProductionBuild ? '.tmp_build_prod' : '.tmp
 // ---------------------------------------------------------------------------
 const COPY_PATHS = [
   'src',
+  'config',
   '_locales',
   'manifest.json',
   'vite.config.ts',
@@ -52,16 +61,18 @@ if (isProductionBuild) {
   const publicSrc = join(ROOT_DIR, 'public');
   const publicDest = join(TMP_DIR, 'public');
   if (existsSync(publicSrc)) {
-    cpSync(publicSrc, publicDest, { 
+    cpSync(publicSrc, publicDest, {
       recursive: true,
       filter: (src) => {
         // Exclude any path containing 'test' or test-manifest.json
         const basename = src.split('/').pop() || src.split('\\').pop() || '';
-        return !src.includes('/test/') && 
-               !src.includes('\\test\\') && 
-               !src.endsWith('/test') && 
-               !src.endsWith('\\test') &&
-               basename !== 'test-manifest.json';
+        return (
+          !src.includes('/test/') &&
+          !src.includes('\\test\\') &&
+          !src.endsWith('/test') &&
+          !src.endsWith('\\test') &&
+          basename !== 'test-manifest.json'
+        );
       }
     });
     log('Copied public directory (excluding test files and test-manifest.json)');
@@ -76,7 +87,9 @@ for (const p of COPY_PATHS) {
     cpSync(absSrc, join(TMP_DIR, p), { recursive: true });
   }
 }
-log(`Copied project files to ${isProductionBuild ? '.tmp_build_prod' : '.tmp_build'}${isProductionBuild ? ' (excluding test directory)' : ''}`);
+log(
+  `Copied project files to ${isProductionBuild ? '.tmp_build_prod' : '.tmp_build'}${isProductionBuild ? ' (excluding test directory)' : ''}`
+);
 
 // ---------------------------------------------------------------------------
 // Step 2.1: Copy test directory (only for development builds)
@@ -119,6 +132,13 @@ if (existsSync(contentDir)) {
         continue;
       }
       let moduleCode = readFileSync(moduleFile, 'utf8');
+      if (moduleName === 'channel-config') {
+        const rawConfig = readFileSync(join(TMP_DIR, 'config/channels.json'), 'utf8');
+        moduleCode = moduleCode.replace(
+          /import rawConfig from ['"]\.\.\/\.\.\/config\/channels\.json['"];?\s*/,
+          `const rawConfig = ${rawConfig.trim()} as const;\n`
+        );
+      }
       moduleCode = stripModuleSyntax(moduleCode).trim();
       contentSrc = contentSrc.replace(match[0], moduleCode);
       log(`Inlined module: ${moduleName} into ${file}`);
@@ -135,12 +155,14 @@ log('Skipping Turndown dependencies - not needed for bawei V2 publisher');
 // ---------------------------------------------------------------------------
 // Step 5: Run Vite build in temporary directory
 // ---------------------------------------------------------------------------
-log(`Running Vite build (${isProductionBuild ? 'production, no sourcemap, no tests' : 'production, no sourcemap'})...`);
+log(
+  `Running Vite build (${isProductionBuild ? 'production, no sourcemap, no tests' : 'production, no sourcemap'})...`
+);
 execSync('npx vite build --no-sourcemap --logLevel error', {
   cwd: TMP_DIR,
   stdio: 'inherit',
-  env: { 
-    ...process.env, 
+  env: {
+    ...process.env,
     NODE_ENV: 'production',
     BUILD_TARGET: isProductionBuild ? 'production' : 'development'
   }
@@ -154,7 +176,10 @@ if (existsSync(DIST_DIR)) {
 }
 cpSync(join(TMP_DIR, 'dist'), DIST_DIR, { recursive: true });
 
-// No additional files needed for final dist directory
+const sourceAssetsDir = join(ROOT_DIR, 'src/assets');
+if (existsSync(sourceAssetsDir)) {
+  cpSync(sourceAssetsDir, join(DIST_DIR, 'src/assets'), { recursive: true });
+}
 
 log('Moved build output to ./dist');
 
@@ -166,4 +191,6 @@ if (isProductionBuild) {
   log('Cleaned up temporary directory');
 }
 
-log(`✅ ${isProductionBuild ? 'Production build finished successfully - ready for Chrome Web Store!' : 'Build finished successfully'}`);
+log(
+  `✅ ${isProductionBuild ? 'Production build finished successfully - ready for Chrome Web Store!' : 'Build finished successfully'}`
+);

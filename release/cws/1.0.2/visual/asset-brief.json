@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "product_name": "bawei",
+  "platform": "Chrome Web Store",
+  "version": "1.0.2",
+  "primary_user_job": "把一篇微信公众号图文可靠地串行分发到用户选择的多个内容平台，并区分公开、待审、退回和失败。",
+  "one_sentence_promise": "一次准备文章，逐渠道分发，并以真实公开结果收口。",
+  "top_proof_points": [
+    "默认支持 10 个内容渠道并严格串行处理",
+    "保留结构化正文并在支持的渠道上传平台托管图片",
+    "正式发布只有通过无 Cookie 匿名详情页验收才记为成功"
+  ],
+  "tone_keywords": ["克制", "可靠", "清晰", "友好", "工具感"],
+  "visual_anchors": [
+    "现有粉色八爪鱼图标的圆润轮廓与深蓝描边",
+    "一张文章卡片向多个独立目的地分发",
+    "明确的中心到多节点关系"
+  ],
+  "visual_avoid": [
+    "不得伪造真实平台 UI、审核状态或成功数字",
+    "不得使用第三方平台商标或 logo",
+    "不得出现营销夸张词、统计数字、水印或不可核验文案",
+    "不得使用细小文字、复杂仪表盘或低对比度背景"
+  ],
+  "icon_metaphor": "复用现有八爪鱼品牌图标，不生成新图标；触手对应多渠道分发与串行处理。",
+  "screenshot_story": [
+    "在微信公众号文章页选择渠道",
+    "逐渠道填充、上传与提交",
+    "公开详情页验收并区分结果"
+  ],
+  "community_reference_map": "community-style-research.md",
+  "style_family_candidates": [
+    {
+      "id": "clarity-first",
+      "core_metaphor": "八爪鱼托住一张文章卡片，清晰分出多个无品牌圆点目的地",
+      "composition": "左侧单一品牌主体，右侧由一张文章卡片延伸到多节点；缩略图尺寸仍有清晰轮廓",
+      "copy_stance": "不在图片中放文字，只用品牌与分发动作表达功能",
+      "risk_to_avoid": "节点过多造成杂乱",
+      "scores": {"product_clarity": 5, "visual_specificity": 5, "trust": 5, "store_fit": 5, "distinctiveness": 4},
+      "total": 24
+    },
+    {
+      "id": "proof-first",
+      "core_metaphor": "一张结构化文章卡片沿单向路径依次抵达多个内容卡片",
+      "composition": "横向流程占主导，八爪鱼作为小型品牌锚点",
+      "copy_stance": "突出串行与内容完整性，不显示具体平台或状态",
+      "risk_to_avoid": "流程图过像伪造产品 UI",
+      "scores": {"product_clarity": 5, "visual_specificity": 4, "trust": 5, "store_fit": 4, "distinctiveness": 3},
+      "total": 21
+    },
+    {
+      "id": "bold-market-first",
+      "core_metaphor": "八爪鱼用多条触手稳稳递送文章卡片，形成有动势的放射构图",
+      "composition": "中心主体更大、对比更强，四周保留可辨识的卡片与节点",
+      "copy_stance": "强调多渠道动作感，不承诺结果数量",
+      "risk_to_avoid": "动势压过产品含义或显得卡通化过度",
+      "scores": {"product_clarity": 4, "visual_specificity": 5, "trust": 4, "store_fit": 4, "distinctiveness": 5},
+      "total": 22
+    }
+  ],
+  "winning_direction": "clarity-first",
+  "winner_selection_note": "总分最高；在 440×280 缩略图中最容易同时保留品牌主体、单篇文章和多目的地三层信息，也最不容易误导为真实平台 UI。",
+  "inference_notes": [
+    "多节点圆点是对 10 个默认渠道的抽象表达，不代表具体平台商标。",
+    "视觉优先级来自当前扩展代码、商店截图和发布结果状态机，而非搜索量或转化数据。"
+  ]
+}

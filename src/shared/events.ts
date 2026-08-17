@@ -9,7 +9,8 @@ type View = Window & typeof globalThis;
 
 function baweiV2IsStopRequestedEvents(): boolean {
   try {
-    const fn = (globalThis as unknown as { __BAWEI_V2_IS_STOP_REQUESTED?: () => boolean }).__BAWEI_V2_IS_STOP_REQUESTED;
+    const fn = (globalThis as unknown as { __BAWEI_V2_IS_STOP_REQUESTED?: () => boolean })
+      .__BAWEI_V2_IS_STOP_REQUESTED;
     return typeof fn === 'function' ? !!fn() : false;
   } catch {
     return false;
@@ -40,14 +41,14 @@ export function simulateClick(element: HTMLElement): void {
   const view = viewOf(element);
   // Dispatch sequence of events that frameworks expect
   const events = ['mousedown', 'mouseup', 'click'];
-  
-  events.forEach(eventType => {
+
+  events.forEach((eventType) => {
     const event = new view.MouseEvent(eventType, {
       bubbles: true,
       cancelable: true,
       view,
       button: 0,
-      buttons: 1,
+      buttons: 1
     });
     element.dispatchEvent(event);
   });
@@ -64,30 +65,30 @@ export function simulateType(input: HTMLInputElement | HTMLTextAreaElement, text
   const view = viewOf(input);
   // Focus the input first
   input.focus();
-  
+
   // Clear existing value
   input.value = '';
-  
+
   // Type character by character
   for (let i = 0; i < text.length; i++) {
     baweiV2ThrowIfStoppedEvents();
     const char = text[i];
     input.value += char;
-    
+
     // Dispatch input event after each character
     const inputEvent = new view.InputEvent('input', {
       bubbles: true,
       cancelable: true,
       data: char,
-      inputType: 'insertText',
+      inputType: 'insertText'
     });
     input.dispatchEvent(inputEvent);
   }
-  
+
   // Dispatch change event at the end
   const changeEvent = new view.Event('change', {
     bubbles: true,
-    cancelable: true,
+    cancelable: true
   });
   input.dispatchEvent(changeEvent);
 }
@@ -123,7 +124,7 @@ export async function simulatePaste(target: HTMLElement, html: string): Promise<
     baweiV2ThrowIfStoppedEvents();
     const success = document.execCommand('insertHTML', false, html);
     if (success) {
-      await new Promise(r => requestAnimationFrame(r));
+      await new Promise((r) => requestAnimationFrame(r));
       baweiV2ThrowIfStoppedEvents();
       const afterLen = (target.textContent || '').length;
       if (afterLen - initialLen > Math.min(100, html.length * 0.1)) {
@@ -166,10 +167,10 @@ export function simulateFocus(element: HTMLElement): void {
   baweiV2ThrowIfStoppedEvents();
   const view = viewOf(element);
   element.focus();
-  
+
   const focusEvent = new view.FocusEvent('focus', {
     bubbles: true,
-    cancelable: true,
+    cancelable: true
   });
   element.dispatchEvent(focusEvent);
 }
@@ -213,7 +214,7 @@ export function simulateDropFiles(target: HTMLElement, files: File[]): void {
   const events: Array<{ type: string; ctor: 'DragEvent' | 'Event' }> = [
     { type: 'dragenter', ctor: 'DragEvent' },
     { type: 'dragover', ctor: 'DragEvent' },
-    { type: 'drop', ctor: 'DragEvent' },
+    { type: 'drop', ctor: 'DragEvent' }
   ];
 
   for (const it of events) {
@@ -222,7 +223,7 @@ export function simulateDropFiles(target: HTMLElement, files: File[]): void {
       const ev = new (view as unknown as { DragEvent: typeof DragEvent }).DragEvent(it.type, {
         bubbles: true,
         cancelable: true,
-        dataTransfer: dt,
+        dataTransfer: dt
       });
       target.dispatchEvent(ev);
       continue;
@@ -252,20 +253,42 @@ export function simulatePasteFiles(target: HTMLElement, files: File[]): void {
   }
 
   try {
-    const ev = new (view as unknown as { ClipboardEvent: typeof ClipboardEvent }).ClipboardEvent('paste', {
-      bubbles: true,
-      cancelable: true,
-      clipboardData: dt,
-    } as unknown as ClipboardEventInit);
-    target.dispatchEvent(ev);
-    return;
+    const ev = new (view as unknown as { ClipboardEvent: typeof ClipboardEvent }).ClipboardEvent(
+      'paste',
+      {
+        bubbles: true,
+        cancelable: true,
+        clipboardData: dt
+      } as unknown as ClipboardEventInit
+    );
+    if (!ev.clipboardData || ev.clipboardData.files.length < files.length) {
+      try {
+        Object.defineProperty(ev, 'clipboardData', {
+          configurable: true,
+          value: dt
+        });
+      } catch {
+        // Fall through to the generic Event path when Chromium ignores the init value.
+      }
+    }
+    if (ev.clipboardData && ev.clipboardData.files.length >= files.length) {
+      target.dispatchEvent(ev);
+      return;
+    }
   } catch {
     // ignore
   }
 
   try {
     const ev = new view.Event('paste', { bubbles: true, cancelable: true });
-    (ev as unknown as { clipboardData?: DataTransfer }).clipboardData = dt;
+    try {
+      Object.defineProperty(ev, 'clipboardData', {
+        configurable: true,
+        value: dt
+      });
+    } catch {
+      (ev as unknown as { clipboardData?: DataTransfer }).clipboardData = dt;
+    }
     target.dispatchEvent(ev);
   } catch {
     // ignore
@@ -290,7 +313,7 @@ async function writeToClipboard(html: string): Promise<void> {
   const plain = htmlToPlainText(html);
   const item = new ClipboardItem({
     'text/html': new Blob([html], { type: 'text/html' }),
-    'text/plain': new Blob([plain], { type: 'text/plain' }),
+    'text/plain': new Blob([plain], { type: 'text/plain' })
   });
   await navigator.clipboard.write([item]);
 }
@@ -311,7 +334,7 @@ async function simulateHotkeyPaste(target: HTMLElement): Promise<boolean> {
     cancelable: true,
     key: 'v',
     code: 'KeyV',
-    [isMac ? 'metaKey' : 'ctrlKey']: true,
+    [isMac ? 'metaKey' : 'ctrlKey']: true
   });
   target.dispatchEvent(downEvt);
 
@@ -321,7 +344,7 @@ async function simulateHotkeyPaste(target: HTMLElement): Promise<boolean> {
     key: 'v',
     code: 'KeyV',
     charCode: 118,
-    [isMac ? 'metaKey' : 'ctrlKey']: true,
+    [isMac ? 'metaKey' : 'ctrlKey']: true
   });
   target.dispatchEvent(pressEvt);
 
@@ -330,11 +353,11 @@ async function simulateHotkeyPaste(target: HTMLElement): Promise<boolean> {
     cancelable: true,
     key: 'v',
     code: 'KeyV',
-    [isMac ? 'metaKey' : 'ctrlKey']: true,
+    [isMac ? 'metaKey' : 'ctrlKey']: true
   });
   target.dispatchEvent(upEvt);
 
-  await new Promise(r => setTimeout(r, 100));
+  await new Promise((r) => setTimeout(r, 100));
   const afterLen = (target.textContent || '').length;
   return afterLen - initialLen > Math.min(100, initialLen * 0.1);
 }

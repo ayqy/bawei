@@ -4,6 +4,7 @@ import http from 'node:http';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { marked } from 'marked';
+import { getChannelIds } from './channel-config.mjs';
 
 const MAX_LOCAL_IMAGE_BYTES = 10 * 1024 * 1024;
 
@@ -78,6 +79,43 @@ export function extractMarkdownTitle(body, attributes, markdownPath) {
   return { title, body: contentBody };
 }
 
+export function extractChannelVariants(markdownBody) {
+  const source = String(markdownBody || '');
+  const variants = {};
+  const blockPattern = /<!--\s*bawei:variant\s+([a-z0-9-]+)\s*-->([\s\S]*?)<!--\s*\/bawei:variant\s*-->/gi;
+  const defaultBody = source.replace(blockPattern, (_full, rawChannelId, variantBody) => {
+    const channelId = String(rawChannelId || '').trim();
+    if (!getChannelIds().includes(channelId)) throw new Error(`Markdown 渠道变体使用未知渠道：${channelId}`);
+    if (Object.prototype.hasOwnProperty.call(variants, channelId)) throw new Error(`Markdown 渠道变体重复：${channelId}`);
+    const normalizedBody = String(variantBody || '').trim();
+    if (!/^#\s+.+$/m.test(normalizedBody)) throw new Error(`Markdown 渠道变体必须包含 H1 标题：${channelId}`);
+    variants[channelId] = normalizedBody;
+    return '';
+  });
+
+  if (/<!--\s*(?:bawei:variant\b|\/bawei:variant\s*-->)/i.test(defaultBody)) {
+    throw new Error('Markdown 渠道变体标记不完整或嵌套非法');
+  }
+  return { defaultBody: defaultBody.trim(), variants };
+}
+
+export function validateWoshipmVariant(markdownBody) {
+  const text = String(markdownBody || '')
+    .replace(/<[^>]+>/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const requirements = [
+    ['用户问题', /用户问题|真实问题|问题场景/],
+    ['产品决策', /产品决策|设计决策|为什么这样设计/],
+    ['取舍', /取舍|权衡|没有选择/],
+    ['适用边界', /适用边界|适合谁|不适合|边界/],
+    ['可复用洞察', /可复用|洞察|启发|方法论/],
+  ];
+  const missing = requirements.filter(([, pattern]) => !pattern.test(text)).map(([label]) => label);
+  if (missing.length) throw new Error(`人人都是产品经理渠道变体缺少：${missing.join('、')}`);
+  return true;
+}
+
 function sourceUrlFromAttributes(attributes) {
   const raw = String(
     attributes.source_url || attributes.sourceUrl || attributes.source || ''
@@ -137,9 +175,10 @@ function createLocalAssetResolver({ markdownDir, origin, assets }) {
       throw new Error(`Markdown 本地图片格式不支持（支持 png/jpg/gif/webp/avif）：${assetPath}`);
     }
 
-    const key = crypto.createHash('sha256').update(assetPath).digest('hex').slice(0, 24);
+    const digest = crypto.createHash('sha256').update(fs.readFileSync(assetPath)).digest('hex');
+    const key = digest.slice(0, 24);
     const route = `/assets/${key}${ext}`;
-    assets.set(route, { path: assetPath, mimeType, size: stat.size });
+    assets.set(route, { path: assetPath, mimeType, size: stat.size, digest });
     return `${origin}${route}`;
   };
 }
@@ -152,6 +191,39 @@ function rewriteRawHtmlImages(html, resolveImageHref) {
       return `${prefix}${quote}${escapeHtml(resolved)}${quote}`;
     }
   );
+}
+
+function normalizeMarkdownForHash(markdown) {
+  return String(markdown || '')
+    .replace(/\r\n?/g, '\n')
+    .trim();
+}
+
+function imageDigestsFromHtml(contentHtml, assets) {
+  const digests = [];
+  const matches = String(contentHtml || '').matchAll(/<img\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']/gi);
+  for (const match of matches) {
+    const raw = String(match[1] || '').trim();
+    let asset = null;
+    try {
+      asset = assets.get(new URL(raw).pathname) || null;
+    } catch {
+      // Keep the remote URL identity below.
+    }
+    digests.push(asset?.digest || `url:${stripUrlSuffix(raw)}`);
+  }
+  return digests;
+}
+
+export function buildChannelContentHash({ channelId, title, markdown, imageDigests, sourceUrl }) {
+  const stable = JSON.stringify({
+    channelId: String(channelId || ''),
+    title: String(title || '').trim(),
+    markdown: normalizeMarkdownForHash(markdown),
+    imageDigests: Array.isArray(imageDigests) ? imageDigests.map((item) => String(item || '')) : [],
+    sourceUrl: String(sourceUrl || '').trim(),
+  });
+  return crypto.createHash('sha256').update(stable).digest('hex');
 }
 
 async function listenLocalServer(server) {
@@ -170,6 +242,27 @@ async function listenLocalServer(server) {
   });
 }
 
+async function closeLocalServer(server) {
+  if (!server.listening) return;
+  await new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      resolve();
+    };
+    const fallback = setTimeout(finish, 2_000);
+    fallback.unref?.();
+
+    server.close(() => {
+      clearTimeout(fallback);
+      finish();
+    });
+    server.closeIdleConnections?.();
+    server.closeAllConnections?.();
+  });
+}
+
 export async function prepareLocalMarkdown(markdownFile) {
   const markdownPath = path.resolve(String(markdownFile || '').trim());
   if (!markdownFile) throw new Error('缺少 Markdown 文件路径');
@@ -183,29 +276,18 @@ export async function prepareLocalMarkdown(markdownFile) {
   if (!markdownStat.isFile()) throw new Error(`Markdown 路径不是文件：${markdownPath}`);
 
   const rawMarkdown = fs.readFileSync(markdownPath, 'utf8');
-  const { attributes, body: bodyWithTitle } = splitMarkdownFrontMatter(rawMarkdown);
-  const { title, body } = extractMarkdownTitle(bodyWithTitle, attributes, markdownPath);
+  const { attributes, body: bodyWithVariants } = splitMarkdownFrontMatter(rawMarkdown);
+  const { defaultBody, variants } = extractChannelVariants(bodyWithVariants);
+  const { title, body } = extractMarkdownTitle(defaultBody, attributes, markdownPath);
   if (!title) throw new Error(`无法从 Markdown 提取标题：${markdownPath}`);
 
   const assets = new Map();
-  const sourceRoute = `/source/${encodeURIComponent(path.basename(markdownPath))}`;
   const server = http.createServer((request, response) => {
     let pathname = '/';
     try {
       pathname = new URL(request.url || '/', 'http://127.0.0.1').pathname;
     } catch {
       // keep default
-    }
-
-    if (pathname === sourceRoute) {
-      response.writeHead(200, {
-        'Content-Type': 'text/markdown; charset=utf-8',
-        'Content-Length': Buffer.byteLength(rawMarkdown),
-        'Cache-Control': 'no-store'
-      });
-      if (request.method === 'HEAD') response.end();
-      else response.end(rawMarkdown);
-      return;
     }
 
     const asset = assets.get(pathname);
@@ -238,38 +320,69 @@ export async function prepareLocalMarkdown(markdownFile) {
       origin,
       assets
     });
-    const renderer = new marked.Renderer();
-    renderer.image = ({ href, title: imageTitle, text }) => {
-      const src = resolveImageHref(href);
-      const titleAttr = imageTitle ? ` title="${escapeHtml(imageTitle)}"` : '';
-      return `<img src="${escapeHtml(src)}" alt="${escapeHtml(text)}"${titleAttr}>`;
+    const declaredSourceUrl = sourceUrlFromAttributes(attributes);
+    const sourceMarkdownHash = crypto.createHash('sha256').update(rawMarkdown).digest('hex');
+    const identity = `bawei-markdown:${sourceMarkdownHash}`;
+
+    const renderArticle = (channelId, selectedTitle, selectedBody) => {
+      const renderer = new marked.Renderer();
+      renderer.image = ({ href, title: imageTitle, text }) => {
+        const src = resolveImageHref(href);
+        const titleAttr = imageTitle ? ` title="${escapeHtml(imageTitle)}"` : '';
+        return `<img src="${escapeHtml(src)}" alt="${escapeHtml(text)}"${titleAttr}>`;
+      };
+
+      const rendered = marked.parse(selectedBody, { async: false, gfm: true, renderer });
+      const contentHtml = rewriteRawHtmlImages(rendered, resolveImageHref).trim();
+      if (!contentHtml) throw new Error(`Markdown 正文为空：${markdownPath} (${channelId})`);
+      const imageDigests = imageDigestsFromHtml(contentHtml, assets);
+      const contentHash = buildChannelContentHash({
+        channelId,
+        title: selectedTitle,
+        markdown: selectedBody,
+        imageDigests,
+        sourceUrl: declaredSourceUrl,
+      });
+
+      return {
+        article: {
+          title: selectedTitle,
+          contentHtml,
+          sourceUrl: declaredSourceUrl,
+        },
+        markdown: selectedBody,
+        contentHash,
+        expectedImageCount: imageDigests.length,
+        imageDigests,
+      };
     };
 
-    const rendered = marked.parse(body, { async: false, gfm: true, renderer });
-    const contentHtml = rewriteRawHtmlImages(rendered, resolveImageHref).trim();
-    if (!contentHtml) throw new Error(`Markdown 正文为空：${markdownPath}`);
-
-    const declaredSourceUrl = sourceUrlFromAttributes(attributes);
-    const sourceUrl = declaredSourceUrl || `${origin}${sourceRoute}`;
-    const contentHash = crypto.createHash('sha256').update(rawMarkdown).digest('hex');
-    const identity = `bawei-markdown:${contentHash}`;
+    const channelArticles = {};
+    for (const channelId of getChannelIds()) {
+      const variantSource = variants[channelId];
+      if (variantSource) {
+        const extracted = extractMarkdownTitle(variantSource, {}, markdownPath);
+        channelArticles[channelId] = renderArticle(channelId, extracted.title, extracted.body);
+      } else {
+        channelArticles[channelId] = renderArticle(channelId, title, body);
+      }
+    }
 
     return {
       identity,
+      sourceMarkdownHash,
       markdownPath,
       assetCount: assets.size,
       hasDurableSourceUrl: !!declaredSourceUrl,
-      article: {
-        title,
-        contentHtml,
-        sourceUrl
-      },
+      article: channelArticles.csdn.article,
+      channelArticles,
+      variants,
       close: async () => {
-        await new Promise((resolve) => server.close(() => resolve()));
+        await closeLocalServer(server);
       }
     };
   } catch (error) {
-    await new Promise((resolve) => server.close(() => resolve()));
+    await closeLocalServer(server);
     throw error;
   }
 }

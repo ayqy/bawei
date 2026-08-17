@@ -3,37 +3,50 @@ import path from 'node:path';
 import process from 'node:process';
 import http from 'node:http';
 import os from 'node:os';
+import crypto from 'node:crypto';
 import { execSync, spawn } from 'node:child_process';
 import { chromium } from 'playwright';
-import { prepareLocalMarkdown } from './local-markdown.mjs';
+import { prepareLocalMarkdown, validateWoshipmVariant } from './local-markdown.mjs';
+import { getChannelConfig, getChannelIds } from './channel-config.mjs';
+import {
+  getLedgerDecision,
+  loadPublicationLedger,
+  savePublicationLedger,
+  upsertPublicationOutcome
+} from './publication-ledger.mjs';
+import { verifyPublicationAnonymously } from './publication-verifier.mjs';
 
-const ALL_CHANNELS = [
-  'csdn',
-  'tencent-cloud-dev',
-  'cnblogs',
-  'oschina',
-  'woshipm',
-  'mowen',
-  'sspai',
-  'baijiahao',
-  'toutiao',
-  'feishu-docs',
-];
+const ALL_CHANNELS = getChannelIds();
 
 const LIVE_PUBLISH_CHANNELS_RAW = String(process.env.LIVE_PUBLISH_CHANNELS || '').trim();
-const LIVE_PUBLISH_FORCE_CHANNELS_RAW = String(process.env.LIVE_PUBLISH_FORCE_CHANNELS || '').trim();
-const LIVE_PUBLISH_REQUIRE_EXISTING_CHROME = String(process.env.LIVE_PUBLISH_REQUIRE_EXISTING_CHROME || '0') === '1';
-const LIVE_PUBLISH_PRESERVE_EXISTING_PAGES = String(process.env.LIVE_PUBLISH_PRESERVE_EXISTING_PAGES || '0') === '1';
-const LIVE_PUBLISH_ACTION_RAW = String(process.env.LIVE_PUBLISH_ACTION || 'publish').trim().toLowerCase();
+const LIVE_PUBLISH_FORCE_CHANNELS_RAW = String(
+  process.env.LIVE_PUBLISH_FORCE_CHANNELS || ''
+).trim();
+const LIVE_PUBLISH_REQUIRE_EXISTING_CHROME =
+  String(process.env.LIVE_PUBLISH_REQUIRE_EXISTING_CHROME || '1') === '1';
+const LIVE_PUBLISH_PRESERVE_EXISTING_PAGES =
+  String(process.env.LIVE_PUBLISH_PRESERVE_EXISTING_PAGES || '1') === '1';
+const LIVE_PUBLISH_ACTION_RAW = String(process.env.LIVE_PUBLISH_ACTION || 'publish')
+  .trim()
+  .toLowerCase();
 
 function parseActiveChannels(raw) {
   const text = String(raw || '').trim();
   if (!text) return [...ALL_CHANNELS];
 
-  const uniq = Array.from(new Set(text.split(',').map((s) => s.trim()).filter(Boolean)));
+  const uniq = Array.from(
+    new Set(
+      text
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    )
+  );
   const filtered = uniq.filter((id) => ALL_CHANNELS.includes(id));
   if (!filtered.length) {
-    throw new Error(`LIVE_PUBLISH_CHANNELS 解析为空（raw=${text || 'empty'}），可用渠道：${ALL_CHANNELS.join(', ')}`);
+    throw new Error(
+      `LIVE_PUBLISH_CHANNELS 解析为空（raw=${text || 'empty'}），可用渠道：${ALL_CHANNELS.join(', ')}`
+    );
   }
   return filtered;
 }
@@ -41,7 +54,14 @@ function parseActiveChannels(raw) {
 function parseOptionalChannels(raw) {
   const text = String(raw || '').trim();
   if (!text) return [];
-  const uniq = Array.from(new Set(text.split(',').map((s) => s.trim()).filter(Boolean)));
+  const uniq = Array.from(
+    new Set(
+      text
+        .split(',')
+        .map((s) => s.trim())
+        .filter(Boolean)
+    )
+  );
   return uniq.filter((id) => ALL_CHANNELS.includes(id));
 }
 
@@ -53,59 +73,52 @@ function parseLivePublishAction(raw) {
 const ACTIVE_CHANNELS = parseActiveChannels(LIVE_PUBLISH_CHANNELS_RAW);
 const FORCE_RERUN_CHANNELS = parseOptionalChannels(LIVE_PUBLISH_FORCE_CHANNELS_RAW);
 const LIVE_PUBLISH_ACTION = parseLivePublishAction(LIVE_PUBLISH_ACTION_RAW);
-const OSCHINA_DIRECT_WRITE_ENTRY_URL = 'https://my.oschina.net/u/1/blog/write';
 const LIVE_ACTION_LABEL = LIVE_PUBLISH_ACTION === 'draft' ? 'draft' : 'publish';
 const LIVE_ACTION_TEXT = LIVE_PUBLISH_ACTION === 'draft' ? '草稿' : '发布';
 const LIVE_ACTION_SUCCESS_TEXT = LIVE_PUBLISH_ACTION === 'draft' ? '草稿保存成功' : '发布成功';
 
-const CHANNEL_ENTRY_URLS = {
-  csdn: 'https://mp.csdn.net/mp_blog/creation/editor',
-  'tencent-cloud-dev': 'https://cloud.tencent.com/developer/article/write',
-  cnblogs: 'https://i.cnblogs.com/posts/edit',
-  oschina: OSCHINA_DIRECT_WRITE_ENTRY_URL,
-  woshipm: 'https://www.woshipm.com/writing',
-  mowen: 'https://note.mowen.cn/editor',
-  sspai: 'https://sspai.com/my',
-  baijiahao: 'https://baijiahao.baidu.com/builder/rc/edit?type=news&is_from_cms=1',
-  toutiao: 'https://mp.toutiao.com/profile_v4/graphic/publish',
-  'feishu-docs': 'https://wuxinxuexi.feishu.cn/drive/folder/PyWAfSFwrlMgiydvlHectMn2nSd',
-};
+const CHANNEL_ENTRY_URLS = Object.fromEntries(
+  ALL_CHANNELS.map((channelId) => [channelId, getChannelConfig(channelId).entryUrl])
+);
 
 // 避免登录审计打开“写作页”触发站点的“编辑窗口已打开”锁；审计只需要判断登录态即可。
-const LOGIN_AUDIT_ENTRY_URLS = {
-  sspai: 'https://sspai.com/my',
-};
+const LOGIN_AUDIT_ENTRY_URLS = Object.fromEntries(
+  ALL_CHANNELS.map((channelId) => [channelId, getChannelConfig(channelId).loginAuditUrl])
+);
 
-const LOGIN_URL_RULES = {
-  csdn: [/passport\.csdn\.net\/login/i, /\/login/i],
-  'tencent-cloud-dev': [/cloud\.tencent\.com\/login/i, /\/account\/login/i, /\/login/i],
-  cnblogs: [/account\.cnblogs\.com\/signin/i, /\/signin/i, /\/login/i],
-  oschina: [/oschina\.net\/home\/login/i, /\/login/i],
-  woshipm: [/passport/i, /\/login/i, /\/signin/i],
-  mowen: [/\/login/i, /\/signin/i],
-  sspai: [/\/login/i, /\/signin/i],
-  baijiahao: [/passport/i, /\/login/i],
-  toutiao: [/\/auth\/page\/login/i, /\/login/i],
-  'feishu-docs': [/passport\.feishu\.cn/i, /\/login/i, /\/signin/i],
-};
+const LOGIN_URL_RULES = Object.fromEntries(
+  ALL_CHANNELS.map((channelId) => [
+    channelId,
+    getChannelConfig(channelId).loginUrlPatterns.map((pattern) => new RegExp(pattern, 'i'))
+  ])
+);
 
 const LOGIN_AUDIT_STRICT_TEXT_RULES = {
-  oschina: /请登录|未登录|登录后继续|登录即可|请先登录|扫码登录|手机号登录|登录|注册|sign in|log in/i,
-  woshipm: /请登录|未登录|登录后继续|登录即可|请先登录|扫码登录|手机号登录|注册\s*\|\s*登录|立即登录|点我注册|登录人人都是产品经理即可获得以下权益|sign in|log in/i,
+  oschina:
+    /请登录|未登录|登录后继续|登录即可|请先登录|扫码登录|手机号登录|登录|注册|sign in|log in/i,
+  woshipm:
+    /请登录|未登录|登录后继续|登录即可|请先登录|扫码登录|手机号登录|注册\s*\|\s*登录|立即登录|点我注册|登录人人都是产品经理即可获得以下权益|sign in|log in/i
 };
 
 const LOGIN_AUDIT_LOGGED_HINT_RULES = {
   oschina: /写博客|我的博客|博客广场|动弹|消息|设置|个人空间|退出登录|我的主页/i,
-  woshipm: /发布文章|我的文章|草稿箱|账号设置|退出登录|个人中心|创作中心/i,
+  woshipm: /发布文章|我的文章|草稿箱|账号设置|退出登录|个人中心|创作中心/i
 };
 
-const PER_CHANNEL_TIMEOUT_MS = Number(process.env.PER_CHANNEL_TIMEOUT_MS || (ACTIVE_CHANNELS.includes('sspai') ? 45 * 60_000 : 10 * 60_000));
+const PER_CHANNEL_TIMEOUT_MS = Number(
+  process.env.PER_CHANNEL_TIMEOUT_MS ||
+    (ACTIVE_CHANNELS.includes('sspai') ? 45 * 60_000 : 10 * 60_000)
+);
 const NO_PROGRESS_TIMEOUT_MS_BASE = Number(process.env.NO_PROGRESS_TIMEOUT_MS || 180_000);
-const NO_PROGRESS_TIMEOUT_MS = ACTIVE_CHANNELS.includes('sspai') ? Math.max(NO_PROGRESS_TIMEOUT_MS_BASE, 15 * 60_000) : NO_PROGRESS_TIMEOUT_MS_BASE;
+const NO_PROGRESS_TIMEOUT_MS = ACTIVE_CHANNELS.includes('sspai')
+  ? Math.max(NO_PROGRESS_TIMEOUT_MS_BASE, 15 * 60_000)
+  : NO_PROGRESS_TIMEOUT_MS_BASE;
 const LOOP_INTERVAL_MS = 3000;
 const CHROME_CDP_PORT = Number(process.env.CDP_PORT || 52607);
 const DEFAULT_ARTICLE_URL = 'https://mp.weixin.qq.com/s/3sSae4T0IeSsfM3dm5fByg';
-const STORAGE_STATE_PATH = String(process.env.STORAGE_STATE_PATH || 'artifacts/live-publish/mcp-storageState.json').trim();
+const STORAGE_STATE_PATH = String(
+  process.env.STORAGE_STATE_PATH || 'artifacts/live-publish/mcp-storageState.json'
+).trim();
 const KEEP_BROWSER_OPEN = String(process.env.KEEP_BROWSER_OPEN || '1') !== '0';
 const WAIT_FOR_LOGIN = String(process.env.WAIT_FOR_LOGIN || '1') !== '0';
 const LOGIN_WAIT_TIMEOUT_MS = Number(process.env.LOGIN_WAIT_TIMEOUT_MS || 10 * 60_000);
@@ -115,7 +128,8 @@ const BOOTSTRAP_PROFILE_REFRESH = String(process.env.BOOTSTRAP_PROFILE_REFRESH |
 const SANITIZE_PROFILE = String(process.env.SANITIZE_PROFILE || '1') !== '0';
 const PROFILE_BOOTSTRAP_MARK = '.bootstrap-from-chrome.done';
 const BOOTSTRAP_SOURCE_DIR = path.resolve(
-  process.env.SOURCE_CHROME_USER_DATA_DIR || path.join(os.homedir(), 'Library/Application Support/Google/Chrome')
+  process.env.SOURCE_CHROME_USER_DATA_DIR ||
+    path.join(os.homedir(), 'Library/Application Support/Google/Chrome')
 );
 
 function safeJsonStringify(value) {
@@ -143,15 +157,29 @@ function canonicalUrlKey(raw) {
 
 const LOGIN_AUDIT_EXISTING_PAGE_RULES = {
   csdn: [/^https:\/\/mp\.csdn\.net\/mp_blog\/creation\/editor/i],
-  'tencent-cloud-dev': [/^https:\/\/cloud\.tencent\.com\/developer\/article\/write/i, /^https:\/\/cloud\.tencent\.com\/developer\/creator\/article/i],
+  'tencent-cloud-dev': [
+    /^https:\/\/cloud\.tencent\.com\/developer\/article\/write/i,
+    /^https:\/\/cloud\.tencent\.com\/developer\/creator\/article/i
+  ],
   cnblogs: [/^https:\/\/i\.cnblogs\.com\/posts\/edit/i],
-  oschina: [/^https:\/\/(?:www|my)\.oschina\.net\/.*\/blog\/write/i, /^https:\/\/www\.oschina\.net\/blog\/write/i],
+  oschina: [
+    /^https:\/\/my\.oschina\.net\/u\/[^/]+\/blog\/(?:ai-)?write/i,
+    /^https:\/\/(?:www|my)\.oschina\.net\/.*\/blog\/write/i,
+    /^https:\/\/www\.oschina\.net\/blog\/write/i
+  ],
   woshipm: [/^https:\/\/www\.woshipm\.com\/writing/i],
   mowen: [/^https:\/\/note\.mowen\.cn\/editor/i],
-  sspai: [/^https:\/\/sspai\.com\/write/i],
+  sspai: [
+    /^https:\/\/sspai\.com\/write/i,
+    /^https:\/\/sspai\.com\/my(?:[/?#]|$)/i,
+    /^https:\/\/sspai\.com\/whoops(?:[/?#]|$)/i
+  ],
   baijiahao: [/^https:\/\/baijiahao\.baidu\.com\/builder\/rc\/edit/i],
   toutiao: [/^https:\/\/mp\.toutiao\.com\/profile_v4\/graphic\/publish/i],
-  'feishu-docs': [/^https:\/\/wuxinxuexi\.feishu\.cn\/docx\//i, /^https:\/\/wuxinxuexi\.feishu\.cn\/drive\/folder\//i],
+  'feishu-docs': [
+    /^https:\/\/wuxinxuexi\.feishu\.cn\/docx\//i,
+    /^https:\/\/wuxinxuexi\.feishu\.cn\/drive\/folder\//i
+  ]
 };
 
 function findExistingChannelAuditPage(context, channelId) {
@@ -178,7 +206,9 @@ function dumpArticlePayloadToArtifacts(articlePayload, articleUrl) {
     const html = String(articlePayload.contentHtml || '');
     const tokenImages = Array.isArray(articlePayload.contentTokens)
       ? articlePayload.contentTokens
-          .filter((t) => t && typeof t === 'object' && t.kind === 'image' && typeof t.src === 'string')
+          .filter(
+            (t) => t && typeof t === 'object' && t.kind === 'image' && typeof t.src === 'string'
+          )
           .map((t) => String(t.src || '').trim())
           .filter(Boolean)
       : [];
@@ -203,14 +233,19 @@ function dumpArticlePayloadToArtifacts(articlePayload, articleUrl) {
       htmlImages: htmlImages.slice(0, 50),
       contentTokensPresent: Array.isArray(articlePayload.contentTokens),
       contentHtml: html,
-      contentTokens: Array.isArray(articlePayload.contentTokens) ? articlePayload.contentTokens : undefined,
+      contentTokens: Array.isArray(articlePayload.contentTokens)
+        ? articlePayload.contentTokens
+        : undefined
     };
 
     const outPath = path.join(outDir, `article-payload-${Date.now()}.json`);
     fs.writeFileSync(outPath, `${JSON.stringify(dump, null, 2)}\n`, 'utf8');
     console.log('[main] article payload dumped ->', outPath);
   } catch (error) {
-    console.log('[main] article payload dump failed:', error instanceof Error ? error.message : String(error));
+    console.log(
+      '[main] article payload dump failed:',
+      error instanceof Error ? error.message : String(error)
+    );
   }
 }
 
@@ -263,8 +298,11 @@ async function withTimeout(promise, timeoutMs, label) {
     return await Promise.race([
       promise,
       new Promise((_, reject) => {
-        timer = setTimeout(() => reject(new Error(`${label} timeout after ${timeoutMs}ms`)), timeoutMs);
-      }),
+        timer = setTimeout(
+          () => reject(new Error(`${label} timeout after ${timeoutMs}ms`)),
+          timeoutMs
+        );
+      })
     ]);
   } finally {
     if (timer) clearTimeout(timer);
@@ -287,10 +325,18 @@ function installNetworkLogger(context, label) {
           'pub-sdn-003.mowen.cn',
           'up.qiniu.com',
           'upload.qiniu.com',
+          'upload.qiniup.com'
         ]
       : label === 'tencent-cloud-dev'
         ? ['cloud.tencent.com', 'developer-private-1258344699.cos.ap-guangzhou.myqcloud.com']
-      : ['sspai.com', 'cdnfile.sspai.com', 'cdn-static.sspai.com', 'up.qiniu.com', 'upload.qiniu.com'];
+        : [
+            'sspai.com',
+            'cdnfile.sspai.com',
+            'cdn-static.sspai.com',
+            'up.qiniu.com',
+            'upload.qiniu.com',
+            'upload.qiniup.com'
+          ];
   const logPath = abs(`artifacts/live-publish/network-${label}-${Date.now()}.ndjson`);
   try {
     fs.mkdirSync(path.dirname(logPath), { recursive: true });
@@ -305,8 +351,18 @@ function installNetworkLogger(context, label) {
       if (label === 'mowen') {
         if (wantDomains.includes(u.hostname)) return true;
         if (u.hostname === 'mowen.cn' || u.hostname.endsWith('.mowen.cn')) return true;
-        if (u.hostname.endsWith('.qiniu.com') || u.hostname === 'up.qiniu.com' || u.hostname === 'upload.qiniu.com') return true;
-        if (u.hostname.endsWith('.aliyuncs.com') || u.hostname.endsWith('.myqcloud.com') || u.hostname.endsWith('.cos.ap-shanghai.myqcloud.com')) {
+        if (
+          u.hostname.endsWith('.qiniu.com') ||
+          u.hostname === 'up.qiniu.com' ||
+          u.hostname === 'upload.qiniu.com' ||
+          u.hostname === 'upload.qiniup.com'
+        )
+          return true;
+        if (
+          u.hostname.endsWith('.aliyuncs.com') ||
+          u.hostname.endsWith('.myqcloud.com') ||
+          u.hostname.endsWith('.cos.ap-shanghai.myqcloud.com')
+        ) {
           return true;
         }
         return false;
@@ -342,7 +398,13 @@ function installNetworkLogger(context, label) {
         const key = String(k || '').toLowerCase();
         if (!key) continue;
         if (key === 'cookie' || key === 'authorization' || key === 'proxy-authorization') continue;
-        if (key === 'user-agent' || key === 'referer' || key === 'origin' || key === 'content-type' || key.startsWith('x-')) {
+        if (
+          key === 'user-agent' ||
+          key === 'referer' ||
+          key === 'origin' ||
+          key === 'content-type' ||
+          key.startsWith('x-')
+        ) {
           out[key] = String(v || '').slice(0, 1200);
         }
       }
@@ -372,7 +434,7 @@ function installNetworkLogger(context, label) {
             url,
             method: req.method(),
             failure: req.failure() || null,
-            page: page.url(),
+            page: page.url()
           });
         } catch {
           // ignore
@@ -396,7 +458,11 @@ function installNetworkLogger(context, label) {
             try {
               const u = new URL(url);
               host = u.hostname;
-              isQiniu = host.endsWith('.qiniu.com') || host === 'up.qiniu.com' || host === 'upload.qiniu.com';
+              isQiniu =
+                host.endsWith('.qiniu.com') ||
+                host === 'up.qiniu.com' ||
+                host === 'upload.qiniu.com' ||
+                host === 'upload.qiniup.com';
             } catch {
               // ignore
             }
@@ -434,7 +500,12 @@ function installNetworkLogger(context, label) {
                 if (!raw) return [];
                 return raw
                   .split(';')
-                  .map((p) => String(p || '').trim().split('=')[0])
+                  .map(
+                    (p) =>
+                      String(p || '')
+                        .trim()
+                        .split('=')[0]
+                  )
                   .filter(Boolean)
                   .slice(0, 80);
               } catch {
@@ -453,7 +524,7 @@ function installNetworkLogger(context, label) {
               postDataSize,
               postDataSnippet,
               headers: pickHeaders(headers),
-              cookieNames,
+              cookieNames
             });
           } catch {
             // ignore
@@ -485,7 +556,8 @@ function installNetworkLogger(context, label) {
             const forceText = label === 'mowen' && status !== 200;
             if (forceText || isText || status >= 400) {
               const text = await res.text().catch(() => '');
-              const limit = label === 'mowen' && url.includes('/api/file/v1/upload/prepare') ? 12_000 : 1600;
+              const limit =
+                label === 'mowen' && url.includes('/api/file/v1/upload/prepare') ? 12_000 : 1600;
               bodySnippet = String(text || '').slice(0, limit);
             }
           } catch {
@@ -499,7 +571,7 @@ function installNetworkLogger(context, label) {
             status,
             method: res.request().method(),
             page: page.url(),
-            bodySnippet,
+            bodySnippet
           });
         } catch {
           // ignore
@@ -527,11 +599,26 @@ function installNetworkLogger(context, label) {
 function forceBypassProxyForLocalCdp() {
   const prevNoProxy = String(process.env.NO_PROXY || process.env.no_proxy || '');
   const required = ['127.0.0.1', 'localhost'];
-  const nextNoProxy = Array.from(new Set(prevNoProxy.split(',').concat(required).map((s) => s.trim()).filter(Boolean))).join(',');
+  const nextNoProxy = Array.from(
+    new Set(
+      prevNoProxy
+        .split(',')
+        .concat(required)
+        .map((s) => s.trim())
+        .filter(Boolean)
+    )
+  ).join(',');
   process.env.NO_PROXY = nextNoProxy;
   process.env.no_proxy = nextNoProxy;
 
-  for (const key of ['HTTP_PROXY', 'http_proxy', 'HTTPS_PROXY', 'https_proxy', 'ALL_PROXY', 'all_proxy']) {
+  for (const key of [
+    'HTTP_PROXY',
+    'http_proxy',
+    'HTTPS_PROXY',
+    'https_proxy',
+    'ALL_PROXY',
+    'all_proxy'
+  ]) {
     if (process.env[key]) {
       delete process.env[key];
     }
@@ -560,15 +647,23 @@ function resolveCftBinary() {
   for (const dirName of chromiumDirs) {
     const base = path.join(cacheRoot, dirName);
     const candidates = [
-      path.join(base, 'chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'),
-      path.join(base, 'chrome-mac/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'),
+      path.join(
+        base,
+        'chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'
+      ),
+      path.join(
+        base,
+        'chrome-mac/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'
+      )
     ];
     for (const candidate of candidates) {
       if (fs.existsSync(candidate)) return candidate;
     }
   }
 
-  throw new Error('未找到 Chrome for Testing 可执行文件，请先执行 `npx playwright install chromium`');
+  throw new Error(
+    '未找到 Chrome for Testing 可执行文件，请先执行 `npx playwright install chromium`'
+  );
 }
 
 function cleanChromeSingletonLocks(userDataDir) {
@@ -600,10 +695,12 @@ function profileCopyFilter(src, sourceRoot) {
     'Default/Shared Storage',
     'Default/WebStorage',
     'Default/Service Worker/Database',
-    'Default/Service Worker/ScriptCache',
+    'Default/Service Worker/ScriptCache'
   ];
 
-  if (allowPrefixes.some((prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`))) {
+  if (
+    allowPrefixes.some((prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`))
+  ) {
     return true;
   }
 
@@ -611,7 +708,7 @@ function profileCopyFilter(src, sourceRoot) {
     'Default/Web Data',
     'Default/Web Data-journal',
     'Default/Login Data',
-    'Default/Login Data-journal',
+    'Default/Login Data-journal'
   ]);
 
   return allowFiles.has(normalized);
@@ -635,7 +732,13 @@ function sanitizeProfileStartupState(userDataDir) {
     }
   }
 
-  for (const dir of ['Extensions', 'Extension State', 'Extension Scripts', 'Extension Rules', 'Extension Cookies']) {
+  for (const dir of [
+    'Extensions',
+    'Extension State',
+    'Extension Scripts',
+    'Extension Rules',
+    'Extension Cookies'
+  ]) {
     try {
       fs.rmSync(path.join(defaultDir, dir), { recursive: true, force: true });
     } catch {
@@ -681,14 +784,16 @@ function maybeBootstrapProfileFromChrome(userDataDir) {
     return;
   }
   fs.mkdirSync(userDataDir, { recursive: true });
-  console.log(`[profile-bootstrap] ${firstSync ? '首次引导' : '刷新'}登录态：${BOOTSTRAP_SOURCE_DIR} -> ${userDataDir}`);
+  console.log(
+    `[profile-bootstrap] ${firstSync ? '首次引导' : '刷新'}登录态：${BOOTSTRAP_SOURCE_DIR} -> ${userDataDir}`
+  );
 
   fs.cpSync(BOOTSTRAP_SOURCE_DIR, userDataDir, {
     recursive: true,
     force: true,
     errorOnExist: false,
     dereference: true,
-    filter: (src) => profileCopyFilter(src, BOOTSTRAP_SOURCE_DIR),
+    filter: (src) => profileCopyFilter(src, BOOTSTRAP_SOURCE_DIR)
   });
 
   cleanChromeSingletonLocks(userDataDir);
@@ -703,18 +808,41 @@ function normalizeBadge(badge) {
   const text = raw.toLowerCase();
 
   if (text === 'success' || text.includes('成功')) return 'success';
+  if (
+    text === 'pending_review' ||
+    text === 'pending-review' ||
+    text.includes('审核中') ||
+    text.includes('待审核')
+  )
+    return 'pending_review';
+  if (
+    text === 'rejected' ||
+    text.includes('退回') ||
+    text.includes('未通过') ||
+    text.includes('拒绝')
+  )
+    return 'rejected';
   if (text === 'running' || text.includes('进行中')) return 'running';
-  if (text === 'waiting_user' || text === 'waiting' || text.includes('等待处理')) return 'waiting_user';
-  if (text === 'not_logged_in' || text === 'not-logged-in' || text.includes('未登录')) return 'not_logged_in';
+  if (text === 'waiting_user' || text === 'waiting' || text.includes('等待处理'))
+    return 'waiting_user';
+  if (text === 'not_logged_in' || text === 'not-logged-in' || text.includes('未登录'))
+    return 'not_logged_in';
   if (text === 'failed' || text.includes('失败')) return 'failed';
-  if (text === 'not_started' || text === 'not-started' || text === 'pending' || text.includes('未开始')) return 'not_started';
+  if (
+    text === 'not_started' ||
+    text === 'not-started' ||
+    text === 'pending' ||
+    text.includes('未开始')
+  )
+    return 'not_started';
 
   return 'unknown';
 }
 
 function createProgress(articleUrl) {
   const channels = {};
-  for (const id of ALL_CHANNELS) channels[id] = { status: 'pending', notes: '', updatedAt: nowIso(), attempts: 0 };
+  for (const id of ALL_CHANNELS)
+    channels[id] = { status: 'pending', notes: '', updatedAt: nowIso(), attempts: 0 };
   return { updatedAt: nowIso(), articleUrl, channels };
 }
 
@@ -722,13 +850,16 @@ function loadProgress(filePath, articleUrl) {
   try {
     if (!fs.existsSync(filePath)) return createProgress(articleUrl);
     const parsed = JSON.parse(fs.readFileSync(filePath, 'utf8'));
-    if (!parsed || typeof parsed !== 'object' || !parsed.channels) return createProgress(articleUrl);
+    if (!parsed || typeof parsed !== 'object' || !parsed.channels)
+      return createProgress(articleUrl);
     const previousArticleKey = canonicalUrlKey(parsed.articleUrl);
     const nextArticleKey = canonicalUrlKey(articleUrl);
-    const articleChanged = !!previousArticleKey && !!nextArticleKey && previousArticleKey !== nextArticleKey;
+    const articleChanged =
+      !!previousArticleKey && !!nextArticleKey && previousArticleKey !== nextArticleKey;
     parsed.articleUrl = articleUrl;
     for (const id of ALL_CHANNELS) {
-      if (!parsed.channels[id]) parsed.channels[id] = { status: 'pending', notes: '', updatedAt: nowIso(), attempts: 0 };
+      if (!parsed.channels[id])
+        parsed.channels[id] = { status: 'pending', notes: '', updatedAt: nowIso(), attempts: 0 };
       if (parsed.channels[id].attempts == null) parsed.channels[id].attempts = 0;
       if (parsed.channels[id].updatedAt == null) parsed.channels[id].updatedAt = nowIso();
       if (parsed.channels[id].status === 'running') parsed.channels[id].status = 'pending';
@@ -740,7 +871,7 @@ function loadProgress(filePath, articleUrl) {
           status: 'pending',
           notes: `切换文章后自动重置：${articleUrl}`,
           updatedAt: nowIso(),
-          attempts: 0,
+          attempts: 0
         };
       }
     }
@@ -749,7 +880,7 @@ function loadProgress(filePath, articleUrl) {
         ...parsed.channels[id],
         status: 'pending',
         notes: '按 LIVE_PUBLISH_FORCE_CHANNELS 强制重跑',
-        updatedAt: nowIso(),
+        updatedAt: nowIso()
       };
     }
     return parsed;
@@ -765,7 +896,8 @@ function saveProgress(filePath, progress) {
 
 function createLoginAudit(articleUrl) {
   const channels = {};
-  for (const id of ALL_CHANNELS) channels[id] = { status: 'unknown', reason: '', url: '', updatedAt: nowIso() };
+  for (const id of ALL_CHANNELS)
+    channels[id] = { status: 'unknown', reason: '', url: '', updatedAt: nowIso() };
   return { updatedAt: nowIso(), articleUrl, channels };
 }
 
@@ -775,7 +907,12 @@ function saveLoginAudit(filePath, audit) {
 }
 
 function updateChannelProgress(progress, channelId, status, notes) {
-  const row = progress.channels[channelId] || { status: 'pending', notes: '', attempts: 0, updatedAt: nowIso() };
+  const row = progress.channels[channelId] || {
+    status: 'pending',
+    notes: '',
+    attempts: 0,
+    updatedAt: nowIso()
+  };
   row.status = status;
   row.notes = String(notes || '').trim();
   row.updatedAt = nowIso();
@@ -783,19 +920,78 @@ function updateChannelProgress(progress, channelId, status, notes) {
 }
 
 function incAttempt(progress, channelId) {
-  const row = progress.channels[channelId] || { status: 'pending', notes: '', attempts: 0, updatedAt: nowIso() };
+  const row = progress.channels[channelId] || {
+    status: 'pending',
+    notes: '',
+    attempts: 0,
+    updatedAt: nowIso()
+  };
   row.attempts = Number(row.attempts || 0) + 1;
   row.updatedAt = nowIso();
   progress.channels[channelId] = row;
 }
 
+function summarizeRunProgress(progress) {
+  const groups = {
+    success: [],
+    pending_review: [],
+    rejected: [],
+    waiting_user: [],
+    failed: [],
+    not_logged_in: [],
+    skipped_duplicate: []
+  };
+  for (const channelId of ACTIVE_CHANNELS) {
+    const row = progress.channels[channelId] || {};
+    const notes = String(row.notes || '');
+    if (row.status === 'success') {
+      if (notes.includes('防重跳过')) groups.skipped_duplicate.push(channelId);
+      else groups.success.push(channelId);
+    } else if (row.status === 'pending_review') groups.pending_review.push(channelId);
+    else if (row.status === 'rejected') groups.rejected.push(channelId);
+    else if (row.status === 'waiting_user') groups.waiting_user.push(channelId);
+    else if (row.status === 'not_logged_in') groups.not_logged_in.push(channelId);
+    else groups.failed.push(channelId);
+  }
+  return groups;
+}
+
+function printRunSummary(progress) {
+  const groups = summarizeRunProgress(progress);
+  const publicSuccessCount = groups.success.length + groups.skipped_duplicate.length;
+  console.log(`\n===== publication-summary =====`);
+  console.log(
+    `公开成功 ${publicSuccessCount}/${ACTIVE_CHANNELS.length}: ${[...groups.success, ...groups.skipped_duplicate].join(', ') || '-'}`
+  );
+  console.log(`待审 ${groups.pending_review.length}: ${groups.pending_review.join(', ') || '-'}`);
+  console.log(`退回 ${groups.rejected.length}: ${groups.rejected.join(', ') || '-'}`);
+  console.log(`待人工验证 ${groups.waiting_user.length}: ${groups.waiting_user.join(', ') || '-'}`);
+  console.log(`失败 ${groups.failed.length}: ${groups.failed.join(', ') || '-'}`);
+  console.log(`未登录 ${groups.not_logged_in.length}: ${groups.not_logged_in.join(', ') || '-'}`);
+  console.log(
+    `防重跳过 ${groups.skipped_duplicate.length}: ${groups.skipped_duplicate.join(', ') || '-'}`
+  );
+  return { ...groups, publicSuccessCount };
+}
+
 function containsImageFail(text) {
   const t = String(text || '');
-  return t.includes('图片自动上传失败') || t.includes('请手动上传') || t.includes('image insert failed') || t.includes('fetch image failed');
+  return (
+    t.includes('图片自动上传失败') ||
+    t.includes('请手动上传') ||
+    t.includes('image insert failed') ||
+    t.includes('fetch image failed')
+  );
 }
 
 function isBlockingRuntimeResult(status) {
-  return status === 'not_logged_in' || status === 'failed' || status === 'waiting_user' || status === 'timeout' || status === 'stalled';
+  return (
+    status === 'not_logged_in' ||
+    status === 'failed' ||
+    status === 'waiting_user' ||
+    status === 'timeout' ||
+    status === 'stalled'
+  );
 }
 
 function normalizeSameSite(value) {
@@ -833,7 +1029,7 @@ async function maybeImportStorageState(context) {
         domain,
         path: pathValue,
         httpOnly: !!cookie?.httpOnly,
-        secure: !!cookie?.secure,
+        secure: !!cookie?.secure
       };
 
       const expires = Number(cookie?.expires);
@@ -851,7 +1047,9 @@ async function maybeImportStorageState(context) {
       await context.addCookies(cookies);
       console.log(`[storage-state] cookies imported: ${cookies.length}`);
     } catch (error) {
-      console.log(`[storage-state] cookies import failed: ${error instanceof Error ? error.message : String(error)}`);
+      console.log(
+        `[storage-state] cookies import failed: ${error instanceof Error ? error.message : String(error)}`
+      );
     }
   }
 
@@ -866,7 +1064,7 @@ async function maybeImportStorageState(context) {
     'baijiahao.baidu.com',
     'mp.toutiao.com',
     'wuxinxuexi.feishu.cn',
-    'accounts.feishu.cn',
+    'accounts.feishu.cn'
   ];
 
   const origins = Array.isArray(parsed?.origins) ? parsed.origins : [];
@@ -994,7 +1192,10 @@ async function tryOpenBlankPage(port) {
 
 async function tryCloseTarget(port, id) {
   if (!id) return false;
-  await httpRequestText({ method: 'GET', url: `http://127.0.0.1:${port}/json/close/${encodeURIComponent(String(id))}` });
+  await httpRequestText({
+    method: 'GET',
+    url: `http://127.0.0.1:${port}/json/close/${encodeURIComponent(String(id))}`
+  });
   return true;
 }
 
@@ -1018,12 +1219,19 @@ async function cleanupChromePagesKeepBlank(port) {
 }
 
 function isExtensionServiceWorkerTarget(target) {
-  return String(target?.type || '') === 'service_worker' && String(target?.url || '').startsWith('chrome-extension://');
+  return (
+    String(target?.type || '') === 'service_worker' &&
+    String(target?.url || '').startsWith('chrome-extension://')
+  );
 }
 
 function isLikelyBaweiWorkerUrl(url) {
   const s = String(url || '');
-  return s.includes('/src/background.js') || s.endsWith('/background.js') || s.endsWith('/service_worker.js');
+  return (
+    s.includes('/src/background.js') ||
+    s.endsWith('/background.js') ||
+    s.endsWith('/service_worker.js')
+  );
 }
 
 function hasBaweiExtensionServiceWorker(targets) {
@@ -1048,7 +1256,9 @@ async function ensureChromeAndGetWs(params) {
     const ready = await waitBaweiExtensionReady(port, 3000);
     if (requireExisting) {
       if (!ready) {
-        console.log(`[cdp] 警告：端口 ${port} 未检测到扩展 service_worker，继续复用并在 bridge 阶段拉起`);
+        console.log(
+          `[cdp] 警告：端口 ${port} 未检测到扩展 service_worker，继续复用并在 bridge 阶段拉起`
+        );
       }
       console.log(`[cdp] 复用现有实例（port=${port}）`);
       return { ws: existingWs, chromeProcess: null, reused: true };
@@ -1059,7 +1269,9 @@ async function ensureChromeAndGetWs(params) {
     }
     console.log(`[cdp] ${forceRestart ? '强制重启' : '准备重启'}：port=${port}`);
   } else if (requireExisting) {
-    throw new Error(`未检测到可复用的 Chrome CDP 实例（port=${port}），请先执行：npm run live:open`);
+    throw new Error(
+      `未检测到可复用的 Chrome CDP 实例（port=${port}），请先执行：npm run live:open`
+    );
   }
 
   killPortListeners(port);
@@ -1081,11 +1293,17 @@ async function ensureChromeAndGetWs(params) {
     '--no-first-run',
     '--no-default-browser-check',
     '--no-sandbox',
-    'about:blank',
+    'about:blank'
   ];
 
   const keepOpen = KEEP_BROWSER_OPEN;
-  const chromeProcess = spawn(cftBinary, args, keepOpen ? { detached: true, stdio: 'ignore' } : { detached: false, stdio: ['ignore', 'pipe', 'pipe'] });
+  const chromeProcess = spawn(
+    cftBinary,
+    args,
+    keepOpen
+      ? { detached: true, stdio: 'ignore' }
+      : { detached: false, stdio: ['ignore', 'pipe', 'pipe'] }
+  );
   if (keepOpen) {
     try {
       chromeProcess.unref();
@@ -1103,7 +1321,8 @@ async function ensureChromeAndGetWs(params) {
     chromeProcess.stderr?.on('data', (buf) => {
       const line = String(buf || '').trim();
       if (!line) return;
-      if (line.includes('DevTools listening on') || line.includes('Network service crashed')) return;
+      if (line.includes('DevTools listening on') || line.includes('Network service crashed'))
+        return;
 
       const noisy = [
         '_TIPropertyValueIsValid',
@@ -1113,7 +1332,7 @@ async function ensureChromeAndGetWs(params) {
         'socket_manager.cc',
         'google_apis/gcm',
         'SetApplicationIsDaemon',
-        'q-signature=',
+        'q-signature='
       ];
       if (noisy.some((k) => line.includes(k))) return;
 
@@ -1131,7 +1350,9 @@ async function ensureChromeAndGetWs(params) {
     if (ws) {
       const ready = await waitBaweiExtensionReady(port, 30_000);
       if (!ready) {
-        console.log('[cdp] Chrome 已启动，但暂未检测到扩展 service_worker，后续在 bridge 阶段继续拉起');
+        console.log(
+          '[cdp] Chrome 已启动，但暂未检测到扩展 service_worker，后续在 bridge 阶段继续拉起'
+        );
       }
       return { ws, chromeProcess, reused: false };
     }
@@ -1142,6 +1363,138 @@ async function ensureChromeAndGetWs(params) {
     throw new Error(`Chrome for Testing 启动后提前退出（port=${port}）`);
   }
   throw new Error(`无法连接 Chrome DevTools（port=${port}）`);
+}
+
+async function refreshBaweiExtensionInExistingChrome(context, distDir) {
+  const expectedManifest = JSON.parse(
+    fs.readFileSync(path.join(path.resolve(distDir), 'manifest.json'), 'utf8')
+  );
+  const expectedVersion = String(expectedManifest?.version || '').trim();
+  if (!expectedVersion) throw new Error('dist/manifest.json 缺少 version，无法校验扩展刷新');
+
+  const extensionsPage = await context.newPage();
+  let wakePage = null;
+  try {
+    await extensionsPage.goto('chrome://extensions/', {
+      waitUntil: 'domcontentloaded',
+      timeout: 30_000
+    });
+
+    const refreshed = await extensionsPage.evaluate(
+      async ({ expectedPath, expectedName, expectedVersion }) => {
+        const getExtensions = () =>
+          new Promise((resolve, reject) => {
+            chrome.developerPrivate.getExtensionsInfo(
+              { includeDisabled: true, includeTerminated: true },
+              (items) => {
+                const error = chrome.runtime.lastError;
+                if (error) reject(new Error(error.message));
+                else resolve(Array.isArray(items) ? items : []);
+              }
+            );
+          });
+        const setEnabled = (extensionId, enabled) =>
+          new Promise((resolve, reject) => {
+            chrome.management.setEnabled(extensionId, enabled, () => {
+              const error = chrome.runtime.lastError;
+              if (error) reject(new Error(error.message));
+              else resolve();
+            });
+          });
+        const sleepInPage = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+        const normalizePath = (value) => String(value || '').replace(/\/+$/, '');
+
+        const items = await getExtensions();
+        const expected = normalizePath(expectedPath);
+        const extension =
+          items.find((item) => normalizePath(item.path) === expected) ||
+          items.find(
+            (item) =>
+              item.name === expectedName && String(item.location || '').toUpperCase() === 'UNPACKED'
+          );
+        if (!extension?.id) throw new Error(`未找到 ${expectedName} 的 unpacked extension`);
+
+        const loadedVersion = String(extension.version || '').trim();
+        if (loadedVersion !== expectedVersion) {
+          return {
+            id: extension.id,
+            state: String(extension.state || ''),
+            version: loadedVersion,
+            requiresRestart: true
+          };
+        }
+
+        // publish:markdown 会先原子重建 dist。Chrome 可能在目录短暂缺失时把
+        // unpacked extension 标为 disabled；版本未变化时显式禁用再启用，可在不重启
+        // 浏览器、不替换 Profile 的前提下重新加载刚完成的脚本构建。manifest 版本变化
+        // 必须由同一 Profile 的受控浏览器重启加载，不能继续沿用缓存 manifest。
+        if (extension.state === 'ENABLED') {
+          await setEnabled(extension.id, false);
+          await sleepInPage(250);
+        }
+        await setEnabled(extension.id, true);
+        await sleepInPage(750);
+
+        const afterItems = await getExtensions();
+        const after = afterItems.find((item) => item.id === extension.id);
+        return {
+          id: extension.id,
+          state: String(after?.state || ''),
+          version: String(after?.version || '')
+        };
+      },
+      { expectedPath: path.resolve(distDir), expectedName: 'bawei', expectedVersion }
+    );
+
+    if (refreshed?.requiresRestart) {
+      throw new Error(
+        `现有浏览器加载的是 bawei ${refreshed.version || 'unknown'}，构建版本为 ${expectedVersion}；必须使用同一 Profile 受控重启后再继续，禁止以旧 manifest 执行`
+      );
+    }
+
+    if (
+      !refreshed?.id ||
+      refreshed.state !== 'ENABLED' ||
+      refreshed.version !== expectedVersion
+    ) {
+      throw new Error(
+        `现有浏览器中的 bawei 扩展刷新失败（state=${refreshed?.state || 'missing'} version=${refreshed?.version || 'missing'} expected=${expectedVersion}）`
+      );
+    }
+
+    let workers = await findBackgroundWorkerTargets();
+    if (!workers.length) {
+      wakePage = await context.newPage();
+      await wakePage
+        .goto(`chrome-extension://${refreshed.id}/src/devtools/devtools.html`, {
+          waitUntil: 'domcontentloaded',
+          timeout: 30_000
+        })
+        .catch(() => {});
+      await wakePage
+        .evaluate(async () => {
+          try {
+            await chrome.runtime.sendMessage({ type: '__BAWEI_WAKE__' });
+          } catch {
+            // Unknown wake messages are expected; sending it is enough to start the worker.
+          }
+        })
+        .catch(() => {});
+
+      const deadline = Date.now() + 15_000;
+      while (Date.now() < deadline) {
+        workers = await findBackgroundWorkerTargets();
+        if (workers.length) break;
+        await sleep(300);
+      }
+    }
+
+    if (!workers.length) throw new Error('bawei 扩展已启用，但 background service worker 未启动');
+    console.log('[cdp] 已在现有浏览器中刷新 bawei 扩展（Profile 与登录态保持不变）');
+  } finally {
+    await wakePage?.close().catch(() => {});
+    await extensionsPage.close().catch(() => {});
+  }
 }
 
 async function gotoWithRetry(page, url) {
@@ -1190,14 +1543,15 @@ async function waitForPanel(page) {
             const rect = panel.getBoundingClientRect();
             if (rect.width <= 0 || rect.height <= 0) return false;
             const s = getComputedStyle(panel);
-            if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0') return false;
+            if (s.display === 'none' || s.visibility === 'hidden' || s.opacity === '0')
+              return false;
             return true;
           })();
           return {
             hasPanel: !!panel,
             hasLauncher: !!launcher,
             hasMirror: !!mirror,
-            panelVisible,
+            panelVisible
           };
         }),
         10_000,
@@ -1205,7 +1559,9 @@ async function waitForPanel(page) {
       );
     } catch (error) {
       probeTimeoutStreak += 1;
-      console.log(`[wechat-panel] probe timeout: ${error instanceof Error ? error.message : String(error)}`);
+      console.log(
+        `[wechat-panel] probe timeout: ${error instanceof Error ? error.message : String(error)}`
+      );
       if (probeTimeoutStreak >= 3) {
         probeTimeoutStreak = 0;
         console.log('[wechat-panel] probe 连续超时，尝试刷新微信文章页');
@@ -1220,7 +1576,9 @@ async function waitForPanel(page) {
     const hasMirror = !!probe?.hasMirror;
     const panelVisible = !!probe?.panelVisible;
     if (Date.now() - lastProbeLog > 15_000) {
-      console.log(`[wechat-panel] probe url=${url} hasPanel=${hasPanel} hasLauncher=${hasLauncher} hasMirror=${hasMirror}`);
+      console.log(
+        `[wechat-panel] probe url=${url} hasPanel=${hasPanel} hasLauncher=${hasLauncher} hasMirror=${hasMirror}`
+      );
       lastProbeLog = Date.now();
     }
 
@@ -1231,7 +1589,9 @@ async function waitForPanel(page) {
         await page
           .evaluate(() => {
             try {
-              window.dispatchEvent(new CustomEvent('bawei-v2-ensure-panel', { detail: { action: 'show' } }));
+              window.dispatchEvent(
+                new CustomEvent('bawei-v2-ensure-panel', { detail: { action: 'show' } })
+              );
             } catch {
               // ignore
             }
@@ -1250,7 +1610,9 @@ async function waitForPanel(page) {
         await page
           .evaluate(() => {
             try {
-              window.dispatchEvent(new CustomEvent('bawei-v2-ensure-panel', { detail: { action: 'show' } }));
+              window.dispatchEvent(
+                new CustomEvent('bawei-v2-ensure-panel', { detail: { action: 'show' } })
+              );
             } catch {
               // ignore
             }
@@ -1276,7 +1638,9 @@ async function ensureWechatPanelReady(page, articleUrl, label) {
       return;
     } catch (error) {
       lastError = error;
-      console.log(`[wechat-panel] ensure failed (${attempt}/3): ${error instanceof Error ? error.message : String(error)}`);
+      console.log(
+        `[wechat-panel] ensure failed (${attempt}/3): ${error instanceof Error ? error.message : String(error)}`
+      );
       await sleep(2000);
     }
   }
@@ -1291,7 +1655,8 @@ async function runtimeEvaluateByWs(wsUrl, expression) {
 
       const closeSafe = () => {
         try {
-          if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) ws.close();
+          if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING)
+            ws.close();
         } catch {
           // ignore
         }
@@ -1313,8 +1678,8 @@ async function runtimeEvaluateByWs(wsUrl, expression) {
               params: {
                 expression,
                 awaitPromise: true,
-                returnByValue: true,
-              },
+                returnByValue: true
+              }
             })
           );
         } catch (error) {
@@ -1332,12 +1697,21 @@ async function runtimeEvaluateByWs(wsUrl, expression) {
         if (!payload || payload.id !== 1) return;
 
         if (payload.error) {
-          done(reject, new Error(String(payload.error.message || payload.error.code || 'Runtime.evaluate failed')));
+          done(
+            reject,
+            new Error(
+              String(payload.error.message || payload.error.code || 'Runtime.evaluate failed')
+            )
+          );
           return;
         }
 
         if (payload.result?.exceptionDetails) {
-          const text = String(payload.result.exceptionDetails.text || payload.result.result?.description || 'Runtime.evaluate exception');
+          const text = String(
+            payload.result.exceptionDetails.text ||
+              payload.result.result?.description ||
+              'Runtime.evaluate exception'
+          );
           done(reject, new Error(text));
           return;
         }
@@ -1387,7 +1761,9 @@ async function createBackgroundBridge() {
       noTargetCount += 1;
       if (noTargetCount % 10 === 0) {
         console.log(
-          `[background-bridge] waiting worker... seenTargets=${Array.isArray(targets) ? targets.length : 0} sample=${(targets || [])
+          `[background-bridge] waiting worker... seenTargets=${Array.isArray(targets) ? targets.length : 0} sample=${(
+            targets || []
+          )
             .slice(0, 3)
             .map((t) => `${t?.type}:${String(t?.url || '').slice(0, 80)}`)
             .join(' | ')}`
@@ -1412,7 +1788,10 @@ async function createBackgroundBridge() {
           }))()`
         );
         const runtimeId = String(probe?.runtimeId || '');
-        const hasAnyDirect = Boolean(probe?.hasDirect) || Boolean(probe?.hasRuntimeDirect) || Boolean(probe?.hasChromeDirect);
+        const hasAnyDirect =
+          Boolean(probe?.hasDirect) ||
+          Boolean(probe?.hasRuntimeDirect) ||
+          Boolean(probe?.hasChromeDirect);
         if (runtimeId && hasAnyDirect) {
           console.log(
             `[background-bridge] worker ready runtimeId=${runtimeId} hasDirect=${Boolean(probe?.hasDirect)} hasRuntimeDirect=${Boolean(
@@ -1422,7 +1801,9 @@ async function createBackgroundBridge() {
           return { wsUrl, runtimeId };
         }
       } catch (error) {
-        console.log(`[background-bridge] probe failed: ${error instanceof Error ? error.message : String(error)}`);
+        console.log(
+          `[background-bridge] probe failed: ${error instanceof Error ? error.message : String(error)}`
+        );
       }
     }
     await sleep(1200);
@@ -1491,7 +1872,7 @@ async function startSingleChannelJobDirect(bridge, channelId, article) {
     action: LIVE_PUBLISH_ACTION,
     focusChannel: channelId,
     channels: [channelId],
-    article,
+    article
   });
   if (!response?.success || !response?.jobId) {
     console.log(`[${LIVE_ACTION_LABEL}:${channelId}] direct start response=`, response);
@@ -1518,7 +1899,11 @@ async function waitSingleChannelResultDirect({ bridge, jobId, channelId, progres
   while (Date.now() < deadline) {
     let row = null;
     try {
-      const state = await withTimeout(getJobStateDirect(bridge, jobId), 10_000, `getJobStateDirect:${channelId}`);
+      const state = await withTimeout(
+        getJobStateDirect(bridge, jobId),
+        10_000,
+        `getJobStateDirect:${channelId}`
+      );
       row = state?.[channelId] || null;
     } catch (error) {
       const reason = error instanceof Error ? error.message : String(error);
@@ -1531,7 +1916,13 @@ async function waitSingleChannelResultDirect({ bridge, jobId, channelId, progres
     const status = normalizeBadge(String(row?.status || '').trim());
     const progressText = String(row?.userMessage || row?.stage || '').trim();
     const notes = `${row?.status || status} | ${progressText}`.trim();
-    const diag = [notes, String(row?.userSuggestion || '').trim(), String(row?.devDetails?.message || '').trim()].filter(Boolean).join('\n');
+    const diag = [
+      notes,
+      String(row?.userSuggestion || '').trim(),
+      String(row?.devDetails?.message || '').trim()
+    ]
+      .filter(Boolean)
+      .join('\n');
     const now = Date.now();
 
     if (notes !== lastNotes) {
@@ -1545,21 +1936,33 @@ async function waitSingleChannelResultDirect({ bridge, jobId, channelId, progres
     }
 
     if (status === 'success') {
-      const diag = `${String(row?.userMessage || '')}\n${String(row?.userSuggestion || '')}\n${String(row?.devDetails?.message || '')}`.trim();
+      const diag =
+        `${String(row?.userMessage || '')}\n${String(row?.userSuggestion || '')}\n${String(row?.devDetails?.message || '')}`.trim();
       if (containsImageFail(`${notes}\n${diag}`)) {
         const failNotes = `成功态拦截：检测到图片失败痕迹\n${diag || notes}`;
         updateChannelProgress(progress, channelId, 'failed', failNotes);
         saveProgress(progressPath, progress);
         return { status: 'failed', notes: failNotes };
       } else {
-        updateChannelProgress(progress, channelId, 'success', `${LIVE_ACTION_SUCCESS_TEXT} | ${progressText}`);
+        const normalizedSuccess = LIVE_PUBLISH_ACTION === 'draft' ? 'success' : 'pending_review';
+        updateChannelProgress(
+          progress,
+          channelId,
+          normalizedSuccess,
+          LIVE_PUBLISH_ACTION === 'draft'
+            ? `${LIVE_ACTION_SUCCESS_TEXT} | ${progressText}`
+            : `已提交，等待匿名公开验收 | ${progressText}`
+        );
         saveProgress(progressPath, progress);
-        return { status: 'success' };
+        return { status: normalizedSuccess, row, notes: diag };
       }
     }
 
+    if (status === 'pending_review' || status === 'rejected') return { status, row, notes: diag };
+
     if (status === 'not_logged_in') return { status: 'not_logged_in', notes: diag };
-    if (status === 'waiting_user' || status === 'failed') return { status: 'failed', notes: diag };
+    if (status === 'waiting_user') return { status: 'waiting_user', row, notes: diag };
+    if (status === 'failed') return { status: 'failed', row, notes: diag };
 
     if (status !== 'success' && now - lastProgressAt > NO_PROGRESS_TIMEOUT_MS) {
       return { status: 'stalled', notes: `${status} | ${notes}` };
@@ -1593,12 +1996,16 @@ async function setChannelSelection(page, wantedSet) {
 }
 
 async function waitStartReady(page) {
-  await page.waitForFunction(() => {
-    const btn = document.querySelector('#bawei-v2-start');
-    if (!(btn instanceof HTMLButtonElement)) return false;
-    const txt = String(btn.textContent || '');
-    return !btn.disabled && (txt.includes('开始') || txt.toLowerCase().includes('start'));
-  }, null, { timeout: 120_000 });
+  await page.waitForFunction(
+    () => {
+      const btn = document.querySelector('#bawei-v2-start');
+      if (!(btn instanceof HTMLButtonElement)) return false;
+      const txt = String(btn.textContent || '');
+      return !btn.disabled && (txt.includes('开始') || txt.toLowerCase().includes('start'));
+    },
+    null,
+    { timeout: 120_000 }
+  );
 }
 
 async function stopIfExecuting(page) {
@@ -1670,8 +2077,18 @@ async function readRows(page) {
           checked: !!cb.checked,
           badge,
           progress,
-          hasButton: !!btn || mirrorStatus === 'waiting_user' || mirrorStatus === 'failed' || mirrorStatus === 'not_logged_in',
-          buttonText: buttonText || (mirrorStatus === 'waiting_user' ? '继续' : mirrorStatus === 'failed' || mirrorStatus === 'not_logged_in' ? '重试' : ''),
+          hasButton:
+            !!btn ||
+            mirrorStatus === 'waiting_user' ||
+            mirrorStatus === 'failed' ||
+            mirrorStatus === 'not_logged_in',
+          buttonText:
+            buttonText ||
+            (mirrorStatus === 'waiting_user'
+              ? '继续'
+              : mirrorStatus === 'failed' || mirrorStatus === 'not_logged_in'
+                ? '重试'
+                : '')
         };
         continue;
       }
@@ -1684,13 +2101,28 @@ async function readRows(page) {
           checked: mirrorRunChannels.length ? mirrorRunChannels.includes(id) : true,
           badge: statusToBadge(mirrorStatus),
           progress: mirrorProgress,
-          hasButton: mirrorStatus === 'waiting_user' || mirrorStatus === 'failed' || mirrorStatus === 'not_logged_in',
-          buttonText: mirrorStatus === 'waiting_user' ? '继续' : mirrorStatus === 'failed' || mirrorStatus === 'not_logged_in' ? '重试' : '',
+          hasButton:
+            mirrorStatus === 'waiting_user' ||
+            mirrorStatus === 'failed' ||
+            mirrorStatus === 'not_logged_in',
+          buttonText:
+            mirrorStatus === 'waiting_user'
+              ? '继续'
+              : mirrorStatus === 'failed' || mirrorStatus === 'not_logged_in'
+                ? '重试'
+                : ''
         };
         continue;
       }
 
-      out[id] = { exists: false, checked: false, badge: '', progress: '', hasButton: false, buttonText: '' };
+      out[id] = {
+        exists: false,
+        checked: false,
+        badge: '',
+        progress: '',
+        hasButton: false,
+        buttonText: ''
+      };
     }
     return out;
   }, ALL_CHANNELS);
@@ -1716,7 +2148,7 @@ async function readDiagnosis(page, channelId) {
           String(st.status || ''),
           String(st.stage || ''),
           String(st.userMessage || ''),
-          String(st.userSuggestion || ''),
+          String(st.userSuggestion || '')
         ].filter(Boolean);
         return parts.join(' | ');
       } catch {
@@ -1728,30 +2160,59 @@ async function readDiagnosis(page, channelId) {
 }
 
 async function inspectLoginStateOnPage(page, channelId) {
-  const strictRule = LOGIN_AUDIT_STRICT_TEXT_RULES[channelId] || /请登录|未登录|登录后继续|登录即可|请先登录|扫码登录|手机号登录|sign in|log in/i;
-  const loggedRule = LOGIN_AUDIT_LOGGED_HINT_RULES[channelId] || /个人中心|退出登录|发文章|创作中心|发布入口|写文章|我的主页/i;
+  const strictRule =
+    LOGIN_AUDIT_STRICT_TEXT_RULES[channelId] ||
+    /请登录|未登录|登录后继续|登录即可|请先登录|扫码登录|手机号登录|sign in|log in/i;
+  const loggedRule =
+    LOGIN_AUDIT_LOGGED_HINT_RULES[channelId] ||
+    /个人中心|退出登录|发文章|创作中心|发布入口|写文章|我的主页/i;
 
-  const info = await page.evaluate(({ strictRuleSource, loggedRuleSource }) => {
-    const bodyText = String(document.body?.innerText || '').slice(0, 5000);
-    const hasPwd = !!document.querySelector('input[type="password"]');
-    const hasLoginBtn = Array.from(document.querySelectorAll('button,a,div,span')).some((el) => {
-      const t = String(el.textContent || '').trim();
-      if (!t) return false;
-      return /登录|登入|sign in|log in|继续登录|扫码登录|手机号登录/i.test(t);
-    });
-    const hasCaptchaHints = /验证码|安全验证|风控|请完成验证|访问异常|环境异常|行为验证|滑动验证|captcha|human verification/i.test(bodyText);
-    const strictLoginText = new RegExp(strictRuleSource, 'i').test(bodyText);
-    const hasLoggedInHints = new RegExp(loggedRuleSource, 'i').test(bodyText);
-    return { bodyText, hasPwd, hasLoginBtn, hasCaptchaHints, hasLoggedInHints, strictLoginText };
-  }, { strictRuleSource: strictRule.source, loggedRuleSource: loggedRule.source });
+  const info = await page.evaluate(
+    ({ strictRuleSource, loggedRuleSource }) => {
+      const bodyText = String(document.body?.innerText || '').slice(0, 5000);
+      const isVisible = (element) => {
+        if (!(element instanceof HTMLElement)) return false;
+        const style = getComputedStyle(element);
+        const rect = element.getBoundingClientRect();
+        return (
+          style.display !== 'none' &&
+          style.visibility !== 'hidden' &&
+          Number(style.opacity || '1') !== 0 &&
+          rect.width > 0 &&
+          rect.height > 0
+        );
+      };
+      const hasPwd = Array.from(document.querySelectorAll('input[type="password"]')).some(
+        isVisible
+      );
+      const hasLoginBtn = Array.from(document.querySelectorAll('button,a,div,span')).some((el) => {
+        if (!isVisible(el)) return false;
+        const t = String(el.textContent || '').trim();
+        if (!t) return false;
+        return /登录|登入|sign in|log in|继续登录|扫码登录|手机号登录/i.test(t);
+      });
+      const hasCaptchaHints =
+        /验证码|安全验证|风控|请完成验证|访问异常|环境异常|行为验证|滑动验证|captcha|human verification/i.test(
+          bodyText
+        );
+      const strictLoginText = new RegExp(strictRuleSource, 'i').test(bodyText);
+      const hasLoggedInHints = new RegExp(loggedRuleSource, 'i').test(bodyText);
+      return { bodyText, hasPwd, hasLoginBtn, hasCaptchaHints, hasLoggedInHints, strictLoginText };
+    },
+    { strictRuleSource: strictRule.source, loggedRuleSource: loggedRule.source }
+  );
 
   const url = String(page.url() || '');
   const lowUrl = url.toLowerCase();
-  const byUrl = (LOGIN_URL_RULES[channelId] || []).some((r) => r.test(lowUrl)) || /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i.test(lowUrl);
+  const byUrl =
+    (LOGIN_URL_RULES[channelId] || []).some((r) => r.test(lowUrl)) ||
+    /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i.test(lowUrl);
   const byDom = (info.hasPwd && info.hasLoginBtn) || info.strictLoginText;
 
-  if (info.hasLoggedInHints && !byDom) return { status: 'logged_in', reason: 'logged-in-dom-hints', url };
-  if (byUrl || byDom) return { status: 'not_logged_in', reason: byUrl ? 'login-url' : 'login-dom', url };
+  if (info.hasLoggedInHints && !byDom)
+    return { status: 'logged_in', reason: 'logged-in-dom-hints', url };
+  if (byUrl || byDom)
+    return { status: 'not_logged_in', reason: byUrl ? 'login-url' : 'login-dom', url };
   if (info.hasCaptchaHints) return { status: 'unknown', reason: 'captcha-or-risk-page', url };
   return { status: 'logged_in', reason: 'entry-page-accessible', url };
 }
@@ -1776,9 +2237,16 @@ async function auditLoginStatus(context, audit, auditPath) {
       }
 
       const result = await inspectLoginStateOnPage(page, channelId);
-      audit.channels[channelId] = { status: result.status, reason: result.reason, url: result.url, updatedAt: nowIso() };
+      audit.channels[channelId] = {
+        status: result.status,
+        reason: result.reason,
+        url: result.url,
+        updatedAt: nowIso()
+      };
       const needManual =
-        result.status === 'not_logged_in' || (result.status === 'unknown' && String(result.reason || '').includes('captcha-or-risk-page'));
+        result.status === 'not_logged_in' ||
+        (result.status === 'unknown' &&
+          String(result.reason || '').includes('captcha-or-risk-page'));
       if (needManual) loginPages.set(channelId, page);
       else if (createdForAudit) await page.close().catch(() => {});
       console.log(`[login-audit] ${channelId}: ${result.status} (${result.reason}) ${result.url}`);
@@ -1787,15 +2255,34 @@ async function auditLoginStatus(context, audit, auditPath) {
         status: 'unknown',
         reason: `audit-error: ${error instanceof Error ? error.message : String(error)}`,
         url: String(page?.url() || entry),
-        updatedAt: nowIso(),
+        updatedAt: nowIso()
       };
       if (createdForAudit && page) await page.close().catch(() => {});
-      console.log(`[login-audit] ${channelId}: unknown (${error instanceof Error ? error.message : String(error)})`);
+      console.log(
+        `[login-audit] ${channelId}: unknown (${error instanceof Error ? error.message : String(error)})`
+      );
     }
     saveLoginAudit(auditPath, audit);
   }
 
   return loginPages;
+}
+
+async function reloadExistingChannelPagesForFreshContentScripts(context, channelIds) {
+  for (const channelId of channelIds) {
+    const page = findExistingChannelAuditPage(context, channelId);
+    if (!page || page.isClosed()) continue;
+    const beforeUrl = String(page.url() || '');
+    try {
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 120_000 });
+      await sleep(800);
+      console.log(`[content-script] ${channelId}: refreshed ${beforeUrl}`);
+    } catch (error) {
+      throw new Error(
+        `${channelId} 页面刷新失败，无法确认当前构建的 content script 已生效：${error instanceof Error ? error.message : String(error)}`
+      );
+    }
+  }
 }
 
 async function waitForManualLogin(context, loginPages, blockedChannels, audit, auditPath) {
@@ -1825,7 +2312,12 @@ async function waitForManualLogin(context, loginPages, blockedChannels, audit, a
 
       try {
         const result = await inspectLoginStateOnPage(page, channelId);
-        audit.channels[channelId] = { status: result.status, reason: result.reason, url: result.url, updatedAt: nowIso() };
+        audit.channels[channelId] = {
+          status: result.status,
+          reason: result.reason,
+          url: result.url,
+          updatedAt: nowIso()
+        };
         saveLoginAudit(auditPath, audit);
         if (result.status !== 'logged_in') remain.push(channelId);
       } catch (error) {
@@ -1833,7 +2325,7 @@ async function waitForManualLogin(context, loginPages, blockedChannels, audit, a
           status: 'unknown',
           reason: `wait-login-inspect-error: ${error instanceof Error ? error.message : String(error)}`,
           url: String(page.url() || ''),
-          updatedAt: nowIso(),
+          updatedAt: nowIso()
         };
         saveLoginAudit(auditPath, audit);
         remain.push(channelId);
@@ -1849,14 +2341,18 @@ async function waitForManualLogin(context, loginPages, blockedChannels, audit, a
       const urlHints = remain
         .map((id) => `${id}:${String(audit.channels[id]?.url || '').slice(0, 120)}`)
         .join(' | ');
-      console.log(`[login-wait] 等待登录（剩余 ${Math.round((deadline - Date.now()) / 1000)}s）：${urlHints}`);
+      console.log(
+        `[login-wait] 等待登录（剩余 ${Math.round((deadline - Date.now()) / 1000)}s）：${urlHints}`
+      );
       lastLogAt = Date.now();
     }
 
     await sleep(2000);
   }
 
-  throw new Error(`等待登录超时（${Math.round(LOGIN_WAIT_TIMEOUT_MS / 1000)}s）：${pending.join(', ')}`);
+  throw new Error(
+    `等待登录超时（${Math.round(LOGIN_WAIT_TIMEOUT_MS / 1000)}s）：${pending.join(', ')}`
+  );
 }
 
 async function ensureLoginPageOpen(context, loginPages, channelId) {
@@ -1876,7 +2372,11 @@ async function startSingleChannelJob(page, channelId) {
   await withTimeout(waitStartReady(page), 90_000, `waitStartReady:${channelId}`);
   await withTimeout(setActionMode(page, LIVE_PUBLISH_ACTION), 10_000, `setActionMode:${channelId}`);
   await withTimeout(setFocusChannel(page, channelId), 10_000, `setFocusChannel:${channelId}`);
-  await withTimeout(setChannelSelection(page, new Set([channelId])), 12_000, `setChannelSelection:${channelId}`);
+  await withTimeout(
+    setChannelSelection(page, new Set([channelId])),
+    12_000,
+    `setChannelSelection:${channelId}`
+  );
   await withTimeout(
     page.evaluate(() => {
       const btn = document.querySelector('#bawei-v2-start');
@@ -1910,7 +2410,12 @@ async function waitSingleChannelResult({ page, channelId, progress, progressPath
     } catch (error) {
       readRowsFailCount += 1;
       const reason = error instanceof Error ? error.message : String(error);
-      updateChannelProgress(progress, channelId, 'running', `读取面板超时重试（${readRowsFailCount}/8） | ${reason}`);
+      updateChannelProgress(
+        progress,
+        channelId,
+        'running',
+        `读取面板超时重试（${readRowsFailCount}/8） | ${reason}`
+      );
       saveProgress(progressPath, progress);
       if (readRowsFailCount >= 8) {
         return { status: 'stalled', notes: `readRows连续超时：${reason}` };
@@ -1934,21 +2439,36 @@ async function waitSingleChannelResult({ page, channelId, progress, progressPath
     }
 
     if (status === 'success') {
-      const diag = await withTimeout(readDiagnosis(page, channelId), 10_000, `readDiagnosis:${channelId}`).catch(() => '');
+      const diag = await withTimeout(
+        readDiagnosis(page, channelId),
+        10_000,
+        `readDiagnosis:${channelId}`
+      ).catch(() => '');
       if (containsImageFail(`${notes}\n${diag}`)) {
         const failNotes = `成功态拦截：检测到图片失败痕迹\n${diag || notes}`;
         updateChannelProgress(progress, channelId, 'failed', failNotes);
         saveProgress(progressPath, progress);
         return { status: 'failed', notes: failNotes };
       } else {
-        updateChannelProgress(progress, channelId, 'success', `${LIVE_ACTION_SUCCESS_TEXT} | ${row.progress || ''}`);
+        const normalizedSuccess = LIVE_PUBLISH_ACTION === 'draft' ? 'success' : 'pending_review';
+        updateChannelProgress(
+          progress,
+          channelId,
+          normalizedSuccess,
+          LIVE_PUBLISH_ACTION === 'draft'
+            ? `${LIVE_ACTION_SUCCESS_TEXT} | ${row.progress || ''}`
+            : `已提交，等待匿名公开验收 | ${row.progress || ''}`
+        );
         saveProgress(progressPath, progress);
-        return { status: 'success' };
+        return { status: normalizedSuccess, row, notes: diag };
       }
     }
 
+    if (status === 'pending_review' || status === 'rejected') return { status, row, notes };
+
     if (status === 'not_logged_in') return { status: 'not_logged_in', notes };
-    if (status === 'waiting_user' || status === 'failed') return { status: 'failed', notes };
+    if (status === 'waiting_user') return { status: 'waiting_user', row, notes };
+    if (status === 'failed') return { status: 'failed', row, notes };
 
     if (status !== 'success' && now - lastProgressAt > NO_PROGRESS_TIMEOUT_MS) {
       return { status: 'stalled', notes: `${status} | ${notes}` };
@@ -1974,9 +2494,527 @@ async function extractArticlePayloadFromPage(page) {
     return {
       title,
       contentHtml,
-      sourceUrl: String(location.href || ''),
+      sourceUrl: String(location.href || '')
     };
   });
+}
+
+function countArticleImages(contentHtml) {
+  return (String(contentHtml || '').match(/<img\b/gi) || []).length;
+}
+
+function extractArticleImageUrls(contentHtml) {
+  return Array.from(
+    String(contentHtml || '').matchAll(/<img\b[^>]*?\bsrc\s*=\s*["']([^"']+)["']/gi)
+  )
+    .map((match) => String(match[1] || '').trim())
+    .filter(Boolean);
+}
+
+function decodeBasicHtmlEntities(value) {
+  return String(value || '')
+    .replace(/&nbsp;/gi, ' ')
+    .replace(/&amp;/gi, '&')
+    .replace(/&lt;/gi, '<')
+    .replace(/&gt;/gi, '>')
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&#(\d+);/g, (_match, code) => String.fromCodePoint(Number(code) || 0))
+    .replace(/&#x([0-9a-f]+);/gi, (_match, code) =>
+      String.fromCodePoint(Number.parseInt(code, 16) || 0)
+    );
+}
+
+function htmlFragmentToPlainText(value) {
+  return decodeBasicHtmlEntities(
+    String(value || '')
+      .replace(/<br\s*\/?\s*>/gi, '\n')
+      .replace(/<\/p\s*>|<\/h[1-6]\s*>|<\/li\s*>|<\/blockquote\s*>/gi, '\n')
+      .replace(/<[^>]+>/g, ' ')
+  )
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\s*\n\s*/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function expectedFeishuTextAnchors(contentHtml) {
+  const matches = Array.from(
+    String(contentHtml || '').matchAll(
+      /<(?:p|h[1-6]|li|blockquote)\b[^>]*>([\s\S]*?)<\/(?:p|h[1-6]|li|blockquote)>/gi
+    )
+  )
+    .map((match) => htmlFragmentToPlainText(match[1]))
+    .map((text) => text.replace(/\s+/g, ' ').trim())
+    .filter((text) => text.length >= 8);
+  return Array.from(new Set(matches));
+}
+
+async function embedArticleImagesAsDataUrls(contentHtml) {
+  let html = String(contentHtml || '');
+  const sources = Array.from(new Set(extractArticleImageUrls(html)));
+  for (const source of sources) {
+    const response = await fetch(source, { redirect: 'follow' });
+    if (!response.ok) throw new Error(`飞书可信粘贴读取图片失败：${response.status} ${source}`);
+    const bytes = Buffer.from(await response.arrayBuffer());
+    const mimeType = String(response.headers.get('content-type') || 'image/png')
+      .split(';')[0]
+      .trim();
+    const dataUrl = `data:${mimeType || 'image/png'};base64,${bytes.toString('base64')}`;
+    html = html.split(source).join(dataUrl);
+  }
+  return html;
+}
+
+async function collectFeishuVirtualEvidence(page) {
+  return await page.evaluate(async () => {
+    const scrollRoot = document.querySelector('.bear-web-x-container');
+    const originalScrollTop = scrollRoot instanceof HTMLElement ? scrollRoot.scrollTop : 0;
+    const blocks = new Map();
+    const collect = () => {
+      for (const block of Array.from(
+        document.querySelectorAll('.page-block-children .block[data-block-id]')
+      )) {
+        const key =
+          String(block.getAttribute('data-record-id') || '').trim() ||
+          String(block.getAttribute('data-block-id') || '').trim();
+        if (!key) continue;
+        const type = String(block.getAttribute('data-block-type') || '').trim();
+        const text = String(block.innerText || block.textContent || '')
+          .replace(/\u200b/g, '')
+          .replace(/\s+/g, ' ')
+          .trim();
+        const images = Array.from(block.querySelectorAll('img.docx-image, img'))
+          .map((image) => String(image.currentSrc || image.src || '').trim())
+          .filter((url) => /^https:\/\//i.test(url) && !/^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?\//i.test(url));
+        const imageTokens = Array.from(block.querySelectorAll('[image-token]'))
+          .map((node) => String(node.getAttribute('image-token') || '').trim())
+          .filter(Boolean);
+        blocks.set(key, { key, type, text, images, imageTokens });
+      }
+    };
+
+    if (scrollRoot instanceof HTMLElement) {
+      const max = Math.max(0, scrollRoot.scrollHeight - scrollRoot.clientHeight);
+      const step = Math.max(260, Math.floor(scrollRoot.clientHeight * 0.6));
+      for (let top = 0; top <= max; top += step) {
+        scrollRoot.scrollTop = top;
+        scrollRoot.dispatchEvent(new Event('scroll', { bubbles: true }));
+        await new Promise((resolve) => setTimeout(resolve, 160));
+        collect();
+      }
+      scrollRoot.scrollTop = max;
+      scrollRoot.dispatchEvent(new Event('scroll', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 160));
+      collect();
+      scrollRoot.scrollTop = originalScrollTop;
+      scrollRoot.dispatchEvent(new Event('scroll', { bubbles: true }));
+    } else {
+      collect();
+    }
+
+    const title = String(document.querySelector('h1.page-block-content')?.innerText || '')
+      .replace(/\u200b/g, '')
+      .replace(/\s+/g, ' ')
+      .trim();
+    const values = Array.from(blocks.values());
+    const imageUrls = Array.from(new Set(values.flatMap((value) => value.images)));
+    const imageTokens = Array.from(new Set(values.flatMap((value) => value.imageTokens)));
+    const saveText = Array.from(document.querySelectorAll('.note-title__time'))
+      .map((node) => String(node.textContent || '').replace(/\s+/g, ' ').trim())
+      .filter(Boolean);
+    return {
+      title,
+      text: values.map((value) => value.text).filter(Boolean).join('\n'),
+      blocks: values,
+      blockCount: values.length,
+      imageUrls,
+      imageTokens,
+      imageCount: Math.max(imageUrls.length, imageTokens.length),
+      saveText,
+      scrollHeight: scrollRoot instanceof HTMLElement ? scrollRoot.scrollHeight : 0
+    };
+  });
+}
+
+function feishuEvidenceMatchesArticle(evidence, article) {
+  const expectedTitle = String(article?.title || '').trim();
+  const expectedImages = countArticleImages(article?.contentHtml || '');
+  const anchors = expectedFeishuTextAnchors(article?.contentHtml || '');
+  const missingAnchors = anchors.filter((anchor) => !String(evidence?.text || '').includes(anchor));
+  return {
+    ok:
+      String(evidence?.title || '').trim() === expectedTitle &&
+      Number(evidence?.imageCount || 0) >= expectedImages &&
+      missingAnchors.length === 0,
+    expectedImages,
+    anchors,
+    missingAnchors
+  };
+}
+
+async function findFeishuRecoveryPage(context, article) {
+  const deadline = Date.now() + 30_000;
+  while (Date.now() < deadline) {
+    const candidates = context
+      .pages()
+      .slice()
+      .reverse()
+      .filter((page) => /^https:\/\/wuxinxuexi\.feishu\.cn\/docx\//i.test(page.url()));
+    for (const page of candidates) {
+      const bodyText = await page.locator('body').innerText().catch(() => '');
+      if (!article?.title || bodyText.includes(article.title) || candidates.length === 1) return page;
+    }
+    await sleep(500);
+  }
+  throw new Error('飞书可信粘贴恢复未找到本次 docx 页面');
+}
+
+async function restoreFeishuTitleTrusted(page, title) {
+  const editor = page
+    .locator('h1.page-block-content .zone-container.text-editor[contenteditable="true"]')
+    .first();
+  await editor.waitFor({ state: 'visible', timeout: 30_000 });
+  const current = String(await editor.innerText().catch(() => ''))
+    .replace(/\u200b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (current === String(title || '').trim()) return;
+  await editor.click();
+  await page.keyboard.press('Meta+A');
+  await page.keyboard.insertText(String(title || '').trim());
+}
+
+async function pasteFeishuArticleTrusted(context, page, article) {
+  const richHtml = await embedArticleImagesAsDataUrls(article.contentHtml);
+  const plainText = htmlFragmentToPlainText(article.contentHtml);
+  await context.grantPermissions(['clipboard-read', 'clipboard-write'], {
+    origin: 'https://wuxinxuexi.feishu.cn'
+  });
+  await page.evaluate(
+    async ({ html, text }) => {
+      const item = new ClipboardItem({
+        'text/html': new Blob([html], { type: 'text/html' }),
+        'text/plain': new Blob([text], { type: 'text/plain' })
+      });
+      await navigator.clipboard.write([item]);
+    },
+    { html: richHtml, text: plainText }
+  );
+
+  let bodyEditor = page
+    .locator(
+      '.page-block-children .block.docx-text-block .zone-container.text-editor[contenteditable="true"]'
+    )
+    .first();
+  await bodyEditor.waitFor({ state: 'visible', timeout: 30_000 });
+  await bodyEditor.click();
+  await page.keyboard.press('Meta+A');
+  await page.keyboard.press('Meta+A');
+  await page.keyboard.press('Backspace');
+  await page.waitForTimeout(600);
+
+  bodyEditor = page
+    .locator(
+      '.page-block-children .block.docx-text-block .zone-container.text-editor[contenteditable="true"]'
+    )
+    .first();
+  if (!(await bodyEditor.count())) {
+    await restoreFeishuTitleTrusted(page, article.title);
+    const titleEditor = page
+      .locator('h1.page-block-content .zone-container.text-editor[contenteditable="true"]')
+      .first();
+    await titleEditor.click();
+    await page.keyboard.press('End');
+    await page.keyboard.press('Enter');
+    bodyEditor = page
+      .locator(
+        '.page-block-children .block.docx-text-block .zone-container.text-editor[contenteditable="true"]'
+      )
+      .first();
+  }
+  await bodyEditor.waitFor({ state: 'visible', timeout: 30_000 });
+  await bodyEditor.click();
+  await page.keyboard.press('Meta+V');
+}
+
+async function ensureFeishuAnonymousSharingTrusted(page) {
+  const shareButton = page.locator('button.suite-share').filter({ hasText: '分享' }).last();
+  await shareButton.waitFor({ state: 'visible', timeout: 30_000 });
+  if (!(await page.locator('.share-popover-v2').isVisible().catch(() => false))) {
+    await shareButton.click();
+  }
+  const sharePopover = page.locator('.share-popover-v2').last();
+  await sharePopover.waitFor({ state: 'visible', timeout: 30_000 });
+  let shareText = String(await sharePopover.innerText().catch(() => ''));
+  if (/互联网获得链接的人可阅读|互联网上获得链接的任何人可阅读/.test(shareText)) return;
+
+  const scopeDropdown = sharePopover.locator('button.link-share-detail-v2__dropdown').first();
+  await scopeDropdown.click();
+  const internetOption = page
+    .getByRole('menuitem')
+    .filter({ hasText: /互联网获得链接的人|互联网上获得链接的任何人/ })
+    .last();
+  await internetOption.waitFor({ state: 'visible', timeout: 30_000 });
+  await internetOption.click();
+  const confirmDialog = page.getByRole('dialog').filter({ hasText: /互联网上获得链接的人/ });
+  if (await confirmDialog.isVisible().catch(() => false)) {
+    await confirmDialog.getByRole('button', { name: '确认', exact: true }).click();
+  }
+  await page.waitForFunction(
+    () =>
+      /互联网获得链接的人可阅读|互联网上获得链接的任何人可阅读/.test(
+        String(document.querySelector('.share-popover-v2')?.textContent || '')
+      ),
+    null,
+    { timeout: 30_000 }
+  );
+  shareText = String(await sharePopover.innerText().catch(() => ''));
+  if (!/互联网获得链接的人可阅读|互联网上获得链接的任何人可阅读/.test(shareText)) {
+    throw new Error('飞书匿名分享权限未生效');
+  }
+}
+
+async function verifyFeishuAnonymouslyTrusted(url, article) {
+  const anonymousBrowser = await chromium.launch({ headless: true });
+  try {
+    const context = await anonymousBrowser.newContext();
+    const initialCookieCount = (await context.cookies()).length;
+    const page = await context.newPage();
+    await gotoWithRetry(page, url);
+    await page.waitForTimeout(5000);
+    const evidence = await collectFeishuVirtualEvidence(page);
+    const match = feishuEvidenceMatchesArticle(evidence, article);
+    const bodyText = await page.locator('body').innerText().catch(() => '');
+    if (!match.ok) {
+      throw new Error(
+        `飞书匿名验收失败：title=${evidence.title === article.title} images=${evidence.imageCount}/${match.expectedImages} missing=${match.missingAnchors.length}`
+      );
+    }
+    return {
+      ok: true,
+      url: page.url(),
+      initialCookieCount,
+      loginPromptVisible: /登录|注册/.test(bodyText),
+      title: evidence.title,
+      observedBlockCount: evidence.blockCount,
+      observedImageCount: evidence.imageCount,
+      imageUrls: evidence.imageUrls,
+      missingAnchors: match.missingAnchors
+    };
+  } finally {
+    await anonymousBrowser.close().catch(() => {});
+  }
+}
+
+async function recoverFeishuWithTrustedClipboard({ context, bridge, jobId, channelRun }) {
+  const page = await findFeishuRecoveryPage(context, channelRun.article);
+  await page.bringToFront().catch(() => {});
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 120_000 }).catch(() => {});
+  await page.waitForTimeout(2500);
+
+  let evidence = await collectFeishuVirtualEvidence(page);
+  let match = feishuEvidenceMatchesArticle(evidence, channelRun.article);
+  if (!match.ok) {
+    const uploadSignals = { prepare: 0, finish: 0 };
+    const onResponse = (response) => {
+      const url = String(response.url() || '');
+      if (/\/upload\/prepare\//i.test(url)) uploadSignals.prepare += 1;
+      if (/\/upload\/finish\//i.test(url)) uploadSignals.finish += 1;
+    };
+    page.on('response', onResponse);
+    try {
+      await pasteFeishuArticleTrusted(context, page, channelRun.article);
+      const deadline = Date.now() + 180_000;
+      while (Date.now() < deadline) {
+        await page.waitForTimeout(1800);
+        evidence = await collectFeishuVirtualEvidence(page);
+        match = feishuEvidenceMatchesArticle(evidence, channelRun.article);
+        if (match.ok) break;
+      }
+      if (!match.ok) {
+        throw new Error(
+          `飞书可信粘贴未完整落库：images=${evidence.imageCount}/${match.expectedImages} missing=${match.missingAnchors.length} upload=${uploadSignals.prepare}/${uploadSignals.finish}`
+        );
+      }
+    } finally {
+      page.off('response', onResponse);
+    }
+  }
+
+  await restoreFeishuTitleTrusted(page, channelRun.article.title);
+  await page.waitForFunction(
+    () =>
+      Array.from(document.querySelectorAll('.note-title__time')).some((node) => {
+        const text = String(node.textContent || '').trim();
+        return !!text && !text.includes('保存中');
+      }),
+    null,
+    { timeout: 90_000 }
+  );
+
+  evidence = await collectFeishuVirtualEvidence(page);
+  match = feishuEvidenceMatchesArticle(evidence, channelRun.article);
+  if (!match.ok) throw new Error('飞书登录态最终验收未通过');
+  const documentUrl = page.url();
+  const isPublishing = LIVE_PUBLISH_ACTION === 'publish';
+  let anonymousEvidence;
+  if (isPublishing) {
+    await ensureFeishuAnonymousSharingTrusted(page);
+    anonymousEvidence = await verifyFeishuAnonymouslyTrusted(
+      documentUrl,
+      channelRun.article
+    );
+  }
+  const devDetails = {
+    documentUrl,
+    publishedUrl: isPublishing ? documentUrl : undefined,
+    candidatePublicUrl: isPublishing ? documentUrl : undefined,
+    managementUrl: getChannelConfig('feishu-docs').managementUrl,
+    reviewStatus: isPublishing ? 'anonymous_link_enabled' : 'draft_saved',
+    savedToCloud: true,
+    anonymousReadable: isPublishing ? true : undefined,
+    expectedImageCount: match.expectedImages,
+    observedImageCount: evidence.imageCount,
+    observedBlockCount: evidence.blockCount,
+    ...(anonymousEvidence ? { anonymousEvidence } : {})
+  };
+  await sendBackgroundMessage(bridge, {
+    type: 'V2_CHANNEL_UPDATE',
+    jobId,
+    channelId: 'feishu-docs',
+    patch: {
+      status: LIVE_PUBLISH_ACTION === 'draft' ? 'success' : 'pending_review',
+      stage: 'done',
+      userMessage: isPublishing
+        ? '飞书可信粘贴恢复完成，标题、全文、图片与匿名权限验收通过'
+        : '飞书可信粘贴恢复完成，标题、全文、图片与云端保存验收通过',
+      userSuggestion: undefined,
+      devDetails
+    }
+  }).catch(() => {});
+  return {
+    status: LIVE_PUBLISH_ACTION === 'draft' ? 'success' : 'pending_review',
+    row: { devDetails },
+    notes: isPublishing
+      ? '飞书可信粘贴与无 Cookie 匿名验收通过'
+      : '飞书可信粘贴与云端保存验收通过'
+  };
+}
+
+function buildFallbackContentHash(channelId, article) {
+  return crypto
+    .createHash('sha256')
+    .update(
+      JSON.stringify({
+        channelId,
+        title: String(article?.title || '').trim(),
+        contentHtml: String(article?.contentHtml || '').trim(),
+        sourceUrl: String(article?.sourceUrl || '').trim()
+      })
+    )
+    .digest('hex');
+}
+
+function articleRunForChannel(channelId, baseArticle, suppliedChannelArticles) {
+  const supplied = suppliedChannelArticles?.[channelId] || null;
+  const article = supplied?.article || baseArticle;
+  return {
+    article: {
+      title: String(article?.title || ''),
+      contentHtml: String(article?.contentHtml || ''),
+      sourceUrl: String(article?.sourceUrl || ''),
+      contentTokens: Array.isArray(article?.contentTokens) ? article.contentTokens : undefined
+    },
+    contentHash: String(supplied?.contentHash || buildFallbackContentHash(channelId, article)),
+    expectedImageCount: Number.isFinite(Number(supplied?.expectedImageCount))
+      ? Number(supplied.expectedImageCount)
+      : countArticleImages(article?.contentHtml),
+    sourceImageUrls: extractArticleImageUrls(article?.contentHtml),
+    markdown: String(supplied?.markdown || '')
+  };
+}
+
+function candidatePublicUrlFromResult(result) {
+  const details = result?.row?.devDetails || {};
+  const candidates = [details.candidatePublicUrl, details.publishedUrl, result?.candidatePublicUrl];
+  const config = result?.channelId ? getChannelConfig(result.channelId) : null;
+  for (const candidate of candidates) {
+    const value = String(candidate || '').trim();
+    if (!value) continue;
+    if (!config || config.publicUrlPatterns.some((pattern) => new RegExp(pattern, 'i').test(value)))
+      return value;
+  }
+  return '';
+}
+
+async function verifyAndRecordCandidate({
+  browser,
+  ledger,
+  ledgerPath,
+  channelId,
+  channelRun,
+  candidatePublicUrl,
+  progress,
+  progressPath
+}) {
+  const evidenceDir = abs(
+    path.join('artifacts/live-publish/evidence', channelRun.contentHash, channelId)
+  );
+  const evidence = await verifyPublicationAnonymously({
+    browser,
+    channelId,
+    candidatePublicUrl,
+    title: channelRun.article.title,
+    contentHtml: channelRun.article.contentHtml,
+    expectedImageCount: channelRun.expectedImageCount,
+    sourceImageUrls: channelRun.sourceImageUrls,
+    outputDir: evidenceDir
+  });
+  const common = {
+    channelId,
+    contentHash: channelRun.contentHash,
+    title: channelRun.article.title,
+    candidatePublicUrl,
+    managementUrl: getChannelConfig(channelId).managementUrl,
+    expectedImageCount: channelRun.expectedImageCount,
+    observedImageCount: evidence.loadedImageCount,
+    evidencePath: evidence.evidencePath,
+    evidenceSha256: evidence.evidenceSha256,
+    anonymousEvidence: {
+      ok: evidence.ok,
+      finalUrl: evidence.finalUrl,
+      anchorsMatched: evidence.anchorsMatched,
+      loadedImageCount: evidence.loadedImageCount,
+      errors: evidence.errors
+    }
+  };
+  if (evidence.ok) {
+    upsertPublicationOutcome(ledger, { ...common, status: 'success', reviewStatus: 'public' });
+    savePublicationLedger(ledger, ledgerPath);
+    updateChannelProgress(
+      progress,
+      channelId,
+      'success',
+      `匿名公开验收通过 | ${candidatePublicUrl}`
+    );
+    saveProgress(progressPath, progress);
+    return { status: 'success', evidence };
+  }
+  upsertPublicationOutcome(ledger, {
+    ...common,
+    status: 'pending_review',
+    reviewStatus: 'anonymous_not_ready'
+  });
+  savePublicationLedger(ledger, ledgerPath);
+  updateChannelProgress(
+    progress,
+    channelId,
+    'pending_review',
+    `已提交，匿名验收尚未通过 | ${evidence.errors.join(', ')}`
+  );
+  saveProgress(progressPath, progress);
+  return { status: 'pending_review', evidence };
 }
 
 function parseCli() {
@@ -1988,7 +3026,10 @@ function parseCli() {
   }
   if (first === 'markdown') {
     const markdownPath = String(process.argv[3] || '').trim();
-    if (!markdownPath) throw new Error('缺少 Markdown 文件路径；用法：npm run publish:markdown -- /绝对或相对路径/article.md');
+    if (!markdownPath)
+      throw new Error(
+        '缺少 Markdown 文件路径；用法：npm run publish:markdown -- /绝对或相对路径/article.md'
+      );
     return { mode: 'markdown', markdownPath };
   }
   const articleUrl = String(process.argv[2] || DEFAULT_ARTICLE_URL).trim();
@@ -2029,7 +3070,7 @@ async function runOpenChannelEditors() {
     userDataDir,
     distDir,
     forceRestart: true,
-    requireExisting: false,
+    requireExisting: false
   });
   console.log('[cdp] connected ws:', cdp.ws, `reused=${cdp.reused}`);
 
@@ -2040,7 +3081,9 @@ async function runOpenChannelEditors() {
     if (!context) throw new Error('CDP context 不存在');
     installContextDialogAutoDismiss(context, 'open');
     await openChannelEditorTabs(context);
-    console.log('[open] 完成：请在浏览器里完成登录/验证码，然后执行：npm run live:publish -- <微信文章URL>');
+    console.log(
+      '[open] 完成：请在浏览器里完成登录/验证码，然后执行：npm run live:publish -- <微信文章URL>'
+    );
   } finally {
     try {
       await browser?.close();
@@ -2054,9 +3097,12 @@ async function runPublishOnce(articleUrl, options) {
   forceBypassProxyForLocalCdp();
 
   const suppliedArticle = options?.articlePayload || null;
+  const suppliedChannelArticles = options?.channelArticles || null;
+  const suppliedVariants = options?.variants || {};
   const distDir = abs('dist');
   const progressPath = abs('artifacts/live-publish/mcp-publish-progress.json');
   const auditPath = abs('artifacts/live-publish/mcp-login-audit.json');
+  const ledgerPath = abs('artifacts/live-publish/publication-ledger.json');
   const userDataDir = abs(process.env.CHROME_PROFILE_DIR || 'artifacts/chrome-cdp-live-profile-v8');
 
   if (!fs.existsSync(path.join(distDir, 'manifest.json'))) {
@@ -2067,6 +3113,7 @@ async function runPublishOnce(articleUrl, options) {
   ensureArtifactsDirExists('artifacts/live-publish/mcp-login-audit.json');
   const progress = loadProgress(progressPath, articleUrl);
   const audit = createLoginAudit(articleUrl);
+  const ledger = loadPublicationLedger(ledgerPath);
   saveProgress(progressPath, progress);
   saveLoginAudit(auditPath, audit);
 
@@ -2075,7 +3122,7 @@ async function runPublishOnce(articleUrl, options) {
     userDataDir,
     distDir,
     forceRestart: !options?.requireExistingChrome,
-    requireExisting: Boolean(options?.requireExistingChrome),
+    requireExisting: Boolean(options?.requireExistingChrome)
   });
   console.log('[cdp] connected ws:', cdp.ws, `reused=${cdp.reused}`);
 
@@ -2095,17 +3142,23 @@ async function runPublishOnce(articleUrl, options) {
         userDataDir,
         distDir,
         forceRestart: true,
-        requireExisting: false,
+        requireExisting: false
       });
       console.log('[cdp] restarted ws:', restarted.ws, `reused=${restarted.reused}`);
       browser = await chromium.connectOverCDP(restarted.ws, { timeout: 120_000 });
     }
     const context = browser.contexts()[0];
     if (!context) throw new Error('CDP context 不存在');
+    let extensionRefreshedInExistingChrome = false;
+    if (options?.requireExistingChrome) {
+      await refreshBaweiExtensionInExistingChrome(context, distDir);
+      extensionRefreshedInExistingChrome = true;
+    }
     installContextDialogAutoDismiss(context, 'publish');
     if (ACTIVE_CHANNELS.includes('sspai')) installNetworkLogger(context, 'sspai');
     if (ACTIVE_CHANNELS.includes('mowen')) installNetworkLogger(context, 'mowen');
-    if (ACTIVE_CHANNELS.includes('tencent-cloud-dev')) installNetworkLogger(context, 'tencent-cloud-dev');
+    if (ACTIVE_CHANNELS.includes('tencent-cloud-dev'))
+      installNetworkLogger(context, 'tencent-cloud-dev');
 
     if (!options?.preserveExistingPages) {
       for (const ctx of browser.contexts()) {
@@ -2119,16 +3172,20 @@ async function runPublishOnce(articleUrl, options) {
       }
     }
 
-    const existingWechatPage = options?.preserveExistingPages && !suppliedArticle
-      ? context.pages().find((p) => canonicalUrlKey(p.url()) === canonicalUrlKey(articleUrl)) ||
-        context.pages().find((p) => /mp\.weixin\.qq\.com\/s\//i.test(String(p.url() || '')))
-      : null;
+    const existingWechatPage =
+      options?.preserveExistingPages && !suppliedArticle
+        ? context.pages().find((p) => canonicalUrlKey(p.url()) === canonicalUrlKey(articleUrl)) ||
+          context.pages().find((p) => /mp\.weixin\.qq\.com\/s\//i.test(String(p.url() || '')))
+        : null;
     const wechatPage = existingWechatPage || (await context.newPage());
     wechatPage.on('console', (msg) => {
       try {
         const type = msg.type();
         const text = msg.text();
-        if (type === 'error' || /bawei|WeChat content script|publish panel|Failed to initialize/i.test(text)) {
+        if (
+          type === 'error' ||
+          /bawei|WeChat content script|publish panel|Failed to initialize/i.test(text)
+        ) {
           console.log(`[wechat-console:${type}] ${text}`);
         }
       } catch {
@@ -2159,7 +3216,9 @@ async function runPublishOnce(articleUrl, options) {
 
     let directMode = USE_BACKGROUND_DIRECT;
     if (suppliedArticle && !directMode) {
-      throw new Error('本地 Markdown 发布必须使用 background 直连模式；请移除 USE_BACKGROUND_DIRECT=0');
+      throw new Error(
+        '本地 Markdown 发布必须使用 background 直连模式；请移除 USE_BACKGROUND_DIRECT=0'
+      );
     }
     if (!directMode) {
       console.log('[main] wait panel...');
@@ -2170,7 +3229,11 @@ async function runPublishOnce(articleUrl, options) {
     }
 
     console.log('[main] attach background bridge...');
-    let backgroundBridge = await withTimeout(createBackgroundBridge(), 120_000, 'createBackgroundBridge');
+    let backgroundBridge = await withTimeout(
+      createBackgroundBridge(),
+      120_000,
+      'createBackgroundBridge'
+    );
     console.log('[main] background bridge ready');
 
     let articlePayloadForRun = suppliedArticle
@@ -2178,7 +3241,9 @@ async function runPublishOnce(articleUrl, options) {
           title: String(suppliedArticle.title || ''),
           contentHtml: String(suppliedArticle.contentHtml || ''),
           sourceUrl: String(suppliedArticle.sourceUrl || ''),
-          contentTokens: Array.isArray(suppliedArticle.contentTokens) ? suppliedArticle.contentTokens : undefined,
+          contentTokens: Array.isArray(suppliedArticle.contentTokens)
+            ? suppliedArticle.contentTokens
+            : undefined
         }
       : null;
     if (directMode) {
@@ -2193,7 +3258,9 @@ async function runPublishOnce(articleUrl, options) {
           const expectedKey = canonicalUrlKey(articleUrl);
           const gotKey = canonicalUrlKey(articlePayloadForRun?.sourceUrl || '');
           if (expectedKey && gotKey && expectedKey !== gotKey) {
-            console.log(`[main] warning: background payload mismatch; fallback to page extract (expected=${articleUrl} got=${articlePayloadForRun?.sourceUrl})`);
+            console.log(
+              `[main] warning: background payload mismatch; fallback to page extract (expected=${articleUrl} got=${articlePayloadForRun?.sourceUrl})`
+            );
             articlePayloadForRun = null;
           }
         } catch {
@@ -2202,17 +3269,23 @@ async function runPublishOnce(articleUrl, options) {
       }
 
       if (!articlePayloadForRun?.title || !articlePayloadForRun?.contentHtml) {
-        const fallback = await withTimeout(extractArticlePayloadFromPage(wechatPage), 20_000, 'extractArticlePayloadFromPage').catch(() => null);
+        const fallback = await withTimeout(
+          extractArticlePayloadFromPage(wechatPage),
+          20_000,
+          'extractArticlePayloadFromPage'
+        ).catch(() => null);
         if (fallback?.title && fallback?.contentHtml) {
           articlePayloadForRun = {
             title: fallback.title,
             contentHtml: fallback.contentHtml,
-            sourceUrl: fallback.sourceUrl || articleUrl,
+            sourceUrl: fallback.sourceUrl || articleUrl
           };
         }
       }
       if (!articlePayloadForRun?.title || !articlePayloadForRun?.contentHtml) {
-        throw new Error('background 直连模式未能获取文章 payload（请先在微信页启动过一次任务，或确保文章正文可见）');
+        throw new Error(
+          'background 直连模式未能获取文章 payload（请先在微信页启动过一次任务，或确保文章正文可见）'
+        );
       }
       console.log(
         `[main] article payload ready: title=${String(articlePayloadForRun.title).slice(0, 32)} htmlLen=${String(articlePayloadForRun.contentHtml).length}`
@@ -2220,7 +3293,98 @@ async function runPublishOnce(articleUrl, options) {
       dumpArticlePayloadToArtifacts(articlePayloadForRun, articleUrl);
     }
 
+    const channelRuns = Object.fromEntries(
+      ACTIVE_CHANNELS.map((channelId) => [
+        channelId,
+        articleRunForChannel(channelId, articlePayloadForRun, suppliedChannelArticles)
+      ])
+    );
+
+    if (LIVE_PUBLISH_ACTION === 'publish') {
+      for (const channelId of ACTIVE_CHANNELS) {
+        const channelRun = channelRuns[channelId];
+        const decision = getLedgerDecision({
+          ledger,
+          channelId,
+          contentHash: channelRun.contentHash
+        });
+        if (decision.action === 'skip_success') {
+          updateChannelProgress(
+            progress,
+            channelId,
+            'success',
+            `防重跳过：同内容哈希已匿名公开 | ${decision.entry?.candidatePublicUrl || ''}`
+          );
+          continue;
+        }
+        if (decision.action === 'skip_rejected') {
+          updateChannelProgress(
+            progress,
+            channelId,
+            'rejected',
+            `防重跳过：同内容哈希已退回 | ${decision.entry?.rejectionReason || 'rejected'}`
+          );
+          continue;
+        }
+        if (decision.action === 'wait_user') {
+          updateChannelProgress(
+            progress,
+            channelId,
+            'waiting_user',
+            `等待人工安全验证，禁止自动重投 | ${decision.entry?.technicalFailureReason || 'human-verification-required'}`
+          );
+          continue;
+        }
+        if (decision.action === 'verify_pending') {
+          const candidatePublicUrl = String(decision.entry?.candidatePublicUrl || '').trim();
+          if (candidatePublicUrl) {
+            await verifyAndRecordCandidate({
+              browser,
+              ledger,
+              ledgerPath,
+              channelId,
+              channelRun,
+              candidatePublicUrl,
+              progress,
+              progressPath
+            }).catch((error) => {
+              updateChannelProgress(
+                progress,
+                channelId,
+                'pending_review',
+                `待审复核执行失败，禁止重投 | ${error instanceof Error ? error.message : String(error)}`
+              );
+            });
+          } else {
+            updateChannelProgress(
+              progress,
+              channelId,
+              'pending_review',
+              '同内容已提交待审，尚无候选公开地址，禁止重投'
+            );
+          }
+          continue;
+        }
+        if (channelId === 'woshipm' && suppliedArticle) {
+          const woshipmVariant = String(suppliedVariants?.woshipm || '').trim();
+          if (!woshipmVariant) {
+            throw new Error('人人都是产品经理正式发布必须提供 bawei:variant woshipm 渠道变体');
+          }
+          validateWoshipmVariant(woshipmVariant);
+        }
+        updateChannelProgress(progress, channelId, 'pending', decision.reason);
+      }
+      saveProgress(progressPath, progress);
+    }
+
     await maybeImportStorageState(context);
+
+    if (extensionRefreshedInExistingChrome) {
+      const channelsNeedingFreshScripts = ACTIVE_CHANNELS.filter(
+        (channelId) => progress.channels[channelId]?.status === 'pending'
+      );
+      await reloadExistingChannelPagesForFreshContentScripts(context, channelsNeedingFreshScripts);
+    }
 
     console.log('[main] start login audit...');
     const loginPages = await auditLoginStatus(context, audit, auditPath);
@@ -2228,14 +3392,31 @@ async function runPublishOnce(articleUrl, options) {
 
     const blockedByLogin = [];
     for (const channelId of ACTIVE_CHANNELS) {
+      const isStableLedgerOutcome = ['success', 'pending_review', 'rejected', 'waiting_user'].includes(
+        progress.channels[channelId].status
+      );
+      if (LIVE_PUBLISH_ACTION === 'publish' && isStableLedgerOutcome) continue;
       const auditStatus = audit.channels[channelId]?.status || 'unknown';
       const auditReason = String(audit.channels[channelId]?.reason || '');
-      if (auditStatus === 'not_logged_in' || (auditStatus === 'unknown' && auditReason.includes('captcha-or-risk-page'))) {
+      if (
+        auditStatus === 'not_logged_in' ||
+        (auditStatus === 'unknown' && auditReason.includes('captcha-or-risk-page'))
+      ) {
         blockedByLogin.push(channelId);
         if (WAIT_FOR_LOGIN) {
-          updateChannelProgress(progress, channelId, 'pending', `登录审计提示未登录：${auditReason || 'not_logged_in'}（等待登录）`);
+          updateChannelProgress(
+            progress,
+            channelId,
+            'pending',
+            `登录审计提示未登录：${auditReason || 'not_logged_in'}（等待登录）`
+          );
         } else {
-          updateChannelProgress(progress, channelId, 'failed', `登录审计阻塞：${auditReason || 'not_logged_in'}`);
+          updateChannelProgress(
+            progress,
+            channelId,
+            'not_logged_in',
+            `登录审计阻塞：${auditReason || 'not_logged_in'}`
+          );
         }
       } else if (progress.channels[channelId].status !== 'success') {
         updateChannelProgress(progress, channelId, 'pending', '登录审计通过，等待发布');
@@ -2248,6 +3429,10 @@ async function runPublishOnce(articleUrl, options) {
       await waitForManualLogin(context, loginPages, blockedByLogin, audit, auditPath);
 
       for (const channelId of blockedByLogin) {
+        const isStableLedgerOutcome = ['success', 'pending_review', 'rejected', 'waiting_user'].includes(
+          progress.channels[channelId].status
+        );
+        if (LIVE_PUBLISH_ACTION === 'publish' && isStableLedgerOutcome) continue;
         const auditStatus = audit.channels[channelId]?.status || 'unknown';
         const auditReason = String(audit.channels[channelId]?.reason || '');
         if (auditStatus === 'logged_in') {
@@ -2255,7 +3440,12 @@ async function runPublishOnce(articleUrl, options) {
             updateChannelProgress(progress, channelId, 'pending', '等待登录完成，进入发布队列');
           }
         } else {
-          updateChannelProgress(progress, channelId, 'failed', `等待登录后仍未通过：${auditReason || auditStatus}`);
+          updateChannelProgress(
+            progress,
+            channelId,
+            'not_logged_in',
+            `等待登录后仍未通过：${auditReason || auditStatus}`
+          );
         }
       }
       saveProgress(progressPath, progress);
@@ -2264,26 +3454,23 @@ async function runPublishOnce(articleUrl, options) {
     }
 
     console.log(`[main] start single-pass ${LIVE_ACTION_TEXT}（仅执行 pending 渠道）`);
-    const pending = ACTIVE_CHANNELS.filter((id) => progress.channels[id].status === 'pending').sort((a, b) => {
-      const score = (id) => {
-        if (id === 'sspai') return 3;
-        if (id === 'csdn') return 2;
-        if (id === 'tencent-cloud-dev') return 1;
-        return 0;
-      };
-      return score(a) - score(b);
-    });
+    const pending = ACTIVE_CHANNELS.filter((id) => progress.channels[id].status === 'pending').sort(
+      (a, b) => {
+        const score = (id) => {
+          if (id === 'sspai') return 3;
+          if (id === 'csdn') return 2;
+          if (id === 'tencent-cloud-dev') return 1;
+          return 0;
+        };
+        return score(a) - score(b);
+      }
+    );
 
     if (!pending.length) {
-      const successCount = ACTIVE_CHANNELS.filter((id) => progress.channels[id].status === 'success').length;
       saveProgress(progressPath, progress);
-      if (successCount === ACTIVE_CHANNELS.length) {
-        console.log(`\n✅ 全部渠道${LIVE_ACTION_SUCCESS_TEXT}（${successCount}/${ACTIVE_CHANNELS.length}）`);
-        return;
-      }
-      const failedChannels = ACTIVE_CHANNELS.filter((id) => progress.channels[id].status !== 'success');
-      console.log(`\n❌ 单次运行结束：成功 ${successCount}/${ACTIVE_CHANNELS.length}，失败渠道：${failedChannels.join(', ')}`);
-      throw new Error(`单次运行未达成 ${successCount}/${ACTIVE_CHANNELS.length}：${failedChannels.join(', ')}`);
+      const summary = printRunSummary(progress);
+      if (summary.publicSuccessCount !== ACTIVE_CHANNELS.length) process.exitCode = 2;
+      return summary;
     }
 
     console.log(`\n===== ${LIVE_ACTION_LABEL}-single-pass =====`);
@@ -2292,22 +3479,38 @@ async function runPublishOnce(articleUrl, options) {
     for (const channelId of pending) {
       const current = progress.channels[channelId]?.status;
       if (current === 'success') continue;
+      const channelRun = channelRuns[channelId];
 
       incAttempt(progress, channelId);
-      updateChannelProgress(progress, channelId, 'running', `开始第 ${progress.channels[channelId].attempts} 次${LIVE_ACTION_TEXT}尝试`);
+      updateChannelProgress(
+        progress,
+        channelId,
+        'running',
+        `开始第 ${progress.channels[channelId].attempts} 次${LIVE_ACTION_TEXT}尝试`
+      );
       saveProgress(progressPath, progress);
-      console.log(`[${LIVE_ACTION_LABEL}] ${channelId}: attempt=${progress.channels[channelId].attempts}`);
+      console.log(
+        `[${LIVE_ACTION_LABEL}] ${channelId}: attempt=${progress.channels[channelId].attempts}`
+      );
 
       let jobIdForChannel = '';
       try {
         if (directMode) {
           try {
-            jobIdForChannel = await startSingleChannelJobDirect(backgroundBridge, channelId, articlePayloadForRun);
+            jobIdForChannel = await startSingleChannelJobDirect(
+              backgroundBridge,
+              channelId,
+              channelRun.article
+            );
           } catch (error) {
             const reason = error instanceof Error ? error.message : String(error);
             if (reason.includes('target') || reason.includes('session')) {
               backgroundBridge = await createBackgroundBridge();
-              jobIdForChannel = await startSingleChannelJobDirect(backgroundBridge, channelId, articlePayloadForRun);
+              jobIdForChannel = await startSingleChannelJobDirect(
+                backgroundBridge,
+                channelId,
+                channelRun.article
+              );
             } else {
               throw error;
             }
@@ -2316,7 +3519,12 @@ async function runPublishOnce(articleUrl, options) {
           await startSingleChannelJob(wechatPage, channelId);
         }
       } catch (error) {
-        updateChannelProgress(progress, channelId, 'failed', `启动${LIVE_ACTION_TEXT}失败：${error instanceof Error ? error.message : String(error)}`);
+        updateChannelProgress(
+          progress,
+          channelId,
+          'failed',
+          `启动${LIVE_ACTION_TEXT}失败：${error instanceof Error ? error.message : String(error)}`
+        );
         saveProgress(progressPath, progress);
         continue;
       }
@@ -2327,34 +3535,156 @@ async function runPublishOnce(articleUrl, options) {
             jobId: jobIdForChannel,
             channelId,
             progress,
-            progressPath,
+            progressPath
           })
         : await waitSingleChannelResult({
             page: wechatPage,
             channelId,
             progress,
-            progressPath,
+            progressPath
           });
+
+      if (
+        directMode &&
+        channelId === 'feishu-docs' &&
+        ['waiting_user', 'failed'].includes(result.status)
+      ) {
+        try {
+          updateChannelProgress(
+            progress,
+            channelId,
+            'running',
+            '飞书扩展侧写入未完整落库，启动可信剪贴板恢复'
+          );
+          saveProgress(progressPath, progress);
+          result = await recoverFeishuWithTrustedClipboard({
+            context,
+            bridge: backgroundBridge,
+            jobId: jobIdForChannel,
+            channelRun
+          });
+        } catch (error) {
+          result = {
+            ...result,
+            notes: `${result.notes || ''}\n飞书可信剪贴板恢复失败：${error instanceof Error ? error.message : String(error)}`.trim()
+          };
+        }
+      }
 
       if (result.status === 'success') {
         console.log(`[${LIVE_ACTION_LABEL}] ${channelId}: success`);
         continue;
       }
 
+      if (
+        LIVE_PUBLISH_ACTION === 'publish' &&
+        (result.status === 'pending_review' || result.status === 'rejected')
+      ) {
+        result.channelId = channelId;
+        const details = result?.row?.devDetails || {};
+        const candidatePublicUrl = candidatePublicUrlFromResult(result);
+        const common = {
+          channelId,
+          contentHash: channelRun.contentHash,
+          sourceMarkdownHash: String(options?.sourceMarkdownHash || ''),
+          title: channelRun.article.title,
+          managementUrl: String(
+            details.managementUrl || details.listUrl || getChannelConfig(channelId).managementUrl
+          ),
+          candidatePublicUrl,
+          submittedAt: new Date().toISOString(),
+          expectedImageCount: channelRun.expectedImageCount,
+          observedImageCount: Number(details.observedImageCount || 0)
+        };
+
+        if (result.status === 'rejected') {
+          const rejectionReason = String(
+            details.rejectionReason || details.message || result.notes || '平台明确退回'
+          ).trim();
+          upsertPublicationOutcome(ledger, {
+            ...common,
+            status: 'rejected',
+            reviewStatus: String(details.reviewStatus || 'rejected'),
+            rejectionReason
+          });
+          savePublicationLedger(ledger, ledgerPath);
+          updateChannelProgress(progress, channelId, 'rejected', rejectionReason);
+          saveProgress(progressPath, progress);
+          console.log(`[publish] ${channelId}: rejected`);
+          continue;
+        }
+
+        upsertPublicationOutcome(ledger, {
+          ...common,
+          status: 'pending_review',
+          reviewStatus: String(
+            details.reviewStatus || (candidatePublicUrl ? 'candidate_public_url' : 'submitted')
+          )
+        });
+        savePublicationLedger(ledger, ledgerPath);
+
+        if (candidatePublicUrl) {
+          const verified = await verifyAndRecordCandidate({
+            browser,
+            ledger,
+            ledgerPath,
+            channelId,
+            channelRun,
+            candidatePublicUrl,
+            progress,
+            progressPath
+          }).catch((error) => {
+            updateChannelProgress(
+              progress,
+              channelId,
+              'pending_review',
+              `匿名验收执行失败，保留待审且禁止重投 | ${error instanceof Error ? error.message : String(error)}`
+            );
+            saveProgress(progressPath, progress);
+            return { status: 'pending_review' };
+          });
+          console.log(`[publish] ${channelId}: ${verified.status}`);
+        } else {
+          updateChannelProgress(
+            progress,
+            channelId,
+            'pending_review',
+            '平台已接收，尚无候选公开地址'
+          );
+          saveProgress(progressPath, progress);
+          console.log(`[publish] ${channelId}: pending_review (no public url yet)`);
+        }
+        continue;
+      }
+
       if (result.status === 'timeout') {
         const diag = directMode
-          ? JSON.stringify(((await getJobStateDirect(backgroundBridge, jobIdForChannel).catch(() => null)) || {})[channelId] || {})
-          : await withTimeout(readDiagnosis(wechatPage, channelId), 10_000, `readDiagnosis:${channelId}`).catch(() => '');
+          ? JSON.stringify(
+              ((await getJobStateDirect(backgroundBridge, jobIdForChannel).catch(() => null)) ||
+                {})[channelId] || {}
+            )
+          : await withTimeout(
+              readDiagnosis(wechatPage, channelId),
+              10_000,
+              `readDiagnosis:${channelId}`
+            ).catch(() => '');
         result = { status: 'timeout', notes: `单渠道超时\n${diag}` };
       }
 
       if (result.status === 'stalled') {
         const diag = directMode
-          ? JSON.stringify(((await getJobStateDirect(backgroundBridge, jobIdForChannel).catch(() => null)) || {})[channelId] || {})
-          : await withTimeout(readDiagnosis(wechatPage, channelId), 10_000, `readDiagnosis:${channelId}`).catch(() => '');
+          ? JSON.stringify(
+              ((await getJobStateDirect(backgroundBridge, jobIdForChannel).catch(() => null)) ||
+                {})[channelId] || {}
+            )
+          : await withTimeout(
+              readDiagnosis(wechatPage, channelId),
+              10_000,
+              `readDiagnosis:${channelId}`
+            ).catch(() => '');
         result = {
           status: 'stalled',
-          notes: `无进度超时（${Math.round(NO_PROGRESS_TIMEOUT_MS / 1000)}s）\n${result.notes || ''}\n${diag}`,
+          notes: `无进度超时（${Math.round(NO_PROGRESS_TIMEOUT_MS / 1000)}s）\n${result.notes || ''}\n${diag}`
         };
       }
 
@@ -2370,7 +3700,7 @@ async function runPublishOnce(articleUrl, options) {
           status: 'not_logged_in',
           reason: 'publish-runtime-detected',
           url: loginUrl,
-          updatedAt: nowIso(),
+          updatedAt: nowIso()
         };
         saveLoginAudit(auditPath, audit);
       }
@@ -2381,25 +3711,44 @@ async function runPublishOnce(articleUrl, options) {
           waiting_user: `${LIVE_ACTION_TEXT}中进入 waiting_user（阻塞）`,
           failed: '渠道返回 failed（阻塞）',
           timeout: `${LIVE_ACTION_TEXT}超时（阻塞）`,
-          stalled: `${LIVE_ACTION_TEXT}无进度超时（阻塞）`,
+          stalled: `${LIVE_ACTION_TEXT}无进度超时（阻塞）`
         };
         const head = reasonMap[result.status] || `阻塞状态：${result.status}`;
-        updateChannelProgress(progress, channelId, 'failed', `${head}\n${result.notes || ''}`);
+        const terminalStatus =
+          result.status === 'not_logged_in'
+            ? 'not_logged_in'
+            : result.status === 'waiting_user'
+              ? 'waiting_user'
+              : 'failed';
+        updateChannelProgress(
+          progress,
+          channelId,
+          terminalStatus,
+          `${head}\n${result.notes || ''}`
+        );
+        if (LIVE_PUBLISH_ACTION === 'publish') {
+          upsertPublicationOutcome(ledger, {
+            channelId,
+            contentHash: channelRun.contentHash,
+            sourceMarkdownHash: String(options?.sourceMarkdownHash || ''),
+            title: channelRun.article.title,
+            status: terminalStatus,
+            managementUrl: getChannelConfig(channelId).managementUrl,
+            expectedImageCount: channelRun.expectedImageCount,
+            technicalFailureReason: String(result.notes || '')
+          });
+          savePublicationLedger(ledger, ledgerPath);
+        }
         saveProgress(progressPath, progress);
         console.log(`[${LIVE_ACTION_LABEL}] ${channelId}: blocking -> failed`);
         continue;
       }
     }
 
-    const successCount = ACTIVE_CHANNELS.filter((id) => progress.channels[id].status === 'success').length;
     saveProgress(progressPath, progress);
-    if (successCount === ACTIVE_CHANNELS.length) {
-      console.log(`\n✅ 全部渠道${LIVE_ACTION_SUCCESS_TEXT}（${successCount}/${ACTIVE_CHANNELS.length}）`);
-    } else {
-      const failedChannels = ACTIVE_CHANNELS.filter((id) => progress.channels[id].status !== 'success');
-      console.log(`\n❌ 单次运行结束：成功 ${successCount}/${ACTIVE_CHANNELS.length}，失败渠道：${failedChannels.join(', ')}`);
-      throw new Error(`单次运行未达成 ${successCount}/${ACTIVE_CHANNELS.length}：${failedChannels.join(', ')}`);
-    }
+    const summary = printRunSummary(progress);
+    if (summary.publicSuccessCount !== ACTIVE_CHANNELS.length) process.exitCode = 2;
+    return summary;
   } finally {
     if (KEEP_BROWSER_OPEN && !options?.preserveExistingPages) {
       await cleanupChromePagesKeepBlank(CHROME_CDP_PORT).catch(() => {});
@@ -2430,7 +3779,7 @@ async function main() {
   if (cli.mode === 'publish') {
     await runPublishOnce(cli.articleUrl, {
       requireExistingChrome: LIVE_PUBLISH_REQUIRE_EXISTING_CHROME,
-      preserveExistingPages: LIVE_PUBLISH_PRESERVE_EXISTING_PAGES,
+      preserveExistingPages: LIVE_PUBLISH_PRESERVE_EXISTING_PAGES
     });
     return;
   }
@@ -2438,16 +3787,21 @@ async function main() {
     runBuildOrThrow();
     const prepared = await prepareLocalMarkdown(cli.markdownPath);
     console.log(
-      `[markdown] ready: title=${prepared.article.title} images=${prepared.assetCount} source=${prepared.article.sourceUrl}`
+      `[markdown] ready: title=${prepared.article.title} images=${prepared.assetCount} source=${prepared.article.sourceUrl || '<none>'}`
     );
     if (!prepared.hasDurableSourceUrl) {
-      console.log('[markdown] 提示：未声明 source_url，将使用本次运行的本地临时链接；如需永久原文链接，请在 Markdown front matter 中添加 source_url。');
+      console.log(
+        '[markdown] 未声明 source_url：正文不会写入临时本机链接，本地服务仅用于图片传输。'
+      );
     }
     try {
       await runPublishOnce(prepared.identity, {
         requireExistingChrome: LIVE_PUBLISH_REQUIRE_EXISTING_CHROME,
         preserveExistingPages: LIVE_PUBLISH_PRESERVE_EXISTING_PAGES,
         articlePayload: prepared.article,
+        channelArticles: prepared.channelArticles,
+        variants: prepared.variants,
+        sourceMarkdownHash: prepared.sourceMarkdownHash
       });
     } finally {
       await prepared.close();
@@ -2456,7 +3810,7 @@ async function main() {
   }
   await runPublishOnce(cli.articleUrl, {
     requireExistingChrome: LIVE_PUBLISH_REQUIRE_EXISTING_CHROME,
-    preserveExistingPages: LIVE_PUBLISH_PRESERVE_EXISTING_PAGES,
+    preserveExistingPages: LIVE_PUBLISH_PRESERVE_EXISTING_PAGES
   });
 }
 

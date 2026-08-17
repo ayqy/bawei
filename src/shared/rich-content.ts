@@ -55,7 +55,10 @@ function rcNormalizeImageUrl(raw: string, baseUrl: string): string {
 function rcIsLoopbackImageUrl(rawUrl: string): boolean {
   try {
     const u = new URL(rawUrl);
-    return u.protocol === 'http:' && (u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '[::1]');
+    return (
+      u.protocol === 'http:' &&
+      (u.hostname === '127.0.0.1' || u.hostname === 'localhost' || u.hostname === '[::1]')
+    );
   } catch {
     return false;
   }
@@ -83,7 +86,8 @@ function rcStripHash(rawUrl: string): string {
 function rcDecodeProxyTarget(rawUrl: string): string {
   try {
     const u = new URL(rawUrl);
-    if (!(u.hostname === 'read.useai.online' && u.pathname.startsWith('/api/image-proxy'))) return '';
+    if (!(u.hostname === 'read.useai.online' && u.pathname.startsWith('/api/image-proxy')))
+      return '';
     const target = String(u.searchParams.get('url') || '').trim();
     if (!target) return '';
     const inner = new URL(target);
@@ -148,7 +152,11 @@ export function rewriteHtmlImageUrlsToProxy(contentHtml: string, baseUrl: string
 
   const images = Array.from(container.querySelectorAll<HTMLImageElement>('img'));
   for (const img of images) {
-    const raw = img.getAttribute('data-src') || img.getAttribute('data-original') || img.getAttribute('src') || '';
+    const raw =
+      img.getAttribute('data-src') ||
+      img.getAttribute('data-original') ||
+      img.getAttribute('src') ||
+      '';
     const proxied = toProxyImageUrl(raw, baseUrl);
     if (!proxied) continue;
 
@@ -157,7 +165,11 @@ export function rewriteHtmlImageUrlsToProxy(contentHtml: string, baseUrl: string
     if (img.hasAttribute('data-original')) img.setAttribute('data-original', proxied);
 
     // 兜底：确保后续提取时能读到代理地址
-    if (!img.hasAttribute('src') && !img.hasAttribute('data-src') && !img.hasAttribute('data-original')) {
+    if (
+      !img.hasAttribute('src') &&
+      !img.hasAttribute('data-src') &&
+      !img.hasAttribute('data-original')
+    ) {
       img.setAttribute('src', proxied);
     }
   }
@@ -180,7 +192,7 @@ export function htmlToPlainTextSafe(html: string): string {
 export function buildRichContentTokens(params: {
   contentHtml: string;
   baseUrl: string;
-  sourceUrl: string;
+  sourceUrl?: string;
   htmlMode?: 'plain' | 'raw';
   splitBlocks?: boolean;
 }): RcRichContentToken[] {
@@ -250,7 +262,7 @@ export function buildRichContentTokens(params: {
       'PRE',
       'BLOCKQUOTE',
       'TABLE',
-      'HR',
+      'HR'
     ]);
 
     const serializeNode = (node: Node): string => {
@@ -311,7 +323,12 @@ export function buildRichContentTokens(params: {
     return fragments.filter((fragment) => {
       const normalized = String(fragment || '').trim();
       if (!normalized) return false;
-      if (normalized === '<p>&nbsp;</p>' || normalized === '<p><br></p>' || normalized === '<p><br/></p>') return false;
+      if (
+        normalized === '<p>&nbsp;</p>' ||
+        normalized === '<p><br></p>' ||
+        normalized === '<p><br/></p>'
+      )
+        return false;
       return !!htmlToPlainTextSafe(normalized) || /<br\s*\/?>/i.test(normalized);
     });
   };
@@ -354,7 +371,9 @@ export function buildRichContentTokens(params: {
     pushHtmlDirect(contentHtml);
     if (sourceUrl) {
       const safe = rcEscapeAttr(sourceUrl);
-      pushHtmlDirect(`\n<p><br/></p><p>原文链接：<a href="${safe}" target="_blank" rel="noreferrer noopener">${safe}</a></p>`);
+      pushHtmlDirect(
+        `\n<p><br/></p><p>原文链接：<a href="${safe}" target="_blank" rel="noreferrer noopener">${safe}</a></p>`
+      );
     }
     return tokens;
   }
@@ -397,7 +416,11 @@ export function buildRichContentTokens(params: {
   for (const img of images) {
     cloneBetween(img);
 
-    const raw = img.getAttribute('data-src') || img.getAttribute('data-original') || img.getAttribute('src') || '';
+    const raw =
+      img.getAttribute('data-src') ||
+      img.getAttribute('data-original') ||
+      img.getAttribute('src') ||
+      '';
     const url = toTokenImageUrl(raw, baseUrl);
     if (url) {
       const alt = (img.getAttribute('alt') || '').trim();
@@ -423,8 +446,49 @@ export function buildRichContentTokens(params: {
   // Append source URL to the end
   if (sourceUrl) {
     const safe = rcEscapeAttr(sourceUrl);
-    pushHtml(`\n<p><br/></p><p>原文链接：<a href="${safe}" target="_blank" rel="noreferrer noopener">${safe}</a></p>`);
+    pushHtml(
+      `\n<p><br/></p><p>原文链接：<a href="${safe}" target="_blank" rel="noreferrer noopener">${safe}</a></p>`
+    );
   }
 
   return tokens;
+}
+
+export function countExpectedContentImages(contentHtml: string): number {
+  const container = document.createElement('div');
+  container.innerHTML = String(contentHtml || '');
+  return Array.from(container.querySelectorAll<HTMLImageElement>('img')).filter((img) => {
+    const raw =
+      img.getAttribute('data-src') ||
+      img.getAttribute('data-original') ||
+      img.getAttribute('src') ||
+      '';
+    return !rcShouldSkipImageUrl(raw);
+  }).length;
+}
+
+export function extractVerificationAnchorsFromHtml(contentHtml: string, limit = 2): string[] {
+  const container = document.createElement('div');
+  container.innerHTML = String(contentHtml || '');
+  for (const node of Array.from(container.querySelectorAll('img,script,style,iframe')))
+    node.remove();
+
+  const candidates = Array.from(
+    container.querySelectorAll<HTMLElement>('p,h1,h2,h3,h4,li,blockquote')
+  )
+    .map((node) => normalizeVerificationAnchor(node.textContent || ''))
+    .filter((text) => text.length >= 12);
+  if (!candidates.length) {
+    const fallback = normalizeVerificationAnchor(container.textContent || '');
+    if (fallback) candidates.push(fallback);
+  }
+  return Array.from(new Set(candidates))
+    .slice(0, Math.max(1, limit))
+    .map((text) => text.slice(0, 80));
+}
+
+function normalizeVerificationAnchor(value: string): string {
+  return String(value || '')
+    .replace(/\s+/g, ' ')
+    .trim();
 }

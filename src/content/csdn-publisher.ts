@@ -7,6 +7,7 @@ import type { ChannelId, ChannelRuntimeState, PublishJob } from '../shared/v2-ty
 /* INLINE:dom */
 /* INLINE:events */
 /* INLINE:v2-protocol */
+/* INLINE:channel-config */
 /* INLINE:publish-verify */
 /* INLINE:rich-content */
 /* INLINE:image-bridge */
@@ -19,7 +20,9 @@ let currentJob: AnyJob | null = null;
 let currentStage: ChannelRuntimeState['stage'] = 'init';
 let stopRequested = false;
 
-(globalThis as unknown as { __BAWEI_V2_IS_STOP_REQUESTED?: () => boolean }).__BAWEI_V2_IS_STOP_REQUESTED = () => stopRequested;
+(
+  globalThis as unknown as { __BAWEI_V2_IS_STOP_REQUESTED?: () => boolean }
+).__BAWEI_V2_IS_STOP_REQUESTED = () => stopRequested;
 
 function getMessage(key: string, substitutions?: string[]): string {
   try {
@@ -67,17 +70,42 @@ function getPublishedUrlForJob(jobId: string): string | null {
 }
 
 function pressEnter(target: HTMLElement): void {
-  const down = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter', code: 'Enter' });
-  const press = new KeyboardEvent('keypress', { bubbles: true, cancelable: true, key: 'Enter', code: 'Enter' });
-  const up = new KeyboardEvent('keyup', { bubbles: true, cancelable: true, key: 'Enter', code: 'Enter' });
+  const down = new KeyboardEvent('keydown', {
+    bubbles: true,
+    cancelable: true,
+    key: 'Enter',
+    code: 'Enter'
+  });
+  const press = new KeyboardEvent('keypress', {
+    bubbles: true,
+    cancelable: true,
+    key: 'Enter',
+    code: 'Enter'
+  });
+  const up = new KeyboardEvent('keyup', {
+    bubbles: true,
+    cancelable: true,
+    key: 'Enter',
+    code: 'Enter'
+  });
   target.dispatchEvent(down);
   target.dispatchEvent(press);
   target.dispatchEvent(up);
 }
 
 function pressEscape(): void {
-  const down = new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Escape', code: 'Escape' });
-  const up = new KeyboardEvent('keyup', { bubbles: true, cancelable: true, key: 'Escape', code: 'Escape' });
+  const down = new KeyboardEvent('keydown', {
+    bubbles: true,
+    cancelable: true,
+    key: 'Escape',
+    code: 'Escape'
+  });
+  const up = new KeyboardEvent('keyup', {
+    bubbles: true,
+    cancelable: true,
+    key: 'Escape',
+    code: 'Escape'
+  });
   document.dispatchEvent(down);
   document.dispatchEvent(up);
 }
@@ -127,7 +155,8 @@ function setProbeIndexInWindowName(jobId: string, nextIndex: number): void {
 function isElementDisplayed(el: Element): el is HTMLElement {
   if (!(el instanceof HTMLElement)) return false;
   const style = window.getComputedStyle(el);
-  if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+  if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0')
+    return false;
   const rect = el.getBoundingClientRect();
   return rect.width > 0 && rect.height > 0;
 }
@@ -143,18 +172,22 @@ function findVisibleActionButton(texts: string[]): HTMLElement | null {
   if (!wanted.size) return null;
 
   const exactCandidates = Array.from(
-    document.querySelectorAll<HTMLElement>('button, [role="button"], a, .el_mcm-button, .btn-outline-danger, .btn-outline-secondary')
+    document.querySelectorAll<HTMLElement>(
+      'button, [role="button"], a, .el_mcm-button, .btn-outline-danger, .btn-outline-secondary'
+    )
   ).filter((node) => isElementDisplayed(node) && wanted.has(normalizeNodeText(node)));
   if (exactCandidates.length) {
     return exactCandidates[0];
   }
 
-  const nestedText = Array.from(document.querySelectorAll<HTMLElement>('span, div')).find((node) => {
-    if (!isElementDisplayed(node)) return false;
-    if (!wanted.has(normalizeNodeText(node))) return false;
-    const clickable = node.closest<HTMLElement>('button, [role="button"], a, .el_mcm-button');
-    return !!clickable && isElementDisplayed(clickable);
-  });
+  const nestedText = Array.from(document.querySelectorAll<HTMLElement>('span, div')).find(
+    (node) => {
+      if (!isElementDisplayed(node)) return false;
+      if (!wanted.has(normalizeNodeText(node))) return false;
+      const clickable = node.closest<HTMLElement>('button, [role="button"], a, .el_mcm-button');
+      return !!clickable && isElementDisplayed(clickable);
+    }
+  );
   if (nestedText) {
     return nestedText.closest<HTMLElement>('button, [role="button"], a, .el_mcm-button');
   }
@@ -167,11 +200,15 @@ function shouldRunOnThisPage(): boolean {
 }
 
 function isEditorPage(): boolean {
-  return location.hostname === 'mp.csdn.net' && location.pathname.startsWith('/mp_blog/creation/editor');
+  return (
+    location.hostname === 'mp.csdn.net' && location.pathname.startsWith('/mp_blog/creation/editor')
+  );
 }
 
 function isSuccessPage(): boolean {
-  return location.hostname === 'mp.csdn.net' && location.pathname.startsWith('/mp_blog/creation/success');
+  return (
+    location.hostname === 'mp.csdn.net' && location.pathname.startsWith('/mp_blog/creation/success')
+  );
 }
 
 function isManagePage(): boolean {
@@ -188,7 +225,7 @@ async function report(patch: Partial<ChannelRuntimeState>): Promise<void> {
     type: V2_CHANNEL_UPDATE,
     jobId: currentJob.jobId,
     channelId: CHANNEL_ID,
-    patch,
+    patch
   });
 }
 
@@ -210,13 +247,19 @@ async function handleSuccessPage(job: AnyJob): Promise<void> {
     status: 'running',
     stage: 'confirmSuccess',
     userMessage: getMessage('v2MsgDetectedSuccessPageGetDetailLinkVerify'),
-    devDetails: summarizeVerifyDetails({ publishedUrl: getPublishedUrlForJob(job.jobId) || undefined }),
+    devDetails: summarizeVerifyDetails({
+      publishedUrl: getPublishedUrlForJob(job.jobId) || undefined
+    })
   });
 
   try {
-    const links = Array.from(document.querySelectorAll<HTMLAnchorElement>('a')).filter((a) => !!a.href);
+    const links = Array.from(document.querySelectorAll<HTMLAnchorElement>('a')).filter(
+      (a) => !!a.href
+    );
     const byText = links.find((a) => (a.textContent || '').trim().includes('查看文章'));
-    const byHref = links.find((a) => a.href.includes('blog.csdn.net') && a.href.includes('/article/details/'));
+    const byHref = links.find(
+      (a) => a.href.includes('blog.csdn.net') && a.href.includes('/article/details/')
+    );
     const picked = byText?.href || byHref?.href || null;
     if (picked) {
       setPublishedUrlForJob(job.jobId, picked);
@@ -232,7 +275,7 @@ async function handleSuccessPage(job: AnyJob): Promise<void> {
     status: 'running',
     stage: 'confirmSuccess',
     userMessage: getMessage('v2MsgGoManageListVerify'),
-    devDetails: summarizeVerifyDetails({ listUrl: 'https://mp.csdn.net/mp_blog/manage/article' }),
+    devDetails: summarizeVerifyDetails({ listUrl: 'https://mp.csdn.net/mp_blog/manage/article' })
   });
   location.href = 'https://mp.csdn.net/mp_blog/manage/article';
 }
@@ -240,7 +283,11 @@ async function handleSuccessPage(job: AnyJob): Promise<void> {
 async function verifyFromManagePage(job: AnyJob): Promise<void> {
   currentStage = 'confirmSuccess';
   const listUrl = `${location.origin}${location.pathname}${location.search}`;
-  await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgVerifyFindNewArticleInList') });
+  await report({
+    status: 'running',
+    stage: 'confirmSuccess',
+    userMessage: getMessage('v2MsgVerifyFindNewArticleInList')
+  });
 
   // 文章管理页 tab：必须精确点击 role=tab
   const tabOrder = ['已发布', '全部', '审核中/未通过', '草稿箱'];
@@ -279,8 +326,11 @@ async function verifyFromManagePage(job: AnyJob): Promise<void> {
   try {
     await retryUntil(
       async () => {
-        const hasEditorLinks = document.querySelectorAll('a[href^="/mp_blog/creation/editor/"]').length > 0;
-        const hasBrowseLinks = document.querySelectorAll('a[href*="blog.csdn.net"][href*="/article/details/"]').length > 0;
+        const hasEditorLinks =
+          document.querySelectorAll('a[href^="/mp_blog/creation/editor/"]').length > 0;
+        const hasBrowseLinks =
+          document.querySelectorAll('a[href*="blog.csdn.net"][href*="/article/details/"]').length >
+          0;
         if (!hasEditorLinks && !hasBrowseLinks) throw new Error('list not ready');
         return true;
       },
@@ -292,7 +342,9 @@ async function verifyFromManagePage(job: AnyJob): Promise<void> {
 
   const editorId = getEditorIdForJob(job.jobId);
   const publishedUrl = getPublishedUrlForJob(job.jobId);
-  const publishedId = publishedUrl ? publishedUrl.match(/\/article\/details\/(\d+)/)?.[1] || null : null;
+  const publishedId = publishedUrl
+    ? publishedUrl.match(/\/article\/details\/(\d+)/)?.[1] || null
+    : null;
 
   if (publishedUrl) {
     const direct = document.querySelector<HTMLAnchorElement>(`a[href="${publishedUrl}"]`);
@@ -301,7 +353,11 @@ async function verifyFromManagePage(job: AnyJob): Promise<void> {
         status: 'running',
         stage: 'confirmSuccess',
         userMessage: getMessage('v2MsgVerifyFoundPublishedDetailLinkOpeningDetail'),
-        devDetails: summarizeVerifyDetails({ listUrl, listVisible: true, publishedUrl: direct.href }),
+        devDetails: summarizeVerifyDetails({
+          listUrl,
+          listVisible: true,
+          publishedUrl: direct.href
+        })
       });
       location.href = `${direct.href}${buildBackHash(job.jobId, listUrl)}`;
       return;
@@ -309,20 +365,26 @@ async function verifyFromManagePage(job: AnyJob): Promise<void> {
   }
 
   const editorLink = editorId
-    ? (document.querySelector<HTMLAnchorElement>(`a[href="/mp_blog/creation/editor/${editorId}"]`) as HTMLAnchorElement | null)
+    ? (document.querySelector<HTMLAnchorElement>(
+        `a[href="/mp_blog/creation/editor/${editorId}"]`
+      ) as HTMLAnchorElement | null)
     : null;
 
   const token = compactKeyword(job.article.title);
   const byToken =
-    Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href^="/mp_blog/creation/editor/"]')).find((a) =>
+    Array.from(
+      document.querySelectorAll<HTMLAnchorElement>('a[href^="/mp_blog/creation/editor/"]')
+    ).find((a) =>
       ((a.textContent || '') + ' ' + (a.getAttribute('title') || '')).includes(token)
     ) || null;
 
   const rowAnchor = editorLink || byToken;
   const row = (rowAnchor?.closest('div') as HTMLElement | null) || null;
   const browseLink = row
-    ? Array.from(row.querySelectorAll<HTMLAnchorElement>('a')).find((a) => (a.href || '').includes('blog.csdn.net') && (a.href || '').includes('/article/details/')) ||
-      null
+    ? Array.from(row.querySelectorAll<HTMLAnchorElement>('a')).find(
+        (a) =>
+          (a.href || '').includes('blog.csdn.net') && (a.href || '').includes('/article/details/')
+      ) || null
     : null;
 
   if (browseLink?.href) {
@@ -330,14 +392,22 @@ async function verifyFromManagePage(job: AnyJob): Promise<void> {
       status: 'running',
       stage: 'confirmSuccess',
       userMessage: getMessage('v2MsgVerifyFoundNewArticleOpeningDetail'),
-      devDetails: summarizeVerifyDetails({ listUrl, listVisible: true, publishedUrl: browseLink.href }),
+      devDetails: summarizeVerifyDetails({
+        listUrl,
+        listVisible: true,
+        publishedUrl: browseLink.href
+      })
     });
     location.href = `${browseLink.href}${buildBackHash(job.jobId, listUrl)}`;
     return;
   }
 
   // 兜底探测：从列表页取前 5 个“浏览”链接，逐个打开详情检查 sourceUrl
-  let browseLinks = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="blog.csdn.net"][href*="/article/details/"]')).map((a) => a.href);
+  let browseLinks = Array.from(
+    document.querySelectorAll<HTMLAnchorElement>(
+      'a[href*="blog.csdn.net"][href*="/article/details/"]'
+    )
+  ).map((a) => a.href);
   if (publishedId) {
     // 优先把已知 articleId 放到队首
     const prefer = browseLinks.filter((u) => u.includes(`/article/details/${publishedId}`));
@@ -353,8 +423,15 @@ async function verifyFromManagePage(job: AnyJob): Promise<void> {
       await report({
         status: 'running',
         stage: 'confirmSuccess',
-        userMessage: getMessage('v2MsgVerifyNotFoundNewArticleProbingDetails', [String(idx + 1), String(uniqBrowse.length)]),
-        devDetails: summarizeVerifyDetails({ listUrl, listVisible: true, publishedUrl: uniqBrowse[idx] }),
+        userMessage: getMessage('v2MsgVerifyNotFoundNewArticleProbingDetails', [
+          String(idx + 1),
+          String(uniqBrowse.length)
+        ]),
+        devDetails: summarizeVerifyDetails({
+          listUrl,
+          listVisible: true,
+          publishedUrl: uniqBrowse[idx]
+        })
       });
       location.href = `${uniqBrowse[idx]}${buildBackHash(job.jobId, backWithNextProbe)}`;
       return;
@@ -369,12 +446,17 @@ async function verifyFromManagePage(job: AnyJob): Promise<void> {
     const n = Number(sessionStorage.getItem(key) || '0') + 1;
     sessionStorage.setItem(key, String(n));
     if (n <= 36) {
-      const strategyLabel = editorId ? getMessage('v2CsdnVerifyByEditorIdLabel') : getMessage('v2CsdnVerifyByTitleTokenLabel');
+      const strategyLabel = editorId
+        ? getMessage('v2CsdnVerifyByEditorIdLabel')
+        : getMessage('v2CsdnVerifyByTitleTokenLabel');
       await report({
         status: 'running',
         stage: 'confirmSuccess',
-        userMessage: getMessage('v2MsgCsdnVerifyListNoNewArticleRefresh5s36', [strategyLabel, String(n)]),
-        devDetails: summarizeVerifyDetails({ listUrl, listVisible: false }),
+        userMessage: getMessage('v2MsgCsdnVerifyListNoNewArticleRefresh5s36', [
+          strategyLabel,
+          String(n)
+        ]),
+        devDetails: summarizeVerifyDetails({ listUrl, listVisible: false })
       });
       setTimeout(() => location.reload(), 5000);
       return;
@@ -386,47 +468,64 @@ async function verifyFromManagePage(job: AnyJob): Promise<void> {
       stage: 'waitingUser',
       userMessage: getMessage('v2MsgVerifyFailedListStillNoNewArticle'),
       userSuggestion: getMessage('v2SugCsdnConfirmPublishThenRefreshOrWaitReview'),
-      devDetails: summarizeVerifyDetails({ listUrl, listVisible: false }),
+      devDetails: summarizeVerifyDetails({ listUrl, listVisible: false })
     });
     return;
   }
-
 }
 
 async function verifyFromDetailPage(job: AnyJob): Promise<void> {
   currentStage = 'confirmSuccess';
   const publishedUrl = location.href;
-  const ok = pageContainsSourceUrl(job.article.sourceUrl);
+  const sourceUrl = job.article.sourceUrl || '';
+  const ok = !sourceUrl || pageContainsSourceUrl(sourceUrl);
   const backUrl = parseBackUrlFromHash();
   if (!ok && backUrl) {
     await report({
       status: 'running',
       stage: 'confirmSuccess',
       userMessage: getMessage('v2MsgVerifyNoSourceOnPageBackToListProbe'),
-      devDetails: summarizeVerifyDetails({ listUrl: backUrl, listVisible: true, publishedUrl, sourceUrlPresent: false }),
+      devDetails: summarizeVerifyDetails({
+        listUrl: backUrl,
+        listVisible: true,
+        publishedUrl,
+        sourceUrlPresent: false
+      })
     });
     location.href = backUrl;
     return;
   }
   await report({
-    status: ok ? 'success' : 'waiting_user',
+    status: ok ? (job.action === 'draft' ? 'success' : 'pending_review') : 'waiting_user',
     stage: ok ? 'done' : 'waitingUser',
-    userMessage: ok ? getMessage('v2MsgVerifyPassedDetailHasSourceLink') : getMessage('v2MsgVerifyFailedDetailNoSourceLink'),
+    userMessage: ok
+      ? getMessage('v2MsgVerifyPassedDetailHasSourceLink')
+      : getMessage('v2MsgVerifyFailedDetailNoSourceLink'),
     userSuggestion: ok ? undefined : getMessage('v2SugCheckSourceLinkAtEndThenContinue'),
-    devDetails: summarizeVerifyDetails({ publishedUrl, sourceUrlPresent: ok }),
+    devDetails: summarizeVerifyDetails({
+      publishedUrl,
+      candidatePublicUrl: publishedUrl,
+      managementUrl: getChannelConfig(CHANNEL_ID).managementUrl,
+      reviewStatus: 'candidate_public_url',
+      sourceUrlPresent: sourceUrl ? ok : false
+    })
   });
 }
 
 function getCurrentLoginState() {
   return detectPageLoginState({
     loginUrlPattern: /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i,
-    loggedInPattern: /发布文章|文章管理|创作中心|写文章|草稿箱|退出登录|个人中心|我的博客/i,
+    loggedInPattern: /发布文章|文章管理|创作中心|写文章|草稿箱|退出登录|个人中心|我的博客/i
   });
 }
 
 async function stageDetectLogin(): Promise<void> {
   currentStage = 'detectLogin';
-  await report({ status: 'running', stage: 'detectLogin', userMessage: getMessage('v3MsgDetectingLogin') });
+  await report({
+    status: 'running',
+    stage: 'detectLogin',
+    userMessage: getMessage('v3MsgDetectingLogin')
+  });
 
   const loginState = getCurrentLoginState();
   if (loginState.status === 'not_logged_in') {
@@ -434,7 +533,7 @@ async function stageDetectLogin(): Promise<void> {
       status: 'not_logged_in',
       stage: 'detectLogin',
       userMessage: getMessage('v3MsgNotLoggedIn'),
-      userSuggestion: getMessage('v3SugLoginThenRetry'),
+      userSuggestion: getMessage('v3SugLoginThenRetry')
     });
     throw new Error('__BAWEI_V2_STOPPED__');
   }
@@ -451,7 +550,8 @@ async function stageFillTitle(title: string): Promise<void> {
   try {
     input = (await waitForElement(selector, 20000)) as HTMLInputElement | HTMLTextAreaElement;
   } catch {
-    input = (document.querySelector(selector) as HTMLInputElement | HTMLTextAreaElement | null) || null;
+    input =
+      (document.querySelector(selector) as HTMLInputElement | HTMLTextAreaElement | null) || null;
   }
 
   if (!input) {
@@ -466,9 +566,9 @@ async function stageFillTitle(title: string): Promise<void> {
         titleNodes: {
           txtTitle: !!document.querySelector('#txtTitle'),
           textareaCount: document.querySelectorAll('textarea').length,
-          inputCount: document.querySelectorAll('input').length,
-        },
-      },
+          inputCount: document.querySelectorAll('input').length
+        }
+      }
     });
     throw new Error('未找到标题输入框');
   }
@@ -477,10 +577,16 @@ async function stageFillTitle(title: string): Promise<void> {
 }
 
 async function stageEnsureOriginal(): Promise<void> {
-  await report({ status: 'running', stage: currentStage, userMessage: getMessage('v2MsgSettingOriginalType') });
+  await report({
+    status: 'running',
+    stage: currentStage,
+    userMessage: getMessage('v2MsgSettingOriginalType')
+  });
 
   // 优先点击“原创”选项（避免误选转载）
-  const exact = Array.from(document.querySelectorAll<HTMLElement>('label,span,div')).find((n) => (n.textContent || '').trim() === '原创');
+  const exact = Array.from(document.querySelectorAll<HTMLElement>('label,span,div')).find(
+    (n) => (n.textContent || '').trim() === '原创'
+  );
   if (exact) {
     const clickable =
       (exact.closest('label') as HTMLElement | null) ||
@@ -505,7 +611,11 @@ async function stageEnsureOriginal(): Promise<void> {
 }
 
 async function stageEnsureOneTag(): Promise<void> {
-  await report({ status: 'running', stage: currentStage, userMessage: getMessage('v2MsgSettingTags') });
+  await report({
+    status: 'running',
+    stage: currentStage,
+    userMessage: getMessage('v2MsgSettingTags')
+  });
 
   try {
     const hidden = document.querySelector<HTMLInputElement>('input[name="tags"][type="hidden"]');
@@ -515,7 +625,9 @@ async function stageEnsureOneTag(): Promise<void> {
   }
 
   // CSDN 标签选择：先点“添加文章标签”打开面板，再选择一个推荐标签
-  const addBtn = Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find((n) => (n.textContent || '').trim() === '添加文章标签');
+  const addBtn = Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(
+    (n) => (n.textContent || '').trim() === '添加文章标签'
+  );
   if (!addBtn) return;
 
   try {
@@ -526,14 +638,19 @@ async function stageEnsureOneTag(): Promise<void> {
 
   // 等待标签面板输入框出现
   try {
-    await waitForElement('input[placeholder*="请输入文字搜索"], input[placeholder*="Enter键入可添加自定义标签"]', 8000);
+    await waitForElement(
+      'input[placeholder*="请输入文字搜索"], input[placeholder*="Enter键入可添加自定义标签"]',
+      8000
+    );
   } catch {
     // ignore
   }
 
   // 优先点击推荐里的一个标签（避免自定义输入不生效）
   const pick = (label: string): boolean => {
-    const el = Array.from(document.querySelectorAll<HTMLElement>('div,span,li,a')).find((n) => (n.textContent || '').trim() === label);
+    const el = Array.from(document.querySelectorAll<HTMLElement>('div,span,li,a')).find(
+      (n) => (n.textContent || '').trim() === label
+    );
     if (!el) return false;
     try {
       simulateClick(el);
@@ -543,7 +660,13 @@ async function stageEnsureOneTag(): Promise<void> {
     }
   };
 
-  pick('html') || pick('前端') || pick('javascript') || pick('java') || pick('react') || pick('vue') || pick('面试');
+  pick('html') ||
+    pick('前端') ||
+    pick('javascript') ||
+    pick('java') ||
+    pick('react') ||
+    pick('vue') ||
+    pick('面试');
 
   // 兜底：在搜索框里输入“前端”并回车
   try {
@@ -562,13 +685,22 @@ async function stageEnsureOneTag(): Promise<void> {
 }
 
 function findVisibleCsdnImageToolbarButton(): HTMLElement | null {
-  const candidates = Array.from(document.querySelectorAll<HTMLElement>('button,a,span,div,[role="button"]'));
+  const candidates = Array.from(
+    document.querySelectorAll<HTMLElement>('button,a,span,div,[role="button"]')
+  );
   for (const node of candidates) {
     if (!isElementDisplayed(node)) continue;
     const txt = (node.textContent || '').trim();
     const title = (node.getAttribute('title') || '').trim();
     const aria = (node.getAttribute('aria-label') || '').trim();
-    if (txt === '图像' || title === '图像' || aria === '图像' || txt === '图片' || title === '图片' || aria === '图片') {
+    if (
+      txt === '图像' ||
+      title === '图像' ||
+      aria === '图像' ||
+      txt === '图片' ||
+      title === '图片' ||
+      aria === '图片'
+    ) {
       return node;
     }
   }
@@ -576,7 +708,11 @@ function findVisibleCsdnImageToolbarButton(): HTMLElement | null {
 }
 
 function findOpenCsdnImageDrawer(): HTMLElement | null {
-  const drawers = Array.from(document.querySelectorAll<HTMLElement>('.el_mcm-drawer.open, .el_mcm-drawer.rtl.open, [class*="drawer"][class*="open"]'));
+  const drawers = Array.from(
+    document.querySelectorAll<HTMLElement>(
+      '.el_mcm-drawer.open, .el_mcm-drawer.rtl.open, [class*="drawer"][class*="open"]'
+    )
+  );
   for (const drawer of drawers) {
     const text = (drawer.innerText || '').trim();
     if (text.includes('选择图片') || text.includes('图片上传') || text.includes('链接添加')) {
@@ -621,7 +757,11 @@ function collapseCursorToEnd(editorRoot: HTMLElement): void {
   }
 }
 
-async function waitCsdnImageUploaded(editorRoot: HTMLElement, beforeCount: number, timeoutMs = 120_000): Promise<void> {
+async function waitCsdnImageUploaded(
+  editorRoot: HTMLElement,
+  beforeCount: number,
+  timeoutMs = 120_000
+): Promise<void> {
   const isReadySrc = (src: string): boolean => {
     const s = String(src || '').trim();
     if (!s) return false;
@@ -646,19 +786,32 @@ async function waitCsdnImageUploaded(editorRoot: HTMLElement, beforeCount: numbe
 }
 
 function findCsdnDrawerInsertButton(drawer: HTMLElement): HTMLElement | null {
-  const nodes = Array.from(drawer.querySelectorAll<HTMLElement>('button,[role="button"],a,div,span'));
+  const nodes = Array.from(
+    drawer.querySelectorAll<HTMLElement>('button,[role="button"],a,div,span')
+  );
   for (const node of nodes) {
     if (!isElementDisplayed(node)) continue;
     const txt = (node.textContent || '').trim();
     if (!txt) continue;
-    if (txt === '确定' || txt === '完成' || txt === '添加' || txt.includes('插入') || txt.includes('使用') || txt.includes('确认')) {
+    if (
+      txt === '确定' ||
+      txt === '完成' ||
+      txt === '添加' ||
+      txt.includes('插入') ||
+      txt.includes('使用') ||
+      txt.includes('确认')
+    ) {
       return node;
     }
   }
   return null;
 }
 
-async function insertCsdnImageViaDrawer(params: { jobId: string; imageUrl: string; editorRoot: HTMLElement }): Promise<void> {
+async function insertCsdnImageViaDrawer(params: {
+  jobId: string;
+  imageUrl: string;
+  editorRoot: HTMLElement;
+}): Promise<void> {
   const { jobId, imageUrl, editorRoot } = params;
   const file = await fetchImageAsFile(jobId, imageUrl);
   const beforeSources = new Set(
@@ -686,7 +839,9 @@ async function insertCsdnImageViaDrawer(params: { jobId: string; imageUrl: strin
   );
 
   try {
-    const tab = Array.from(drawer.querySelectorAll<HTMLElement>('div,span,button,a')).find((n) => (n.textContent || '').trim() === '图片上传');
+    const tab = Array.from(drawer.querySelectorAll<HTMLElement>('div,span,button,a')).find(
+      (n) => (n.textContent || '').trim() === '图片上传'
+    );
     if (tab) simulateClick(tab);
   } catch {
     // ignore
@@ -751,7 +906,11 @@ function pickCsdnCoverImageUrl(): string | null {
 
 function clickCsdnPointerTarget(target: HTMLElement): void {
   try {
-    target.scrollIntoView({ block: 'center', inline: 'center', behavior: 'instant' as ScrollBehavior });
+    target.scrollIntoView({
+      block: 'center',
+      inline: 'center',
+      behavior: 'instant' as ScrollBehavior
+    });
   } catch {
     // ignore
   }
@@ -772,7 +931,7 @@ function clickCsdnPointerTarget(target: HTMLElement): void {
           button: 0,
           buttons: 1,
           clientX,
-          clientY,
+          clientY
         })
       );
     } catch {
@@ -782,7 +941,9 @@ function clickCsdnPointerTarget(target: HTMLElement): void {
 
   const firePointer = (type: string) => {
     try {
-      const PointerCtor = (view as Window & typeof globalThis & { PointerEvent?: typeof PointerEvent }).PointerEvent;
+      const PointerCtor = (
+        view as Window & typeof globalThis & { PointerEvent?: typeof PointerEvent }
+      ).PointerEvent;
       if (typeof PointerCtor !== 'function') return;
       target.dispatchEvent(
         new PointerCtor(type, {
@@ -796,7 +957,7 @@ function clickCsdnPointerTarget(target: HTMLElement): void {
           button: 0,
           buttons: 1,
           clientX,
-          clientY,
+          clientY
         })
       );
     } catch {
@@ -830,20 +991,27 @@ function findCsdnCoverUploadInput(): HTMLInputElement | null {
   return (
     Array.from(document.querySelectorAll<HTMLInputElement>('input[type="file"]')).find((input) => {
       const accept = String(input.accept || '').toLowerCase();
-      if (!(accept.includes('.png') || accept.includes('.jpg') || accept.includes('image'))) return false;
-      const text = String(input.parentElement?.textContent || input.closest('div,section,aside')?.textContent || '');
+      if (!(accept.includes('.png') || accept.includes('.jpg') || accept.includes('image')))
+        return false;
+      const text = String(
+        input.parentElement?.textContent || input.closest('div,section,aside')?.textContent || ''
+      );
       return text.includes('封面') || text.includes('上传') || text.includes('从本地上传');
     }) || null
   );
 }
 
 function findCsdnCoverScope(input?: HTMLInputElement | null): HTMLElement | null {
+  const liveContainer = input?.closest<HTMLElement>('.container-coverimage-box');
+  if (liveContainer) return liveContainer;
+
   let node = (input?.parentElement as HTMLElement | null) || null;
   while (node && node !== document.body) {
     const text = String(node.innerText || node.textContent || '')
       .replace(/\s+/g, ' ')
       .trim();
-    if (text.includes('封面') || text.includes('从本地上传') || text.includes('确认上传')) return node;
+    if (text.includes('封面') || text.includes('从本地上传') || text.includes('确认上传'))
+      return node;
     node = node.parentElement;
   }
   return (input?.parentElement as HTMLElement | null) || null;
@@ -858,16 +1026,22 @@ function isCsdnCoverImageReady(src: string): boolean {
 }
 
 function findVisibleCsdnCoverCropModal(scope?: HTMLElement | null): HTMLElement | null {
-  const roots = [scope, scope?.parentElement as HTMLElement | null, document.body].filter(Boolean) as HTMLElement[];
+  const roots = [scope, scope?.parentElement as HTMLElement | null, document.body].filter(
+    Boolean
+  ) as HTMLElement[];
   for (const root of roots) {
-    const modal = Array.from(root.querySelectorAll<HTMLElement>('.vue-image-crop-upload')).find((node) => isElementDisplayed(node));
+    const modal = Array.from(root.querySelectorAll<HTMLElement>('.vue-image-crop-upload')).find(
+      (node) => isElementDisplayed(node)
+    );
     if (modal) return modal;
   }
   return null;
 }
 
 function findCsdnCoverPreviewImage(scope?: HTMLElement | null): HTMLImageElement | null {
-  const roots = [scope, scope?.parentElement as HTMLElement | null, document.body].filter(Boolean) as HTMLElement[];
+  const roots = [scope, scope?.parentElement as HTMLElement | null, document.body].filter(
+    Boolean
+  ) as HTMLElement[];
   for (const root of roots) {
     const preview = Array.from(root.querySelectorAll<HTMLImageElement>('img.preview')).find((img) =>
       isCsdnCoverImageReady(img.getAttribute('src') || '')
@@ -879,7 +1053,9 @@ function findCsdnCoverPreviewImage(scope?: HTMLElement | null): HTMLImageElement
 
 function findCsdnCoverSelectionItem(modal?: HTMLElement | null): HTMLElement | null {
   const root = modal || document.body;
-  const selected = Array.from(root.querySelectorAll<HTMLElement>('.img-selection-item.selected')).find((item) => isElementDisplayed(item));
+  const selected = Array.from(
+    root.querySelectorAll<HTMLElement>('.img-selection-item.selected')
+  ).find((item) => isElementDisplayed(item));
   if (selected) return selected;
   return (
     Array.from(root.querySelectorAll<HTMLElement>('.img-selection-item')).find((item) => {
@@ -907,13 +1083,19 @@ function findCsdnCoverConfirmButton(scope?: HTMLElement | null): HTMLElement | n
   const exact = modal?.querySelector<HTMLElement>('.vicp-operate-btn');
   if (exact && isElementDisplayed(exact)) return exact;
 
-  const roots = [modal, scope, scope?.parentElement as HTMLElement | null, document.body].filter(Boolean) as HTMLElement[];
+  const roots = [modal, scope, scope?.parentElement as HTMLElement | null, document.body].filter(
+    Boolean
+  ) as HTMLElement[];
   for (const root of roots) {
-    const button = Array.from(root.querySelectorAll<HTMLElement>('button,a,div,span')).find((node) => {
-      if (!isElementDisplayed(node)) return false;
-      const text = String(node.textContent || '').replace(/\s+/g, ' ').trim();
-      return text === '确认上传' || text === '确定上传' || text === '完成';
-    });
+    const button = Array.from(root.querySelectorAll<HTMLElement>('button,a,div,span')).find(
+      (node) => {
+        if (!isElementDisplayed(node)) return false;
+        const text = String(node.textContent || '')
+          .replace(/\s+/g, ' ')
+          .trim();
+        return text === '确认上传' || text === '确定上传' || text === '完成';
+      }
+    );
     if (button) return button;
   }
   return null;
@@ -931,10 +1113,19 @@ async function stageEnsureCoverSelected(): Promise<void> {
     { timeoutMs: 10_000, intervalMs: 400 }
   );
 
+  const scope = findCsdnCoverScope(input);
+  const suggestedCover = findCsdnCoverSelectionItem(scope);
+  if (suggestedCover) {
+    clickCsdnPointerTarget(suggestedCover);
+    const suggestedImage = suggestedCover.querySelector<HTMLElement>('img.select-cover');
+    if (suggestedImage) clickCsdnPointerTarget(suggestedImage);
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    if (hasCsdnCoverApplied()) return;
+  }
+
   const imageUrl = pickCsdnCoverImageUrl();
   if (!imageUrl) throw new Error('csdn cover image url unavailable');
 
-  const scope = findCsdnCoverScope(input);
   const file = await fetchImageAsFile(currentJob?.jobId || '', imageUrl);
   setFilesToInput(input, [file]);
 
@@ -977,7 +1168,7 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
     status: 'running',
     stage: 'fillContent',
     userMessage: getMessage('v2MsgFillingContent'),
-    userSuggestion: getMessage('v2SugIfNoSourceFieldAppendToEnd'),
+    userSuggestion: getMessage('v2SugIfNoSourceFieldAppendToEnd')
   });
 
   // 尝试同步填写“原文链接”字段（即使原创模式也可能展示在详情页）
@@ -994,7 +1185,9 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
   }
 
   const jobTokens = currentJob?.article?.contentTokens;
-  const baseTokens = Array.isArray(jobTokens) ? jobTokens : buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
+  const baseTokens = Array.isArray(jobTokens)
+    ? jobTokens
+    : buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
   const tokens = baseTokens.filter((token) => {
     if (!token || token.kind !== 'image') return true;
     const src = String(token.src || '').toLowerCase();
@@ -1006,9 +1199,10 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
   // CSDN 富文本编辑器（CKEditor）通常使用 iframe 承载可编辑 body
   const ckIframe = (await (async () => {
     try {
-      return (await waitForElement<HTMLIFrameElement>('#cke_editor iframe.cke_wysiwyg_frame, iframe.cke_wysiwyg_frame', 15000)) as
-        | HTMLIFrameElement
-        | null;
+      return (await waitForElement<HTMLIFrameElement>(
+        '#cke_editor iframe.cke_wysiwyg_frame, iframe.cke_wysiwyg_frame',
+        15000
+      )) as HTMLIFrameElement | null;
     } catch {
       return null;
     }
@@ -1023,7 +1217,8 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
     }
   }
 
-  const editorRoot = (ckIframe?.contentDocument?.body as HTMLElement | null) || findContentEditor(document);
+  const editorRoot =
+    (ckIframe?.contentDocument?.body as HTMLElement | null) || findContentEditor(document);
   if (!editorRoot) throw new Error('未找到内容编辑器（可能是编辑器尚未加载）');
 
   const expectedImages = tokens.filter((t) => t?.kind === 'image').length;
@@ -1085,9 +1280,9 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
           await report({
             status: 'running',
             stage: 'fillContent',
-            userMessage: getMessage('v3MsgUploadingImageProgress', [String(current), String(total)]),
+            userMessage: getMessage('v3MsgUploadingImageProgress', [String(current), String(total)])
           });
-        },
+        }
       });
     } catch (e) {
       await report({
@@ -1095,7 +1290,7 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
         stage: 'waitingUser',
         userMessage: getMessage('v3MsgImageUploadFailed'),
         userSuggestion: getMessage('v3SugManualUploadImagesThenContinue'),
-        devDetails: { message: e instanceof Error ? e.message : String(e) },
+        devDetails: { message: e instanceof Error ? e.message : String(e) }
       });
       throw new Error('__BAWEI_V2_STOPPED__');
     }
@@ -1125,7 +1320,11 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
 
 async function stageSaveDraft(): Promise<void> {
   currentStage = 'saveDraft';
-  await report({ status: 'running', stage: 'saveDraft', userMessage: getMessage('v2MsgSavingDraftToGenerateId') });
+  await report({
+    status: 'running',
+    stage: 'saveDraft',
+    userMessage: getMessage('v2MsgSavingDraftToGenerateId')
+  });
   const btn = findVisibleActionButton(['保存草稿']);
   if (!btn) throw new Error('未找到保存草稿按钮');
   try {
@@ -1137,7 +1336,11 @@ async function stageSaveDraft(): Promise<void> {
 
 async function stageSubmitPublish(): Promise<void> {
   currentStage = 'submitPublish';
-  await report({ status: 'running', stage: 'submitPublish', userMessage: getMessage('v2MsgTryingToPublish') });
+  await report({
+    status: 'running',
+    stage: 'submitPublish',
+    userMessage: getMessage('v2MsgTryingToPublish')
+  });
   await stageEnsureCoverSelected();
   // CSDN 真正提交发布是底部精确文案“发布博客”；不能命中祖先容器，否则点击无效。
   const btn = findVisibleActionButton(['发布博客']) || findVisibleActionButton(['发布文章']);
@@ -1159,7 +1362,7 @@ async function stageSubmitPublish(): Promise<void> {
 
   const preferRoots = [
     ...Array.from(document.querySelectorAll('[role="dialog"]')),
-    ...Array.from(document.querySelectorAll('.el-dialog, .el-message-box, .modal, .dialog')),
+    ...Array.from(document.querySelectorAll('.el-dialog, .el-message-box, .modal, .dialog'))
   ];
 
   const roots = preferRoots.length ? preferRoots : [document.body];
@@ -1180,22 +1383,32 @@ async function stageSubmitPublish(): Promise<void> {
 
 async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<boolean> {
   currentStage = 'confirmSuccess';
-  await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgConfirmingResult') });
+  await report({
+    status: 'running',
+    stage: 'confirmSuccess',
+    userMessage: getMessage('v2MsgConfirmingResult')
+  });
 
   const okTexts =
-    action === 'draft'
-      ? ['草稿', '保存成功', '已保存']
-      : ['发布成功', '已发布', '提交成功'];
+    action === 'draft' ? ['草稿', '保存成功', '已保存'] : ['发布成功', '已发布', '提交成功'];
 
   const deadline = Date.now() + 15000;
   while (Date.now() < deadline) {
     if (action === 'publish' && (isSuccessPage() || isManagePage() || isDetailPage())) {
-      await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgSuccessDetectedStartVerify') });
+      await report({
+        status: 'running',
+        stage: 'confirmSuccess',
+        userMessage: getMessage('v2MsgSuccessDetectedStartVerify')
+      });
       return true;
     }
     const text = document.body?.innerText || '';
     if (okTexts.some((t) => text.includes(t))) {
-      await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgSuccessDetectedStartVerify') });
+      await report({
+        status: 'running',
+        stage: 'confirmSuccess',
+        userMessage: getMessage('v2MsgSuccessDetectedStartVerify')
+      });
       return true;
     }
     await new Promise((r) => setTimeout(r, 300));
@@ -1204,8 +1417,11 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<boolean
   await report({
     status: 'waiting_user',
     stage: 'waitingUser',
-    userMessage: action === 'draft' ? getMessage('v2MsgPleaseConfirmDraftSaved') : getMessage('v2MsgPleaseConfirmPublishCompleted'),
-    userSuggestion: getMessage('v2SugHandleModalRiskRequiredThenContinueOrRetry'),
+    userMessage:
+      action === 'draft'
+        ? getMessage('v2MsgPleaseConfirmDraftSaved')
+        : getMessage('v2MsgPleaseConfirmPublishCompleted'),
+    userSuggestion: getMessage('v2SugHandleModalRiskRequiredThenContinueOrRetry')
   });
   return false;
 }
@@ -1254,7 +1470,7 @@ async function stageEnsureDraftId(job: AnyJob): Promise<void> {
 async function runFlow(job: AnyJob): Promise<void> {
   await stageDetectLogin();
   await stageFillTitle(job.article.title);
-  await stageFillContent(job.article.contentHtml, job.article.sourceUrl);
+  await stageFillContent(job.article.contentHtml, job.article.sourceUrl || '');
 
   if (job.action === 'draft') {
     await stageSaveDraft();
@@ -1264,7 +1480,7 @@ async function runFlow(job: AnyJob): Promise<void> {
       status: 'success',
       stage: 'done',
       userMessage: getMessage('v2MsgDraftSavedVerifyDone'),
-      devDetails: summarizeVerifyDetails({ editorUrl: location.href }),
+      devDetails: summarizeVerifyDetails({ editorUrl: location.href })
     });
     return;
   } else {
@@ -1277,7 +1493,11 @@ async function runFlow(job: AnyJob): Promise<void> {
     if (!confirmed) return;
 
     // 等待页面跳转（成功页/详情页）或后台处理一小段时间，然后进入列表验收闭环
-    await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgPublishClickedWaitingRedirectOrIndex') });
+    await report({
+      status: 'running',
+      stage: 'confirmSuccess',
+      userMessage: getMessage('v2MsgPublishClickedWaitingRedirectOrIndex')
+    });
     await new Promise((r) => setTimeout(r, 15000));
 
     // 自动跳转到列表页进行验收（需 manifest 覆盖 manage 页）
@@ -1285,7 +1505,7 @@ async function runFlow(job: AnyJob): Promise<void> {
       status: 'running',
       stage: 'confirmSuccess',
       userMessage: getMessage('v2MsgPublishTriggeredGoManageListVerify'),
-      devDetails: summarizeVerifyDetails({ listUrl: 'https://mp.csdn.net/mp_blog/manage/article' }),
+      devDetails: summarizeVerifyDetails({ listUrl: 'https://mp.csdn.net/mp_blog/manage/article' })
     });
     location.href = 'https://mp.csdn.net/mp_blog/manage/article';
     return;
@@ -1330,7 +1550,7 @@ async function bootstrap(): Promise<void> {
       stage: currentStage,
       userMessage: getMessage('v2MsgFailed'),
       userSuggestion: getMessage('v2SugCheckLoginOrDomThenRetry'),
-      devDetails: { message: error instanceof Error ? error.message : String(error) },
+      devDetails: { message: error instanceof Error ? error.message : String(error) }
     });
   }
 }
@@ -1345,10 +1565,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     stopRequested = true;
     return;
   }
-  if (message?.type === V2_REQUEST_RETRY && message.jobId === currentJob.jobId && message.channelId === CHANNEL_ID) {
+  if (
+    message?.type === V2_REQUEST_RETRY &&
+    message.jobId === currentJob.jobId &&
+    message.channelId === CHANNEL_ID
+  ) {
     bootstrap();
   }
-  if (message?.type === V2_REQUEST_CONTINUE && message.jobId === currentJob.jobId && message.channelId === CHANNEL_ID) {
+  if (
+    message?.type === V2_REQUEST_CONTINUE &&
+    message.jobId === currentJob.jobId &&
+    message.channelId === CHANNEL_ID
+  ) {
     bootstrap();
   }
 });

@@ -15,6 +15,7 @@ import type { ChannelId, ChannelRuntimeState, PublishJob } from '../shared/v2-ty
 /* INLINE:dom */
 /* INLINE:events */
 /* INLINE:v2-protocol */
+/* INLINE:channel-config */
 /* INLINE:publish-verify */
 /* INLINE:rich-content */
 /* INLINE:image-bridge */
@@ -27,7 +28,9 @@ let currentJob: AnyJob | null = null;
 let currentStage: ChannelRuntimeState['stage'] = 'init';
 let stopRequested = false;
 
-(globalThis as unknown as { __BAWEI_V2_IS_STOP_REQUESTED?: () => boolean }).__BAWEI_V2_IS_STOP_REQUESTED = () => stopRequested;
+(
+  globalThis as unknown as { __BAWEI_V2_IS_STOP_REQUESTED?: () => boolean }
+).__BAWEI_V2_IS_STOP_REQUESTED = () => stopRequested;
 
 function getMessage(key: string, substitutions?: string[]): string {
   try {
@@ -49,16 +52,23 @@ function navigateWithinChannel(url: string): void {
 
 function shouldRunOnThisPage(): boolean {
   if (location.hostname === 'mp.toutiao.com') return true;
-  if (location.hostname === 'www.toutiao.com' && location.pathname.startsWith('/item/')) return true;
+  if (location.hostname === 'www.toutiao.com' && location.pathname.startsWith('/item/'))
+    return true;
   return false;
 }
 
 function isEditorPage(): boolean {
-  return location.hostname === 'mp.toutiao.com' && location.pathname.startsWith('/profile_v4/graphic/publish');
+  return (
+    location.hostname === 'mp.toutiao.com' &&
+    location.pathname.startsWith('/profile_v4/graphic/publish')
+  );
 }
 
 function isListPage(): boolean {
-  return location.hostname === 'mp.toutiao.com' && location.pathname.startsWith('/profile_v4/manage/content/all');
+  return (
+    location.hostname === 'mp.toutiao.com' &&
+    location.pathname.startsWith('/profile_v4/manage/content/all')
+  );
 }
 
 function isDetailPage(): boolean {
@@ -71,7 +81,7 @@ async function report(patch: Partial<ChannelRuntimeState>): Promise<void> {
     type: V2_CHANNEL_UPDATE,
     jobId: currentJob.jobId,
     channelId: CHANNEL_ID,
-    patch,
+    patch
   });
 }
 
@@ -84,13 +94,17 @@ async function getContextFromBackground(): Promise<{ job: AnyJob; channelId: str
 function getCurrentLoginState() {
   return detectPageLoginState({
     loginUrlPattern: /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i,
-    loggedInPattern: /头条号|发布|创作中心|内容管理|账号设置|退出登录|作品管理/i,
+    loggedInPattern: /头条号|发布|创作中心|内容管理|账号设置|退出登录|作品管理/i
   });
 }
 
 async function stageDetectLogin(): Promise<void> {
   currentStage = 'detectLogin';
-  await report({ status: 'running', stage: 'detectLogin', userMessage: getMessage('v3MsgDetectingLogin') });
+  await report({
+    status: 'running',
+    stage: 'detectLogin',
+    userMessage: getMessage('v3MsgDetectingLogin')
+  });
 
   const loginState = getCurrentLoginState();
   if (loginState.status === 'not_logged_in') {
@@ -98,7 +112,7 @@ async function stageDetectLogin(): Promise<void> {
       status: 'not_logged_in',
       stage: 'detectLogin',
       userMessage: getMessage('v3MsgNotLoggedIn'),
-      userSuggestion: getMessage('v3SugLoginThenRetry'),
+      userSuggestion: getMessage('v3SugLoginThenRetry')
     });
     throw new Error('__BAWEI_V2_STOPPED__');
   }
@@ -111,7 +125,9 @@ function findAnyButtonByText(text: string): HTMLButtonElement | null {
 
 function findClickableByExactText(text: string): HTMLElement | null {
   const norm = (s: string) => s.replace(/\s+/g, ' ').trim();
-  const nodes = Array.from(document.querySelectorAll<HTMLElement>('button,[role="button"],[role="menuitem"],a,div,span'));
+  const nodes = Array.from(
+    document.querySelectorAll<HTMLElement>('button,[role="button"],[role="menuitem"],a,div,span')
+  );
   return nodes.find((n) => norm(n.textContent || '') === text) || null;
 }
 
@@ -122,11 +138,145 @@ function buildLooseToken(title: string): string {
   return titleToken(candidate);
 }
 
+type ToutiaoContentToken =
+  | { kind: 'html'; html: string }
+  | { kind: 'image'; src: string; alt?: string };
+
+function findToutiaoDomEditor(fallback?: HTMLElement | null): HTMLElement | null {
+  return (
+    document.querySelector<HTMLElement>('.syl-editor .ProseMirror[contenteditable="true"]') ||
+    document.querySelector<HTMLElement>('.ProseMirror[contenteditable="true"]') ||
+    document.querySelector<HTMLElement>('.ProseMirror') ||
+    (fallback?.isConnected ? fallback : null)
+  );
+}
+
+function findToutiaoLogicalImageCards(editorRoot: HTMLElement): HTMLElement[] {
+  return Array.from(editorRoot.querySelectorAll<HTMLElement>('[__syl_tag="true"]')).filter(
+    (node) => !!node.querySelector('img[src]') && !node.parentElement?.closest('[__syl_tag="true"]')
+  );
+}
+
+function countToutiaoHostedLogicalImages(editorRoot: HTMLElement): number {
+  const cards = findToutiaoLogicalImageCards(editorRoot);
+  if (cards.length) {
+    return cards.filter((card) =>
+      Array.from(card.querySelectorAll<HTMLImageElement>('img')).some((image) =>
+        isPlatformHostedImageUrl(String(image.currentSrc || image.getAttribute('src') || '').trim())
+      )
+    ).length;
+  }
+  return Array.from(editorRoot.querySelectorAll<HTMLImageElement>('img')).filter((image) =>
+    isPlatformHostedImageUrl(String(image.currentSrc || image.getAttribute('src') || '').trim())
+  ).length;
+}
+
+async function executeToutiaoMainWorld(
+  action: 'toutiao-set-html' | 'toutiao-select-image-marker',
+  payload: Record<string, unknown>
+): Promise<Record<string, unknown>> {
+  const response = (await chrome.runtime.sendMessage({
+    type: V3_EXECUTE_MAIN_WORLD,
+    action,
+    payload
+  })) as { success?: boolean; result?: unknown; error?: string };
+  if (!response?.success) {
+    throw new Error(String(response?.error || `今日头条主世界操作失败：${action}`));
+  }
+  const result = (response.result || {}) as Record<string, unknown>;
+  if (result.ok !== true) {
+    throw new Error(String(result.error || `今日头条主世界操作未生效：${action}`));
+  }
+  return result;
+}
+
+async function fillToutiaoBySylEditor(
+  tokens: ToutiaoContentToken[],
+  initialEditor: HTMLElement
+): Promise<void> {
+  const placements: Array<{ marker: string; imageUrl: string }> = [];
+  let imageIndex = 0;
+  const html = tokens
+    .map((token) => {
+      if (token.kind === 'html') return String(token.html || '');
+      imageIndex += 1;
+      const marker = `[[BAWEI_IMAGE_${imageIndex}]]`;
+      placements.push({ marker, imageUrl: token.src });
+      return `<p>${marker}</p>`;
+    })
+    .join('');
+  const markers = placements.map((placement) => placement.marker);
+
+  await retryUntil(
+    async () => {
+      return await executeToutiaoMainWorld('toutiao-set-html', { html, markers });
+    },
+    { timeoutMs: 30_000, intervalMs: 500 }
+  );
+
+  const resetEditor = findToutiaoDomEditor(initialEditor);
+  if (!resetEditor) throw new Error('今日头条正文编辑器在原子写入后不可用');
+  const resetCardCount = findToutiaoLogicalImageCards(resetEditor).length;
+  if (resetCardCount !== 0) {
+    throw new Error(`今日头条原子写入未清空旧图片：${resetCardCount}`);
+  }
+
+  for (let index = 0; index < placements.length; index += 1) {
+    const placement = placements[index];
+    const file = await fetchImageAsFile(currentJob?.jobId || '', placement.imageUrl);
+    await report({
+      status: 'running',
+      stage: 'fillContent',
+      userMessage: getMessage('v3MsgUploadingImageProgress', [
+        String(index + 1),
+        String(placements.length)
+      ])
+    });
+
+    const beforeEditor = findToutiaoDomEditor(initialEditor);
+    if (!beforeEditor) throw new Error('今日头条正文编辑器在插图前不可用');
+    const beforeCount = findToutiaoLogicalImageCards(beforeEditor).length;
+    if (beforeCount !== index) {
+      throw new Error(`今日头条插图前逻辑图片数异常：${beforeCount}/${index}`);
+    }
+
+    await executeToutiaoMainWorld('toutiao-select-image-marker', {
+      marker: placement.marker
+    });
+    const pasteTarget = findToutiaoDomEditor(beforeEditor);
+    if (!pasteTarget) throw new Error('今日头条正文编辑器在定位图片后不可用');
+    simulatePasteFiles(pasteTarget, [file]);
+
+    const expectedCount = beforeCount + 1;
+    const deadline = Date.now() + 75_000;
+    let observedCount = beforeCount;
+    let hostedCount = countToutiaoHostedLogicalImages(pasteTarget);
+    while (Date.now() < deadline) {
+      const activeEditor = findToutiaoDomEditor(pasteTarget);
+      if (!activeEditor) throw new Error('今日头条正文编辑器在图片上传时不可用');
+      observedCount = findToutiaoLogicalImageCards(activeEditor).length;
+      hostedCount = countToutiaoHostedLogicalImages(activeEditor);
+      if (observedCount > expectedCount) {
+        throw new Error(`今日头条单次插图产生重复图片：${observedCount}/${expectedCount}`);
+      }
+      if (observedCount === expectedCount && hostedCount === expectedCount) break;
+      await new Promise((resolve) => setTimeout(resolve, 500));
+    }
+    if (observedCount !== expectedCount || hostedCount !== expectedCount) {
+      throw new Error(
+        `今日头条图片未完成平台托管：逻辑图片 ${observedCount}/${expectedCount}，托管图片 ${hostedCount}/${expectedCount}`
+      );
+    }
+  }
+}
+
 function closeOverlaysBestEffort(): void {
   // NOTE: 头条号编辑页会弹出各种 Drawer/Popover。这里仅关闭“阻挡点击”的遮罩，
   // 不要无脑按 Escape（会把“发布确认/广告提示”等关键弹窗关掉，导致只触发 save=0 而不提交 save=1）。
   try {
-    const candidates = Array.from(document.querySelectorAll<HTMLElement>('button,div,span,a')).filter((n) => {
+    const candidates = Array.from(
+      document.querySelectorAll<HTMLElement>('button,div,span,a')
+    ).filter((n) => {
       const t = (n.textContent || '').replace(/\s+/g, ' ').trim();
       return t === '我知道了' || t === '以后再说' || t === '关闭' || t === '×';
     });
@@ -161,11 +311,18 @@ function closeOverlaysBestEffort(): void {
 
 async function stageFillTitle(title: string): Promise<void> {
   currentStage = 'fillTitle';
-  await report({ status: 'running', stage: 'fillTitle', userMessage: getMessage('v2MsgFillingTitle') });
+  await report({
+    status: 'running',
+    stage: 'fillTitle',
+    userMessage: getMessage('v2MsgFillingTitle')
+  });
 
   closeOverlaysBestEffort();
 
-  const input = (await waitForElement<HTMLTextAreaElement>('textarea[placeholder*="文章标题"]', 60000)) as HTMLTextAreaElement;
+  const input = (await waitForElement<HTMLTextAreaElement>(
+    'textarea[placeholder*="文章标题"]',
+    60000
+  )) as HTMLTextAreaElement;
   simulateFocus(input);
   const t = title.slice(0, 30);
   simulateType(input, t);
@@ -179,44 +336,72 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
     status: 'running',
     stage: 'fillContent',
     userMessage: getMessage('v2MsgFillingContent'),
-    userSuggestion: getMessage('v2SugToutiaoNoSourceFieldAppend'),
+    userSuggestion: getMessage('v2SugToutiaoNoSourceFieldAppend')
   });
 
   const jobTokens = currentJob?.article?.contentTokens;
-  const tokens = Array.isArray(jobTokens)
-    ? jobTokens
-    : buildRichContentTokens({
-        contentHtml,
-        baseUrl: sourceUrl,
-        sourceUrl,
-        htmlMode: 'raw',
-        splitBlocks: true,
-      });
+  const tokens = (
+    Array.isArray(jobTokens)
+      ? [...jobTokens]
+      : buildRichContentTokens({
+          contentHtml,
+          baseUrl: sourceUrl,
+          sourceUrl,
+          htmlMode: 'raw',
+          splitBlocks: true
+        })
+  ) as ToutiaoContentToken[];
   const expectedImages = tokens.filter((token) => token?.kind === 'image').length;
+  const normalizeContentText = (value: string): string =>
+    String(value || '')
+      .replace(/\s+/g, '')
+      .trim();
 
   const plainLen = tokens
     .filter((t) => t?.kind === 'html')
     .map((t) => htmlToPlainTextSafe((t as { html?: string }).html || ''))
     .join('\n')
-    .replace(/\s+/g, '')
-    .length;
+    .replace(/\s+/g, '').length;
 
   if (plainLen < 180) {
     let pad = '（内容来自原文链接，更多细节请查看原文。）';
     while (pad.replace(/\s+/g, '').length < 220) pad += '。';
     const padHtml = `<p>${pad}</p>`;
     const last = tokens[tokens.length - 1];
-    if (last?.kind === 'html' && sourceUrl && String((last as { html?: string }).html || '').includes(sourceUrl)) {
+    if (
+      last?.kind === 'html' &&
+      sourceUrl &&
+      String((last as { html?: string }).html || '').includes(sourceUrl)
+    ) {
       tokens.splice(tokens.length - 1, 0, { kind: 'html', html: padHtml });
     } else {
       tokens.push({ kind: 'html', html: padHtml });
     }
   }
 
+  const expectedAnchors = tokens
+    .filter((token): token is { kind: 'html'; html: string } => token?.kind === 'html')
+    .map((token) => normalizeContentText(htmlToPlainTextSafe(token.html || '')))
+    .filter((text) => text.length >= 12)
+    .map((text) => text.slice(0, Math.min(80, text.length)));
+  let expectedSequenceImageIndex = 0;
+  const expectedSequence = tokens
+    .map((token) => {
+      if (token.kind === 'image') {
+        expectedSequenceImageIndex += 1;
+        return `[[BAWEI_SEQUENCE_IMAGE_${expectedSequenceImageIndex}]]`;
+      }
+      const text = normalizeContentText(htmlToPlainTextSafe(token.html || ''));
+      return text.length >= 12 ? text.slice(0, Math.min(80, text.length)) : '';
+    })
+    .filter(Boolean);
+
   const editor = await retryUntil(
     async () => {
       const el =
-        (document.querySelector<HTMLElement>('.ProseMirror[contenteditable="true"]') as HTMLElement | null) ||
+        (document.querySelector<HTMLElement>(
+          '.ProseMirror[contenteditable="true"]'
+        ) as HTMLElement | null) ||
         (document.querySelector<HTMLElement>('.ProseMirror') as HTMLElement | null) ||
         (findContentEditor(document) as HTMLElement | null) ||
         null;
@@ -228,57 +413,148 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
     { timeoutMs: 60_000, intervalMs: 800 }
   );
 
-  const existingText = (() => {
-    try {
-      return String(editor.textContent || '');
-    } catch {
-      return '';
+  const analyzeEditorContent = () => {
+    const activeEditor = findToutiaoDomEditor(editor) || editor;
+    const normalizedText = normalizeContentText(
+      activeEditor.innerText || activeEditor.textContent || ''
+    );
+    const imageCards = findToutiaoLogicalImageCards(activeEditor);
+    const hostedImages = Array.from(activeEditor.querySelectorAll<HTMLImageElement>('img')).filter(
+      (img) => {
+        const src = String(img.currentSrc || img.getAttribute('src') || '').trim();
+        return isPlatformHostedImageUrl(src);
+      }
+    );
+    const imageCount = imageCards.length || hostedImages.length;
+    const hostedImageCount = imageCards.length
+      ? countToutiaoHostedLogicalImages(activeEditor)
+      : hostedImages.length;
+    const missingAnchors: string[] = [];
+    const duplicateAnchors: string[] = [];
+    let cursor = 0;
+    for (const anchor of expectedAnchors) {
+      const at = normalizedText.indexOf(anchor, cursor);
+      if (at < 0) {
+        missingAnchors.push(anchor);
+        continue;
+      }
+      if (normalizedText.indexOf(anchor, at + anchor.length) >= 0) duplicateAnchors.push(anchor);
+      cursor = at + anchor.length;
     }
-  })();
-  const existingHasSource = !!(sourceUrl && (existingText.includes(sourceUrl) || pageContainsSourceUrl(sourceUrl)));
-  const existingOk =
-    existingHasSource &&
-    (expectedImages === 0 ||
-      Array.from(editor.querySelectorAll<HTMLImageElement>('img')).filter((img) => {
-        const src = String(img.getAttribute('src') || '').trim();
-        if (!src) return false;
-        if (src.startsWith('blob:') || src.startsWith('data:')) return true;
-        return !src.includes('qpic.cn') && !src.includes('qlogo.cn');
-      }).length >= expectedImages);
+
+    const sequenceRoot = activeEditor.cloneNode(true) as HTMLElement;
+    const sequenceCards = findToutiaoLogicalImageCards(sequenceRoot);
+    const sequenceImages: HTMLElement[] = sequenceCards.length
+      ? sequenceCards
+      : Array.from(sequenceRoot.querySelectorAll<HTMLImageElement>('img'));
+    sequenceImages.forEach((node, index) => {
+      node.replaceWith(
+        sequenceRoot.ownerDocument.createTextNode(`[[BAWEI_SEQUENCE_IMAGE_${index + 1}]]`)
+      );
+    });
+    for (const hiddenTemplate of Array.from(sequenceRoot.querySelectorAll('templ'))) {
+      hiddenTemplate.remove();
+    }
+    const observedSequence = normalizeContentText(sequenceRoot.textContent || '');
+    const sequenceMissing: string[] = [];
+    let sequenceCursor = 0;
+    for (const part of expectedSequence) {
+      const at = observedSequence.indexOf(part, sequenceCursor);
+      if (at < 0) {
+        sequenceMissing.push(part);
+        continue;
+      }
+      sequenceCursor = at + part.length;
+    }
+    const remainingMarkers = Array.from(
+      new Set(String(activeEditor.innerHTML || '').match(/\[\[BAWEI_IMAGE_\d+\]\]/g) || [])
+    );
+    const sourcePresent =
+      !sourceUrl ||
+      String(activeEditor.innerHTML || '').includes(sourceUrl) ||
+      String(activeEditor.textContent || '').includes(sourceUrl) ||
+      pageContainsSourceUrl(sourceUrl);
+    return {
+      ok:
+        sourcePresent &&
+        missingAnchors.length === 0 &&
+        duplicateAnchors.length === 0 &&
+        sequenceMissing.length === 0 &&
+        remainingMarkers.length === 0 &&
+        imageCount === expectedImages &&
+        hostedImageCount === expectedImages,
+      imageCount,
+      hostedImageCount,
+      missingAnchors,
+      duplicateAnchors,
+      sequenceMissing,
+      remainingMarkers,
+      sourcePresent,
+      textLength: normalizedText.length
+    };
+  };
+
+  const existingOk = analyzeEditorContent().ok;
 
   if (!existingOk) {
     closeOverlaysBestEffort();
     try {
-      await fillEditorByTokens({
-        jobId: currentJob?.jobId || '',
-        tokens,
-        editorRoot: editor,
-        writeMode: 'html',
-        onImageProgress: async (current, total) => {
-          closeOverlaysBestEffort();
-          await report({
-            status: 'running',
-            stage: 'fillContent',
-            userMessage: getMessage('v3MsgUploadingImageProgress', [String(current), String(total)]),
-          });
-        },
-      });
+      if (document.querySelector('.syl-editor')) {
+        await fillToutiaoBySylEditor(tokens, editor);
+      } else {
+        await fillEditorByTokens({
+          jobId: currentJob?.jobId || '',
+          tokens,
+          editorRoot: editor,
+          writeMode: 'html',
+          ensureCaretAtEnd: true,
+          onImageProgress: async (current, total) => {
+            closeOverlaysBestEffort();
+            await report({
+              status: 'running',
+              stage: 'fillContent',
+              userMessage: getMessage('v3MsgUploadingImageProgress', [
+                String(current),
+                String(total)
+              ])
+            });
+          }
+        });
+      }
     } catch (e) {
       await report({
         status: 'waiting_user',
         stage: 'waitingUser',
         userMessage: getMessage('v3MsgImageUploadFailed'),
         userSuggestion: getMessage('v3SugManualUploadImagesThenContinue'),
-        devDetails: { message: e instanceof Error ? e.message : String(e) },
+        devDetails: { message: e instanceof Error ? e.message : String(e) }
       });
       throw new Error('__BAWEI_V2_STOPPED__');
     }
   }
 
-  await new Promise((r) => setTimeout(r, 900));
-  const textLen = (editor.textContent || '').replace(/\s+/g, '').length;
-  const ok = (editor.textContent || '').includes('原文链接') || pageContainsSourceUrl(sourceUrl) || pageContainsText('原文链接');
-  if (!ok || textLen < 30) throw new Error('正文填充失败：未检测到内容写入（可能被编辑器拦截）');
+  const finalAnalysis = await retryUntil(
+    async () => {
+      const analysis = analyzeEditorContent();
+      if (!analysis.ok) {
+        throw new Error(
+          `正文未完整落稿：图片 ${analysis.imageCount}/${expectedImages}，托管图片 ${analysis.hostedImageCount}/${expectedImages}，缺失段落 ${analysis.missingAnchors.length}，重复段落 ${analysis.duplicateAnchors.length}，图文顺序缺失 ${analysis.sequenceMissing.length}，残留占位符 ${analysis.remainingMarkers.length}，来源链接 ${analysis.sourcePresent ? 'ok' : 'missing'}`
+        );
+      }
+      return analysis;
+    },
+    { timeoutMs: 20_000, intervalMs: 500 }
+  );
+  await report({
+    status: 'running',
+    stage: 'fillContent',
+    devDetails: {
+      observedImageCount: finalAnalysis.imageCount,
+      hostedImageCount: finalAnalysis.hostedImageCount,
+      expectedImageCount: expectedImages,
+      textLength: finalAnalysis.textLength
+    }
+  });
 }
 
 async function stageEnsureNoCover(): Promise<void> {
@@ -287,7 +563,9 @@ async function stageEnsureNoCover(): Promise<void> {
     async () => {
       const group =
         (document.querySelector<HTMLElement>('.article-cover-radio-group') as HTMLElement | null) ||
-        (document.querySelector<HTMLElement>('.article-cover .byte-radio-group') as HTMLElement | null) ||
+        (document.querySelector<HTMLElement>(
+          '.article-cover .byte-radio-group'
+        ) as HTMLElement | null) ||
         null;
       const scope = group || document;
       const labels = Array.from(scope.querySelectorAll<HTMLElement>('label.byte-radio'));
@@ -357,7 +635,15 @@ async function stageEnsureStatementSelected(): Promise<void> {
     { timeoutMs: 30_000, intervalMs: 600 }
   );
 
-  const optionTexts = ['取材网络', '引用站内', '个人观点', '引用AI', '虚构演绎', '投资观点', '健康医疗'];
+  const optionTexts = [
+    '取材网络',
+    '引用站内',
+    '个人观点',
+    '引用AI',
+    '虚构演绎',
+    '投资观点',
+    '健康医疗'
+  ];
   const optionLabels = optionTexts
     .map((t) => {
       const labels = Array.from(document.querySelectorAll<HTMLElement>('label'));
@@ -378,10 +664,14 @@ async function stageEnsureStatementSelected(): Promise<void> {
 
   // 优先勾选“取材网络”（更通用）
   const preferred =
-    optionLabels.find((l) => normalize(l.textContent || '').includes('取材网络')) || optionLabels[0] || null;
+    optionLabels.find((l) => normalize(l.textContent || '').includes('取材网络')) ||
+    optionLabels[0] ||
+    null;
   if (!preferred) throw new Error('未找到作品声明选项（取材网络等）');
 
-  const input = preferred.querySelector<HTMLInputElement>('input[type="checkbox"],input[type="radio"]');
+  const input = preferred.querySelector<HTMLInputElement>(
+    'input[type="checkbox"],input[type="radio"]'
+  );
   if (input?.checked) return;
 
   closeOverlaysBestEffort();
@@ -396,7 +686,9 @@ async function stageEnsureStatementSelected(): Promise<void> {
     // ignore
   }
   await new Promise((r) => setTimeout(r, 300));
-  const after = preferred.querySelector<HTMLInputElement>('input[type="checkbox"],input[type="radio"]') || input;
+  const after =
+    preferred.querySelector<HTMLInputElement>('input[type="checkbox"],input[type="radio"]') ||
+    input;
   if (after && !after.checked) {
     try {
       after.click();
@@ -419,7 +711,8 @@ async function stageDisableToutiaoFirstIfAny(): Promise<void> {
   // Some accounts might have "头条首发" checked by default and may block publishing if not eligible.
   const node = findAnyElementContainingText('头条首发');
   if (!node) return;
-  const wrap = (node.closest('label') as HTMLElement | null) || (node.parentElement as HTMLElement | null);
+  const wrap =
+    (node.closest('label') as HTMLElement | null) || (node.parentElement as HTMLElement | null);
   const input = (wrap?.querySelector('input[type="checkbox"]') as HTMLInputElement | null) || null;
   if (!input) return;
   if (!input.checked) return;
@@ -436,7 +729,11 @@ async function stageDisableToutiaoFirstIfAny(): Promise<void> {
 
 async function stageSaveDraft(): Promise<void> {
   currentStage = 'saveDraft';
-  await report({ status: 'running', stage: 'saveDraft', userMessage: getMessage('v2MsgSavingDraft') });
+  await report({
+    status: 'running',
+    stage: 'saveDraft',
+    userMessage: getMessage('v2MsgSavingDraft')
+  });
 
   // There is usually an auto-sync, but try to trigger draft save by focusing out.
   closeOverlaysBestEffort();
@@ -447,14 +744,14 @@ async function stageSaveDraft(): Promise<void> {
 
 async function stageSubmitPublish(): Promise<void> {
   currentStage = 'submitPublish';
-  const coverChecked =
-    (document.querySelector<HTMLInputElement>('.article-cover-radio-group input[type="radio"]:checked')?.getAttribute('value') ||
-      '') as string;
+  const coverChecked = (document
+    .querySelector<HTMLInputElement>('.article-cover-radio-group input[type="radio"]:checked')
+    ?.getAttribute('value') || '') as string;
   await report({
     status: 'running',
     stage: 'submitPublish',
     userMessage: getMessage('v2MsgPublishing'),
-    devDetails: { coverChecked },
+    devDetails: { coverChecked }
   });
 
   closeOverlaysBestEffort();
@@ -466,7 +763,8 @@ async function stageSubmitPublish(): Promise<void> {
       const rect = b.getBoundingClientRect();
       const style = window.getComputedStyle(b);
       if (rect.width < 2 || rect.height < 2) continue;
-      if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') continue;
+      if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0')
+        continue;
       return b;
     }
     return null;
@@ -520,7 +818,8 @@ async function stageSubmitPublish(): Promise<void> {
       // ignore
     }
 
-    const confirm = pickVisible('确定') || pickVisible('确认发布') || pickVisible('确认') || pickVisible('发布');
+    const confirm =
+      pickVisible('确定') || pickVisible('确认发布') || pickVisible('确认') || pickVisible('发布');
     if (confirm) {
       const disabled =
         (confirm instanceof HTMLButtonElement && confirm.disabled) ||
@@ -547,19 +846,28 @@ async function stageSubmitPublish(): Promise<void> {
 
 async function stageConfirmSuccess(): Promise<void> {
   currentStage = 'confirmSuccess';
-  await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgConfirmingPublishResult') });
+  await report({
+    status: 'running',
+    stage: 'confirmSuccess',
+    userMessage: getMessage('v2MsgConfirmingPublishResult')
+  });
 
   // If publish API returns "保存失败" / "发布失败", we should stop and let user handle required fields / risk controls.
   const failDeadline = Date.now() + 6000;
   while (Date.now() < failDeadline) {
     const text = document.body?.innerText || '';
     const html = document.documentElement?.outerHTML || '';
-    if (text.includes('保存失败') || text.includes('发布失败') || html.includes('保存失败') || html.includes('发布失败')) {
+    if (
+      text.includes('保存失败') ||
+      text.includes('发布失败') ||
+      html.includes('保存失败') ||
+      html.includes('发布失败')
+    ) {
       await report({
         status: 'waiting_user',
         stage: 'waitingUser',
         userMessage: getMessage('v2MsgToutiaoSavePublishFailedSaveFailed'),
-        userSuggestion: getMessage('v2SugToutiaoHandleRequiredFieldsThenContinueVerify'),
+        userSuggestion: getMessage('v2SugToutiaoHandleRequiredFieldsThenContinueVerify')
       });
       return;
     }
@@ -576,7 +884,11 @@ async function stageConfirmSuccess(): Promise<void> {
 }
 
 async function runEditorFlow(job: AnyJob): Promise<void> {
-  await report({ status: 'running', stage: 'openEntry', userMessage: getMessage('v2MsgEnteredToutiaoEditor') });
+  await report({
+    status: 'running',
+    stage: 'openEntry',
+    userMessage: getMessage('v2MsgEnteredToutiaoEditor')
+  });
 
   await stageDetectLogin();
   // Best-effort required fields (avoid image upload)
@@ -589,7 +901,7 @@ async function runEditorFlow(job: AnyJob): Promise<void> {
   await stageFillTitle(job.article.title);
 
   // Fill content after required fields to reduce the chance that auto-save is blocked by missing selections.
-  await stageFillContent(job.article.contentHtml, job.article.sourceUrl);
+  await stageFillContent(job.article.contentHtml, job.article.sourceUrl || '');
 
   if (job.action === 'draft') {
     await stageSaveDraft();
@@ -597,7 +909,7 @@ async function runEditorFlow(job: AnyJob): Promise<void> {
       status: 'success',
       stage: 'done',
       userMessage: getMessage('v2MsgDraftSavedVerifyDone'),
-      devDetails: summarizeVerifyDetails({ listUrl: LIST_URL, listVisible: true }),
+      devDetails: summarizeVerifyDetails({ listUrl: LIST_URL, listVisible: true })
     });
     return;
   }
@@ -609,19 +921,25 @@ async function runEditorFlow(job: AnyJob): Promise<void> {
     status: 'running',
     stage: 'confirmSuccess',
     userMessage: getMessage('v2MsgPublishTriggeredGoWorksListVerify'),
-    devDetails: summarizeVerifyDetails({ listUrl: LIST_URL }),
+    devDetails: summarizeVerifyDetails({ listUrl: LIST_URL })
   });
   navigateWithinChannel(LIST_URL);
 }
 
 async function verifyFromList(job: AnyJob): Promise<void> {
   currentStage = 'confirmSuccess';
-  await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgVerifyFindNewArticleInWorksList') });
+  await report({
+    status: 'running',
+    stage: 'confirmSuccess',
+    userMessage: getMessage('v2MsgVerifyFindNewArticleInWorksList')
+  });
 
   // Wait for list content to render (avoid refreshing too early and never seeing the row).
   await retryUntil(
     async () => {
-      const hasSearch = !!document.querySelector('input[placeholder*="搜索关键词"], input[placeholder*="搜索"]');
+      const hasSearch = !!document.querySelector(
+        'input[placeholder*="搜索关键词"], input[placeholder*="搜索"]'
+      );
       const hasItemLink = document.querySelectorAll('a[href*="toutiao.com/item"]').length > 0;
       const t = document.body?.innerText || '';
       const hasCount = t.includes('共') && t.includes('条内容');
@@ -635,7 +953,9 @@ async function verifyFromList(job: AnyJob): Promise<void> {
 
   const token = buildLooseToken(job.article.title);
   const hasTitle =
-    pageContainsTitle(job.article.title) || (token.length >= 6 && pageContainsText(token)) || pageContainsText(token.slice(0, 8));
+    pageContainsTitle(job.article.title) ||
+    (token.length >= 6 && pageContainsText(token)) ||
+    pageContainsText(token.slice(0, 8));
 
   // Try using built-in keyword search to reduce noise and make matching stable.
   const searchInput = document.querySelector<HTMLInputElement>(
@@ -648,14 +968,29 @@ async function verifyFromList(job: AnyJob): Promise<void> {
         simulateFocus(searchInput);
         searchInput.value = token;
         searchInput.dispatchEvent(
-          new InputEvent('input', { bubbles: true, cancelable: true, data: token, inputType: 'insertText' })
+          new InputEvent('input', {
+            bubbles: true,
+            cancelable: true,
+            data: token,
+            inputType: 'insertText'
+          })
         );
         searchInput.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
         searchInput.dispatchEvent(
-          new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter', code: 'Enter' })
+          new KeyboardEvent('keydown', {
+            bubbles: true,
+            cancelable: true,
+            key: 'Enter',
+            code: 'Enter'
+          })
         );
         searchInput.dispatchEvent(
-          new KeyboardEvent('keyup', { bubbles: true, cancelable: true, key: 'Enter', code: 'Enter' })
+          new KeyboardEvent('keyup', {
+            bubbles: true,
+            cancelable: true,
+            key: 'Enter',
+            code: 'Enter'
+          })
         );
       } catch {
         // ignore
@@ -665,7 +1000,13 @@ async function verifyFromList(job: AnyJob): Promise<void> {
     }
   }
 
-  if (!(hasTitle || pageContainsTitle(job.article.title) || (token.length >= 6 && pageContainsText(token)))) {
+  if (
+    !(
+      hasTitle ||
+      pageContainsTitle(job.article.title) ||
+      (token.length >= 6 && pageContainsText(token))
+    )
+  ) {
     const key = `bawei_v2_toutiao_list_retry_${job.jobId}`;
     const n = Number(sessionStorage.getItem(key) || '0') + 1;
     sessionStorage.setItem(key, String(n));
@@ -674,7 +1015,7 @@ async function verifyFromList(job: AnyJob): Promise<void> {
         status: 'running',
         stage: 'confirmSuccess',
         userMessage: getMessage('v2MsgVerifyListNoTitleRefresh8s12', [String(n)]),
-        devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: false }),
+        devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: false })
       });
       setTimeout(() => location.reload(), 8000);
       return;
@@ -682,11 +1023,15 @@ async function verifyFromList(job: AnyJob): Promise<void> {
 
     sessionStorage.removeItem(key);
     await report({
-      status: 'waiting_user',
-      stage: 'waitingUser',
+      status: 'pending_review',
+      stage: 'done',
       userMessage: getMessage('v2MsgVerifyFailedListStillNoTitleMaybeReviewOrFailed'),
-      userSuggestion: getMessage('v2SugConfirmPublishedNoRequiredRefreshThenContinue'),
-      devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: false }),
+      devDetails: summarizeVerifyDetails({
+        listUrl: location.href,
+        managementUrl: location.href,
+        listVisible: false,
+        reviewStatus: 'submitted_not_indexed'
+      })
     });
     return;
   }
@@ -719,33 +1064,78 @@ async function verifyFromList(job: AnyJob): Promise<void> {
     (findAnyElementContainingText(job.article.title)?.closest('a') as HTMLAnchorElement | null) ||
     (findAnyElementContainingText(token)?.closest('a') as HTMLAnchorElement | null);
   const href = link?.href || '';
+  const rowText = normalizeForSearch(
+    String(
+      link?.closest('tr,li,[class*="item"],[class*="row"]')?.textContent ||
+        link?.parentElement?.textContent ||
+        ''
+    )
+  );
+  const rejectedPattern = getChannelConfig(CHANNEL_ID).rejectedPatterns.find((pattern) =>
+    new RegExp(pattern, 'i').test(rowText)
+  );
+  if (rejectedPattern) {
+    await report({
+      status: 'rejected',
+      stage: 'done',
+      userMessage: rejectedPattern,
+      devDetails: summarizeVerifyDetails({
+        listUrl: location.href,
+        managementUrl: location.href,
+        listVisible: true,
+        reviewStatus: 'rejected',
+        rejectionReason: rejectedPattern
+      })
+    });
+    return;
+  }
   if (href) {
     await report({
-      status: 'success',
+      status: 'pending_review',
       stage: 'done',
       userMessage: getMessage('v2MsgVerifyPassedListNewArticlePublished'),
-      devDetails: summarizeVerifyDetails({ publishedUrl: href, listUrl: location.href, listVisible: true }),
+      devDetails: summarizeVerifyDetails({
+        publishedUrl: href,
+        candidatePublicUrl: href,
+        listUrl: location.href,
+        managementUrl: location.href,
+        listVisible: true,
+        reviewStatus: rowText || 'candidate_public_url'
+      })
     });
     return;
   }
 
   await report({
-    status: 'waiting_user',
-    stage: 'waitingUser',
+    status: 'pending_review',
+    stage: 'done',
     userMessage: getMessage('v2MsgVerifyBlockedNoDetailLink'),
-    userSuggestion: getMessage('v2SugOpenDetailManuallyThenWaitVerify'),
-    devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: true }),
+    devDetails: summarizeVerifyDetails({
+      listUrl: location.href,
+      managementUrl: location.href,
+      listVisible: true,
+      reviewStatus: rowText || 'submitted_not_indexed'
+    })
   });
 }
 
 async function verifyFromDetail(job: AnyJob): Promise<void> {
-  const ok = pageContainsSourceUrl(job.article.sourceUrl);
+  const sourceUrl = job.article.sourceUrl || '';
+  const ok = !sourceUrl || pageContainsSourceUrl(sourceUrl);
   await report({
-    status: ok ? 'success' : 'waiting_user',
+    status: ok ? (job.action === 'draft' ? 'success' : 'pending_review') : 'waiting_user',
     stage: ok ? 'done' : 'waitingUser',
-    userMessage: ok ? getMessage('v2MsgVerifyPassedDetailHasSourceLink') : getMessage('v2MsgVerifyFailedDetailNoSourceLink'),
+    userMessage: ok
+      ? getMessage('v2MsgVerifyPassedDetailHasSourceLink')
+      : getMessage('v2MsgVerifyFailedDetailNoSourceLink'),
     userSuggestion: ok ? undefined : getMessage('v2SugCheckSourceLinkAtEndThenContinue'),
-    devDetails: summarizeVerifyDetails({ publishedUrl: location.href, sourceUrlPresent: ok }),
+    devDetails: summarizeVerifyDetails({
+      publishedUrl: location.href,
+      candidatePublicUrl: location.href,
+      managementUrl: getChannelConfig(CHANNEL_ID).managementUrl,
+      reviewStatus: 'candidate_public_url',
+      sourceUrlPresent: sourceUrl ? ok : false
+    })
   });
 }
 
@@ -778,7 +1168,7 @@ async function bootstrap(): Promise<void> {
       status: 'running',
       stage: 'openEntry',
       userMessage: getMessage('v2MsgOutOfScopeReturningToEditor'),
-      devDetails: summarizeVerifyDetails({ listUrl: EDITOR_URL }),
+      devDetails: summarizeVerifyDetails({ listUrl: EDITOR_URL })
     });
     navigateWithinChannel(EDITOR_URL);
   } catch (error) {
@@ -788,7 +1178,7 @@ async function bootstrap(): Promise<void> {
       stage: currentStage,
       userMessage: getMessage('v2MsgFailed'),
       userSuggestion: getMessage('v2SugCheckLoginOrDomThenRetry'),
-      devDetails: { message: error instanceof Error ? error.message : String(error) },
+      devDetails: { message: error instanceof Error ? error.message : String(error) }
     });
   }
 }
@@ -803,10 +1193,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     stopRequested = true;
     return;
   }
-  if (message?.type === V2_REQUEST_RETRY && message.jobId === currentJob.jobId && message.channelId === CHANNEL_ID) {
+  if (
+    message?.type === V2_REQUEST_RETRY &&
+    message.jobId === currentJob.jobId &&
+    message.channelId === CHANNEL_ID
+  ) {
     bootstrap();
   }
-  if (message?.type === V2_REQUEST_CONTINUE && message.jobId === currentJob.jobId && message.channelId === CHANNEL_ID) {
+  if (
+    message?.type === V2_REQUEST_CONTINUE &&
+    message.jobId === currentJob.jobId &&
+    message.channelId === CHANNEL_ID
+  ) {
     bootstrap();
   }
 });

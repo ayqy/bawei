@@ -51,6 +51,11 @@ assert.equal(
   '终态渠道之后应按原顺序推进'
 );
 assert.equal(
+  getNextSerialChannel(channels, state({ csdn: 'pending_review', cnblogs: 'rejected' })),
+  'toutiao',
+  '待审和退回都应结束当前渠道并推进串行队列'
+);
+assert.equal(
   getNextSerialChannel(
     channels,
     state({ csdn: 'waiting_user', cnblogs: 'not_logged_in', toutiao: 'success' })
@@ -70,7 +75,7 @@ assert.equal(
   false
 );
 
-for (const status of ['success', 'failed', 'waiting_user', 'not_logged_in']) {
+for (const status of ['success', 'pending_review', 'rejected', 'failed', 'waiting_user', 'not_logged_in']) {
   assert.equal(isSerialTerminalStatus(status), true, `${status} 应结束当前渠道尝试`);
 }
 assert.equal(isSerialTerminalStatus('running'), false);

@@ -6,7 +6,8 @@ const BAWEI_V2_STOP_ERROR_MESSAGE_DOM = '__BAWEI_V2_STOPPED__';
 
 function baweiV2IsStopRequestedDom(): boolean {
   try {
-    const fn = (globalThis as unknown as { __BAWEI_V2_IS_STOP_REQUESTED?: () => boolean }).__BAWEI_V2_IS_STOP_REQUESTED;
+    const fn = (globalThis as unknown as { __BAWEI_V2_IS_STOP_REQUESTED?: () => boolean })
+      .__BAWEI_V2_IS_STOP_REQUESTED;
     return typeof fn === 'function' ? !!fn() : false;
   } catch {
     return false;
@@ -93,7 +94,7 @@ export function waitForElement<T extends Element = Element>(
     // Start observing
     observer.observe(root instanceof Document ? root.documentElement : root, {
       childList: true,
-      subtree: true,
+      subtree: true
     });
   });
 }
@@ -110,9 +111,7 @@ export function waitForElements(
   timeout: number = 10000,
   root: Document | Element = document
 ): Promise<Element[]> {
-  return Promise.all(
-    selectors.map(selector => waitForElement(selector, timeout, root))
-  );
+  return Promise.all(selectors.map((selector) => waitForElement(selector, timeout, root)));
 }
 
 /**
@@ -200,7 +199,7 @@ export function waitForVisibleElement<T extends HTMLElement = HTMLElement>(
       childList: true,
       subtree: true,
       attributes: true,
-      attributeFilter: ['style', 'class', 'hidden'],
+      attributeFilter: ['style', 'class', 'hidden']
     });
   });
 }
@@ -213,7 +212,7 @@ export function waitForVisibleElement<T extends HTMLElement = HTMLElement>(
 export function isElementVisible(element: HTMLElement): boolean {
   const rect = element.getBoundingClientRect();
   const style = window.getComputedStyle(element);
-  
+
   return (
     rect.width > 0 &&
     rect.height > 0 &&
@@ -229,7 +228,9 @@ export function isElementVisible(element: HTMLElement): boolean {
  * @param root Root element to search within (default: document)
  * @returns The title input element or null if not found
  */
-export function findTitleInput(root: Document | Element = document): HTMLInputElement | HTMLTextAreaElement | null {
+export function findTitleInput(
+  root: Document | Element = document
+): HTMLInputElement | HTMLTextAreaElement | null {
   const selectors = [
     'input[placeholder*="标题"]',
     'input[placeholder*="title"]',
@@ -242,16 +243,16 @@ export function findTitleInput(root: Document | Element = document): HTMLInputEl
     '.title input',
     '.title textarea',
     '#title',
-    '[data-testid*="title"]',
+    '[data-testid*="title"]'
   ];
-  
+
   for (const selector of selectors) {
     const element = root.querySelector<HTMLInputElement | HTMLTextAreaElement>(selector);
     if (element) {
       return element;
     }
   }
-  
+
   return null;
 }
 
@@ -275,16 +276,16 @@ export function findContentEditor(root: Document | Element = document): HTMLElem
     '.editor-content',
     '.rich-editor',
     '[data-testid*="editor"]',
-    '[data-testid*="content"]',
+    '[data-testid*="content"]'
   ];
-  
+
   for (const selector of selectors) {
     const element = root.querySelector<HTMLElement>(selector);
     if (element && isElementVisible(element)) {
       return element;
     }
   }
-  
+
   return null;
 }
 
@@ -307,19 +308,25 @@ export function findPublishButton(root: Document | Element = document): HTMLButt
     '.publish-btn',
     '.submit-btn',
     '#publish',
-    '#submit',
+    '#submit'
   ];
-  
+
   // Custom contains selector implementation
   const buttons = root.querySelectorAll('button');
   for (const button of buttons) {
     const text = button.textContent?.trim().toLowerCase() || '';
-    if (text.includes('发布') || text.includes('发表') || text.includes('提交') || 
-        text.includes('publish') || text.includes('post') || text.includes('submit')) {
+    if (
+      text.includes('发布') ||
+      text.includes('发表') ||
+      text.includes('提交') ||
+      text.includes('publish') ||
+      text.includes('post') ||
+      text.includes('submit')
+    ) {
       return button as HTMLButtonElement;
     }
   }
-  
+
   // Try other selectors
   for (const selector of selectors.slice(6)) {
     const element = root.querySelector<HTMLButtonElement>(selector);
@@ -327,6 +334,6 @@ export function findPublishButton(root: Document | Element = document): HTMLButt
       return element;
     }
   }
-  
+
   return null;
 }

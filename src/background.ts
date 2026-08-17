@@ -1,7 +1,19 @@
 import { getSettings } from './shared/settings-manager';
-import { cleanExpiredData, getJobData, getJobState, markJobStopped, storeJobData, storeJobState } from './shared/article-data-manager';
+import {
+  cleanExpiredData,
+  getJobData,
+  getJobState,
+  markJobStopped,
+  storeJobData,
+  storeJobState
+} from './shared/article-data-manager';
 import type { ChannelId, ChannelRuntimeState, PublishAction, PublishJob } from './shared/v2-types';
-import { getNextSerialChannel, getRunningSerialChannel, isSerialTerminalStatus } from './shared/serial-channel-queue';
+import { CHANNEL_IDS, getChannelConfig, matchesChannelUrl } from './shared/channel-config';
+import {
+  getNextSerialChannel,
+  getRunningSerialChannel,
+  isSerialTerminalStatus
+} from './shared/serial-channel-queue';
 import {
   V2_AUDIT_CHANNEL_LOGIN,
   V2_CHANNEL_UPDATE,
@@ -14,7 +26,7 @@ import {
   V2_REQUEST_STOP,
   V2_START_JOB,
   V3_EXECUTE_MAIN_WORLD,
-  V3_FETCH_IMAGE,
+  V3_FETCH_IMAGE
 } from './shared/v2-protocol';
 import type {
   AuditChannelLoginRequest,
@@ -34,7 +46,7 @@ import type {
   StartJobRequest,
   StartJobResponse,
   StopJobRequest,
-  StopJobResponse,
+  StopJobResponse
 } from './shared/v2-protocol';
 
 // Extension lifecycle events
@@ -90,7 +102,11 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
   // Handle different message types
   switch (type) {
     case V2_START_JOB:
-      handleV2StartJob(message as StartJobRequest, sender, sendResponse as (response: StartJobResponse) => void);
+      handleV2StartJob(
+        message as StartJobRequest,
+        sender,
+        sendResponse as (response: StartJobResponse) => void
+      );
       return true; // Indicate async response
 
     case V2_GET_CONTEXT:
@@ -98,23 +114,39 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       return true;
 
     case V2_CHANNEL_UPDATE:
-      handleV2ChannelUpdate(message as ChannelUpdate, sender, sendResponse as (response: { success: boolean; error?: string }) => void);
+      handleV2ChannelUpdate(
+        message as ChannelUpdate,
+        sender,
+        sendResponse as (response: { success: boolean; error?: string }) => void
+      );
       return true;
 
     case V2_REQUEST_CONTINUE:
-      handleV2Control(message as ContinueRequest, sendResponse as (response: { success: boolean; error?: string }) => void);
+      handleV2Control(
+        message as ContinueRequest,
+        sendResponse as (response: { success: boolean; error?: string }) => void
+      );
       return true;
 
     case V2_REQUEST_RETRY:
-      handleV2Control(message as RetryRequest, sendResponse as (response: { success: boolean; error?: string }) => void);
+      handleV2Control(
+        message as RetryRequest,
+        sendResponse as (response: { success: boolean; error?: string }) => void
+      );
       return true;
 
     case V2_REQUEST_STOP:
-      handleV2StopJob(message as StopJobRequest, sendResponse as (response: StopJobResponse) => void);
+      handleV2StopJob(
+        message as StopJobRequest,
+        sendResponse as (response: StopJobResponse) => void
+      );
       return true;
 
     case V2_FOCUS_CHANNEL_TAB:
-      handleV2FocusChannelTab(message as FocusChannelTabRequest, sendResponse as (response: FocusChannelTabResponse) => void);
+      handleV2FocusChannelTab(
+        message as FocusChannelTabRequest,
+        sendResponse as (response: FocusChannelTabResponse) => void
+      );
       return true;
 
     case V2_AUDIT_CHANNEL_LOGIN:
@@ -126,7 +158,10 @@ chrome.runtime.onMessage.addListener((message: unknown, sender, sendResponse) =>
       return true;
 
     case V3_FETCH_IMAGE:
-      handleV3FetchImage(message as FetchImageRequest, sendResponse as (response: FetchImageResponse) => void);
+      handleV3FetchImage(
+        message as FetchImageRequest,
+        sendResponse as (response: FetchImageResponse) => void
+      );
       return true;
 
     case V3_EXECUTE_MAIN_WORLD:
@@ -164,31 +199,11 @@ const jobIdToSourceTabId = new Map<string, number>();
 const jobStateCache = new Map<string, Record<ChannelId, ChannelRuntimeState>>();
 const serialAdvanceLocks = new Map<string, Promise<void>>();
 
-const CHANNEL_ENTRY_URLS: Record<ChannelId, string> = {
-  csdn: 'https://mp.csdn.net/mp_blog/creation/editor',
-  'tencent-cloud-dev': 'https://cloud.tencent.com/developer/article/write',
-  cnblogs: 'https://i.cnblogs.com/posts/edit',
-  oschina: 'https://www.oschina.net/blog/write',
-  woshipm: 'https://www.woshipm.com/writing',
-  mowen: 'https://note.mowen.cn/editor',
-  sspai: 'https://sspai.com/write',
-  baijiahao: 'https://baijiahao.baidu.com/builder/rc/edit?type=news&is_from_cms=1',
-  toutiao: 'https://mp.toutiao.com/profile_v4/graphic/publish',
-  'feishu-docs': 'https://wuxinxuexi.feishu.cn/drive/folder/PyWAfSFwrlMgiydvlHectMn2nSd',
-};
+const CHANNEL_ENTRY_URLS = Object.fromEntries(
+  CHANNEL_IDS.map((channelId) => [channelId, getChannelConfig(channelId).entryUrl])
+) as Record<ChannelId, string>;
 
-const ALL_CHANNELS: ChannelId[] = [
-  'csdn',
-  'tencent-cloud-dev',
-  'cnblogs',
-  'oschina',
-  'woshipm',
-  'mowen',
-  'sspai',
-  'baijiahao',
-  'toutiao',
-  'feishu-docs',
-];
+const ALL_CHANNELS: ChannelId[] = [...CHANNEL_IDS];
 
 function urlPrefix(url: string): string {
   try {
@@ -199,6 +214,53 @@ function urlPrefix(url: string): string {
   }
 }
 
+function isReusableChannelEntryUrl(
+  channelId: ChannelId,
+  tabUrl: string,
+  configuredPrefix: string
+): boolean {
+  if (channelId === 'oschina') {
+    return /^https:\/\/my\.oschina\.net\/u\/[^/]+\/blog\/(?:ai-)?write(?:[/?#]|$)/i.test(tabUrl);
+  }
+  if (channelId === 'sspai') {
+    return /^https:\/\/sspai\.com\/(?:write(?:[/?#]|$)|my(?:[/?#]|$)|whoops(?:[/?#]|$))/i.test(
+      tabUrl
+    );
+  }
+  return tabUrl.startsWith(configuredPrefix);
+}
+
+function targetChannelEntryUrl(
+  channelId: ChannelId,
+  configuredUrl: string,
+  existingUrl?: string
+): string {
+  if (
+    channelId === 'oschina' &&
+    existingUrl &&
+    /^https:\/\/my\.oschina\.net\/u\/[^/]+\/blog\/(?:ai-)?write(?:[/?#]|$)/i.test(existingUrl)
+  ) {
+    return existingUrl;
+  }
+  if (
+    channelId === 'sspai' &&
+    existingUrl &&
+    /^https:\/\/sspai\.com\/(?:my(?:[/?#]|$)|whoops(?:[/?#]|$))/i.test(existingUrl)
+  ) {
+    return existingUrl;
+  }
+  if (
+    channelId === 'toutiao' &&
+    existingUrl &&
+    /^https:\/\/mp\.toutiao\.com\/profile_v4\/graphic\/publish\?(?=[^#]*\bpgc_id=\d+)/i.test(
+      existingUrl
+    )
+  ) {
+    return existingUrl;
+  }
+  return configuredUrl;
+}
+
 async function openOrReuseChannelTab(
   channelId: ChannelId,
   options: { active: boolean; beforeNavigate?: (tabId: number) => void }
@@ -207,13 +269,23 @@ async function openOrReuseChannelTab(
   const prefix = urlPrefix(url);
   try {
     const tabs = await chrome.tabs.query({});
-    const matches = tabs.filter((t) => t.id && typeof t.url === 'string' && t.url.startsWith(prefix));
+    const matches = tabs.filter(
+      (t) =>
+        t.id && typeof t.url === 'string' && isReusableChannelEntryUrl(channelId, t.url, prefix)
+    );
     const sorted = matches
       .slice()
-      .sort((a, b) => Number((b as { lastAccessed?: unknown }).lastAccessed || 0) - Number((a as { lastAccessed?: unknown }).lastAccessed || 0));
+      .sort(
+        (a, b) =>
+          Number((b as { lastAccessed?: unknown }).lastAccessed || 0) -
+          Number((a as { lastAccessed?: unknown }).lastAccessed || 0)
+      );
 
     const keep = sorted[0] || null;
-    const toClose = sorted.slice(1).map((t) => t.id).filter((id): id is number => typeof id === 'number');
+    const toClose = sorted
+      .slice(1)
+      .map((t) => t.id)
+      .filter((id): id is number => typeof id === 'number');
     if (toClose.length) {
       await chrome.tabs.remove(toClose).catch(() => {});
     }
@@ -222,7 +294,10 @@ async function openOrReuseChannelTab(
       if (options.active && keep.windowId != null) {
         await chrome.windows.update(keep.windowId, { focused: true }).catch(() => {});
       }
-      return await chrome.tabs.update(keep.id, { url, active: options.active });
+      return await chrome.tabs.update(keep.id, {
+        url: targetChannelEntryUrl(channelId, url, keep.url),
+        active: options.active
+      });
     }
   } catch {
     // ignore and fallback create
@@ -254,7 +329,7 @@ function nowState(channelId: ChannelId, patch?: Partial<ChannelRuntimeState>): C
     channelId,
     status: 'not_started',
     updatedAt: Date.now(),
-    ...patch,
+    ...patch
   };
 }
 
@@ -269,11 +344,15 @@ function buildInitialState(): Record<ChannelId, ChannelRuntimeState> {
     sspai: nowState('sspai'),
     baijiahao: nowState('baijiahao'),
     toutiao: nowState('toutiao'),
-    'feishu-docs': nowState('feishu-docs'),
+    'feishu-docs': nowState('feishu-docs')
   };
 }
 
-async function patchJobChannelState(jobId: string, channelId: ChannelId, patch: Partial<ChannelRuntimeState>): Promise<void> {
+async function patchJobChannelState(
+  jobId: string,
+  channelId: ChannelId,
+  patch: Partial<ChannelRuntimeState>
+): Promise<void> {
   const job = await getJobData(jobId);
   if (job?.stoppedAt) return;
 
@@ -284,7 +363,7 @@ async function patchJobChannelState(jobId: string, channelId: ChannelId, patch: 
     ...patch,
     channelId,
     updatedAt: Date.now(),
-    tabId: patch.tabId ?? prev.tabId,
+    tabId: patch.tabId ?? prev.tabId
   };
   current[channelId] = next;
   jobStateCache.set(jobId, current);
@@ -306,7 +385,7 @@ async function broadcastJobState(jobId: string): Promise<void> {
       type: V2_JOB_BROADCAST,
       jobId,
       channels: job?.channels,
-      state,
+      state
     });
   } catch (error) {
     console.warn('[V2] Failed to broadcast state to source tab:', error);
@@ -325,7 +404,9 @@ async function advanceSerialJob(jobId: string): Promise<void> {
   const job = await getJobData(jobId);
   if (!job || job.stoppedAt) return;
 
-  const channels = (job.channels || ALL_CHANNELS).filter((channelId): channelId is ChannelId => ALL_CHANNELS.includes(channelId));
+  const channels = (job.channels || ALL_CHANNELS).filter((channelId): channelId is ChannelId =>
+    ALL_CHANNELS.includes(channelId)
+  );
   const state = jobStateCache.get(jobId) || (await getJobState(jobId)) || buildInitialState();
   jobStateCache.set(jobId, state);
 
@@ -344,7 +425,7 @@ async function advanceSerialJob(jobId: string): Promise<void> {
       userMessage: chrome.i18n.getMessage('redirectingToTarget'),
       userSuggestion: undefined,
       devDetails: undefined,
-      updatedAt: Date.now(),
+      updatedAt: Date.now()
     };
     await storeJobState(jobId, state);
     await broadcastJobState(jobId);
@@ -354,7 +435,7 @@ async function advanceSerialJob(jobId: string): Promise<void> {
         active: true,
         beforeNavigate: (tabId) => {
           tabIdToContext.set(tabId, { jobId, channelId });
-        },
+        }
       });
       if (!tab.id) throw new Error(`Channel tab has no id: ${channelId}`);
 
@@ -362,7 +443,7 @@ async function advanceSerialJob(jobId: string): Promise<void> {
       state[channelId] = {
         ...state[channelId],
         tabId: tab.id,
-        updatedAt: Date.now(),
+        updatedAt: Date.now()
       };
       await storeJobState(jobId, state);
       await focusOpenedChannelTab(tab);
@@ -375,7 +456,7 @@ async function advanceSerialJob(jobId: string): Promise<void> {
         userMessage: chrome.i18n.getMessage('v2MsgFailed'),
         userSuggestion: chrome.i18n.getMessage('v3SugClickStatusToReopen'),
         devDetails: { message: error instanceof Error ? error.message : String(error) },
-        updatedAt: Date.now(),
+        updatedAt: Date.now()
       };
       await storeJobState(jobId, state);
       await broadcastJobState(jobId);
@@ -385,9 +466,11 @@ async function advanceSerialJob(jobId: string): Promise<void> {
 
 function enqueueSerialAdvance(jobId: string): Promise<void> {
   const previous = serialAdvanceLocks.get(jobId) || Promise.resolve();
-  const next = previous.catch(() => {}).then(async () => {
-    await advanceSerialJob(jobId);
-  });
+  const next = previous
+    .catch(() => {})
+    .then(async () => {
+      await advanceSerialJob(jobId);
+    });
   serialAdvanceLocks.set(jobId, next);
 
   const cleanup = () => {
@@ -400,21 +483,27 @@ function enqueueSerialAdvance(jobId: string): Promise<void> {
 /**
  * Handles V2 job start: store job, then focus and run one channel at a time.
  */
-async function handleV2StartJob(message: StartJobRequest, sender: chrome.runtime.MessageSender, sendResponse: (response: StartJobResponse) => void) {
+async function handleV2StartJob(
+  message: StartJobRequest,
+  sender: chrome.runtime.MessageSender,
+  sendResponse: (response: StartJobResponse) => void
+) {
   try {
     const action: PublishAction = message.action;
     const article = message.article;
-    if (!article?.title || !article?.contentHtml || !article?.sourceUrl) {
-      throw new Error('Missing required fields: title/contentHtml/sourceUrl');
+    if (!article?.title || !article?.contentHtml) {
+      throw new Error('Missing required fields: title/contentHtml');
     }
 
     const jobId = newJobId();
     const createdAt = Date.now();
     const sourceTabId = sender.tab?.id;
 
-    const channelsToRun = (Array.isArray(message.channels) && message.channels.length > 0 ? message.channels : ALL_CHANNELS).filter(
-      (c): c is ChannelId => ALL_CHANNELS.includes(c)
-    );
+    const channelsToRun = (
+      Array.isArray(message.channels) && message.channels.length > 0
+        ? message.channels
+        : ALL_CHANNELS
+    ).filter((c): c is ChannelId => ALL_CHANNELS.includes(c));
 
     const job: PublishJob = {
       jobId,
@@ -422,7 +511,7 @@ async function handleV2StartJob(message: StartJobRequest, sender: chrome.runtime
       action,
       article,
       channels: channelsToRun,
-      sourceTabId,
+      sourceTabId
     };
 
     await storeJobData(job);
@@ -440,14 +529,17 @@ async function handleV2StartJob(message: StartJobRequest, sender: chrome.runtime
     sendResponse({ success: true, jobId });
   } catch (error) {
     console.error('[V2] Failed to start job:', error);
-    sendResponse({ 
-      success: false, 
-      error: error instanceof Error ? error.message : 'Unknown error' 
+    sendResponse({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
     });
   }
 }
 
-async function handleV2GetContext(sender: chrome.runtime.MessageSender, sendResponse: (response: GetContextResponse) => void) {
+async function handleV2GetContext(
+  sender: chrome.runtime.MessageSender,
+  sendResponse: (response: GetContextResponse) => void
+) {
   try {
     const tabId = sender.tab?.id;
     if (!tabId) throw new Error('No sender tab id');
@@ -457,11 +549,18 @@ async function handleV2GetContext(sender: chrome.runtime.MessageSender, sendResp
     if (!job) throw new Error('Job not found');
     sendResponse({ success: true, job, channelId: ctx.channelId });
   } catch (error) {
-    sendResponse({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
+    sendResponse({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
   }
 }
 
-async function handleV2ChannelUpdate(message: ChannelUpdate, sender: chrome.runtime.MessageSender, sendResponse: (response: { success: boolean; error?: string }) => void) {
+async function handleV2ChannelUpdate(
+  message: ChannelUpdate,
+  sender: chrome.runtime.MessageSender,
+  sendResponse: (response: { success: boolean; error?: string }) => void
+) {
   try {
     const jobId: string = message.jobId;
     const channelId: ChannelId = message.channelId;
@@ -482,7 +581,7 @@ async function handleV2ChannelUpdate(message: ChannelUpdate, sender: chrome.runt
       ...patch,
       channelId,
       updatedAt: Date.now(),
-      tabId: sender.tab?.id || prev.tabId,
+      tabId: sender.tab?.id || prev.tabId
     };
     current[channelId] = next;
 
@@ -497,11 +596,17 @@ async function handleV2ChannelUpdate(message: ChannelUpdate, sender: chrome.runt
     sendResponse({ success: true });
   } catch (error) {
     console.warn('[V2] Failed to handle channel update:', error);
-    sendResponse({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
+    sendResponse({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
   }
 }
 
-async function handleV2StopJob(message: StopJobRequest, sendResponse: (response: StopJobResponse) => void) {
+async function handleV2StopJob(
+  message: StopJobRequest,
+  sendResponse: (response: StopJobResponse) => void
+) {
   try {
     const jobId = message.jobId;
     if (!jobId) throw new Error('Missing jobId');
@@ -534,11 +639,17 @@ async function handleV2StopJob(message: StopJobRequest, sendResponse: (response:
     sendResponse({ success: true });
   } catch (error) {
     console.warn('[V2] Failed to stop job:', error);
-    sendResponse({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
+    sendResponse({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
   }
 }
 
-async function handleV2FocusChannelTab(message: FocusChannelTabRequest, sendResponse: (response: FocusChannelTabResponse) => void) {
+async function handleV2FocusChannelTab(
+  message: FocusChannelTabRequest,
+  sendResponse: (response: FocusChannelTabResponse) => void
+) {
   try {
     const { jobId, channelId } = message;
     if (!jobId || !channelId) throw new Error('Missing jobId/channelId');
@@ -568,12 +679,15 @@ async function handleV2FocusChannelTab(message: FocusChannelTabRequest, sendResp
 
     tabIdToContext.set(tab.id, { jobId, channelId });
     await patchJobChannelState(jobId, channelId, {
-      tabId: tab.id,
+      tabId: tab.id
     });
 
     sendResponse({ success: true, tabId: tab.id });
   } catch (error) {
-    sendResponse({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
+    sendResponse({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
   }
 }
 
@@ -596,11 +710,15 @@ async function waitForTabReady(tabId: number, timeoutMs = 30000): Promise<chrome
   throw new Error(`tab not ready: ${tabId}`);
 }
 
-async function probeLoginStateFromChannelTab(tabId: number, channelId: ChannelId, fallbackUrl: string): Promise<ProbeLoginStateResult> {
+async function probeLoginStateFromChannelTab(
+  tabId: number,
+  channelId: ChannelId,
+  fallbackUrl: string
+): Promise<ProbeLoginStateResult> {
   try {
     const response = (await chrome.tabs.sendMessage(tabId, {
       type: V2_PROBE_LOGIN_STATE,
-      channelId,
+      channelId
     })) as ProbeLoginStateResponse | undefined;
     if (response?.success && response.result) {
       return response.result;
@@ -612,7 +730,7 @@ async function probeLoginStateFromChannelTab(tabId: number, channelId: ChannelId
   return {
     status: looksLikeLoginUrl(fallbackUrl, channelId) ? 'not_logged_in' : 'unknown',
     reason: looksLikeLoginUrl(fallbackUrl, channelId) ? 'login-url' : 'probe-unavailable',
-    url: fallbackUrl,
+    url: fallbackUrl
   };
 }
 
@@ -621,7 +739,9 @@ async function handleV2AuditChannelLogin(
   sender: chrome.runtime.MessageSender,
   sendResponse: (response: AuditChannelLoginResponse) => void
 ) {
-  const channels = (Array.isArray(message.channels) ? message.channels : []).filter((item): item is ChannelId => ALL_CHANNELS.includes(item));
+  const channels = (Array.isArray(message.channels) ? message.channels : []).filter(
+    (item): item is ChannelId => ALL_CHANNELS.includes(item)
+  );
   if (!channels.length) {
     sendResponse({ success: false, error: 'No channels selected' });
     return;
@@ -638,7 +758,7 @@ async function handleV2AuditChannelLogin(
         results[channelId] = {
           status: 'unknown',
           reason: 'tab-open-failed',
-          url: CHANNEL_ENTRY_URLS[channelId],
+          url: CHANNEL_ENTRY_URLS[channelId]
         };
         continue;
       }
@@ -648,7 +768,7 @@ async function handleV2AuditChannelLogin(
       const result = await probeLoginStateFromChannelTab(tab.id, channelId, currentUrl);
       results[channelId] = {
         ...result,
-        tabId: tab.id,
+        tabId: tab.id
       };
     }
 
@@ -661,15 +781,24 @@ async function handleV2AuditChannelLogin(
     if (typeof sourceTabId === 'number') {
       await chrome.tabs.update(sourceTabId, { active: true }).catch(() => {});
     }
-    sendResponse({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
+    sendResponse({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
   }
 }
 
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 const IMAGE_FETCH_TIMEOUT_MS = 20_000;
 const IMAGE_MIN_BYTES = 32;
-const imageCache = new Map<string, { mimeType: string; buffer: ArrayBuffer; size: number; fetchedAt: number }>();
-const imageInFlight = new Map<string, Promise<{ mimeType: string; buffer: ArrayBuffer; size: number; fetchedAt: number }>>();
+const imageCache = new Map<
+  string,
+  { mimeType: string; buffer: ArrayBuffer; size: number; fetchedAt: number }
+>();
+const imageInFlight = new Map<
+  string,
+  Promise<{ mimeType: string; buffer: ArrayBuffer; size: number; fetchedAt: number }>
+>();
 const jobIdToImageUrls = new Map<string, Set<string>>();
 const IMAGE_PROXY_ENDPOINT = 'https://read.useai.online/api/image-proxy?url=';
 
@@ -694,7 +823,11 @@ function normalizeProxyImageUrl(raw: string): string {
     try {
       const inner = new URL(innerRaw);
       if (inner.protocol !== 'https:' && inner.protocol !== 'http:') return outer.toString();
-      if (inner.protocol === 'http:' && (inner.hostname.toLowerCase().endsWith('.qpic.cn') || inner.hostname.toLowerCase().endsWith('.qlogo.cn'))) {
+      if (
+        inner.protocol === 'http:' &&
+        (inner.hostname.toLowerCase().endsWith('.qpic.cn') ||
+          inner.hostname.toLowerCase().endsWith('.qlogo.cn'))
+      ) {
         inner.protocol = 'https:';
       }
       if (inner.hash) inner.hash = '';
@@ -739,7 +872,11 @@ function decodeProxyTargetUrl(raw: string): string {
     if (!innerRaw) return '';
     const inner = new URL(innerRaw);
     if (inner.protocol !== 'https:' && inner.protocol !== 'http:') return '';
-    if (inner.protocol === 'http:' && (inner.hostname.toLowerCase().endsWith('.qpic.cn') || inner.hostname.toLowerCase().endsWith('.qlogo.cn'))) {
+    if (
+      inner.protocol === 'http:' &&
+      (inner.hostname.toLowerCase().endsWith('.qpic.cn') ||
+        inner.hostname.toLowerCase().endsWith('.qlogo.cn'))
+    ) {
       inner.protocol = 'https:';
     }
     if (inner.hash) inner.hash = '';
@@ -765,7 +902,13 @@ function looksLikeImageBinary(mimeType: string, buffer: ArrayBuffer, size: numbe
 
   if (mt.includes('png')) {
     if (byteLen < 64) return false;
-    return head.length >= 8 && head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47;
+    return (
+      head.length >= 8 &&
+      head[0] === 0x89 &&
+      head[1] === 0x50 &&
+      head[2] === 0x4e &&
+      head[3] === 0x47
+    );
   }
   if (mt.includes('jpeg') || mt.includes('jpg')) {
     if (byteLen < 64) return false;
@@ -788,7 +931,9 @@ function looksLikeImageBinary(mimeType: string, buffer: ArrayBuffer, size: numbe
 function isProxyImageUrl(raw: string): boolean {
   try {
     const u = new URL(String(raw || '').trim());
-    return u.hostname.toLowerCase() === 'read.useai.online' && u.pathname.startsWith('/api/image-proxy');
+    return (
+      u.hostname.toLowerCase() === 'read.useai.online' && u.pathname.startsWith('/api/image-proxy')
+    );
   } catch {
     return false;
   }
@@ -822,13 +967,16 @@ function arrayBufferToBase64(buffer: ArrayBuffer): string {
   return btoa(parts.join(''));
 }
 
-async function fetchImageBinary(url: string, source: 'direct' | 'proxy'): Promise<{ mimeType: string; buffer: ArrayBuffer; size: number; fetchedAt: number }> {
+async function fetchImageBinary(
+  url: string,
+  source: 'direct' | 'proxy'
+): Promise<{ mimeType: string; buffer: ArrayBuffer; size: number; fetchedAt: number }> {
   const ac = new AbortController();
   const timer = setTimeout(() => ac.abort(), IMAGE_FETCH_TIMEOUT_MS);
   try {
     const res = await fetch(url, {
       credentials: 'omit',
-      signal: ac.signal,
+      signal: ac.signal
     });
     if (!res.ok) throw new Error(`${source} fetch failed: ${res.status}`);
 
@@ -853,7 +1001,9 @@ async function fetchImageBinary(url: string, source: 'direct' | 'proxy'): Promis
   }
 }
 
-async function fetchImageCached(url: string): Promise<{ mimeType: string; buffer: ArrayBuffer; size: number; fetchedAt: number }> {
+async function fetchImageCached(
+  url: string
+): Promise<{ mimeType: string; buffer: ArrayBuffer; size: number; fetchedAt: number }> {
   const cached = imageCache.get(url);
   if (cached) return cached;
 
@@ -869,7 +1019,9 @@ async function fetchImageCached(url: string): Promise<{ mimeType: string; buffer
         try {
           const out = await fetchImageBinary(inner, 'direct');
           if (!looksLikeImageBinary(out.mimeType, out.buffer, out.size)) {
-            throw new Error(`direct(inner) invalid image binary: mime=${out.mimeType} size=${out.size}`);
+            throw new Error(
+              `direct(inner) invalid image binary: mime=${out.mimeType} size=${out.size}`
+            );
           }
           imageCache.set(url, out);
           imageCache.set(inner, out);
@@ -927,7 +1079,10 @@ async function fetchImageCached(url: string): Promise<{ mimeType: string; buffer
   }
 }
 
-async function handleV3FetchImage(message: FetchImageRequest, sendResponse: (response: FetchImageResponse) => void) {
+async function handleV3FetchImage(
+  message: FetchImageRequest,
+  sendResponse: (response: FetchImageResponse) => void
+) {
   try {
     const jobId = message.jobId;
     const url = message.url;
@@ -938,14 +1093,18 @@ async function handleV3FetchImage(message: FetchImageRequest, sendResponse: (res
       try {
         const u = new URL(effectiveUrl);
         if (u.protocol === 'https:' || u.protocol === 'http:') {
-          effectiveUrl = normalizeProxyImageUrl(`${IMAGE_PROXY_ENDPOINT}${encodeURIComponent(u.toString())}`);
+          effectiveUrl = normalizeProxyImageUrl(
+            `${IMAGE_PROXY_ENDPOINT}${encodeURIComponent(u.toString())}`
+          );
         }
       } catch {
         // keep original and fail below
       }
     }
     if (!isAllowedImageUrl(effectiveUrl)) {
-      throw new Error(`Image URL is not allowed: ${String(url).slice(0, 280)} | effective=${String(effectiveUrl).slice(0, 280)}`);
+      throw new Error(
+        `Image URL is not allowed: ${String(url).slice(0, 280)} | effective=${String(effectiveUrl).slice(0, 280)}`
+      );
     }
 
     const data = await fetchImageCached(effectiveUrl);
@@ -957,9 +1116,18 @@ async function handleV3FetchImage(message: FetchImageRequest, sendResponse: (res
     set.add(effectiveUrl);
 
     const bufferBase64 = arrayBufferToBase64(data.buffer);
-    sendResponse({ success: true, mimeType: data.mimeType, bufferBase64, size: data.size, debugMarker: 'v3-image-base64' } as FetchImageResponse & { debugMarker: string });
+    sendResponse({
+      success: true,
+      mimeType: data.mimeType,
+      bufferBase64,
+      size: data.size,
+      debugMarker: 'v3-image-base64'
+    } as FetchImageResponse & { debugMarker: string });
   } catch (error) {
-    sendResponse({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
+    sendResponse({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
   }
 }
 
@@ -974,7 +1142,12 @@ async function handleV3ExecuteMainWorld(
 
     if (message.action.startsWith('weixin-')) {
       const response = await chrome.tabs.sendMessage(tabId, message);
-      sendResponse((response || { success: false, error: 'Empty weixin content-script response' }) as ExecuteMainWorldResponse);
+      sendResponse(
+        (response || {
+          success: false,
+          error: 'Empty weixin content-script response'
+        }) as ExecuteMainWorldResponse
+      );
       return;
     }
 
@@ -986,7 +1159,9 @@ async function handleV3ExecuteMainWorld(
         const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
         const parseRuntime = () => {
           try {
-            const raw = String(document.querySelector('#bawei-v2-runtime-state')?.textContent || '').trim();
+            const raw = String(
+              document.querySelector('#bawei-v2-runtime-state')?.textContent || ''
+            ).trim();
             if (!raw) return null;
             return JSON.parse(raw);
           } catch {
@@ -999,16 +1174,28 @@ async function handleV3ExecuteMainWorld(
           const rect = panel.getBoundingClientRect();
           if (rect.width <= 0 || rect.height <= 0) return false;
           const style = getComputedStyle(panel);
-          return !(style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0');
+          return !(
+            style.display === 'none' ||
+            style.visibility === 'hidden' ||
+            style.opacity === '0'
+          );
         };
         const collectUiState = () => {
           const runtime = parseRuntime();
-          const checkedChannels = Array.from(document.querySelectorAll('input[id^="bawei-v2-run-"]'))
-            .filter((node): node is HTMLInputElement => node instanceof HTMLInputElement && node.checked)
+          const checkedChannels = Array.from(
+            document.querySelectorAll('input[id^="bawei-v2-run-"]')
+          )
+            .filter(
+              (node): node is HTMLInputElement => node instanceof HTMLInputElement && node.checked
+            )
             .map((node) => String(node.id || '').replace(/^bawei-v2-run-/, ''))
             .filter(Boolean);
           const selectedAction =
-            (document.querySelector('input[name="bawei_v2_action"]:checked') as HTMLInputElement | null)?.value || '';
+            (
+              document.querySelector(
+                'input[name="bawei_v2_action"]:checked'
+              ) as HTMLInputElement | null
+            )?.value || '';
           const startButton = document.querySelector('#bawei-v2-start') as HTMLButtonElement | null;
           return {
             url: location.href,
@@ -1022,7 +1209,9 @@ async function handleV3ExecuteMainWorld(
             startButtonText: String(startButton?.textContent || '').trim(),
             startButtonDisabled: !!startButton?.disabled,
             runtime,
-            diagnosisText: String(document.querySelector('#bawei-v2-diagnosis')?.textContent || '').trim(),
+            diagnosisText: String(
+              document.querySelector('#bawei-v2-diagnosis')?.textContent || ''
+            ).trim()
           };
         };
         const dispatchCheckbox = (input: HTMLInputElement, checked: boolean) => {
@@ -1032,8 +1221,151 @@ async function handleV3ExecuteMainWorld(
           input.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
         };
 
+        type ToutiaoEditor = {
+          setHTML?: (
+            html: string,
+            options?: { allowUndo?: boolean; silent?: boolean; mergeEmpty?: boolean }
+          ) => unknown;
+          getHTML?: () => string;
+          setSelection?: (selection: { index: number; length: number }) => unknown;
+          delete?: (
+            index: number,
+            length: number,
+            options?: { allowUndo?: boolean; silent?: boolean }
+          ) => unknown;
+          view?: {
+            state?: {
+              doc?: {
+                descendants?: (
+                  callback: (node: { text?: string }, position: number) => boolean | void
+                ) => void;
+              };
+            };
+          };
+        };
+        type ToutiaoFiber = {
+          return?: ToutiaoFiber | null;
+          stateNode?: { editor?: ToutiaoEditor } | null;
+        };
+        const findToutiaoEditor = (): { host: HTMLElement; editor: ToutiaoEditor } | null => {
+          const host = document.querySelector<HTMLElement>('.syl-editor');
+          if (!host) return null;
+          const reactKey = Object.getOwnPropertyNames(host).find(
+            (key) => key.startsWith('__reactInternalInstance$') || key.startsWith('__reactFiber$')
+          );
+          if (!reactKey) return null;
+
+          let fiber = (host as unknown as Record<string, unknown>)[reactKey] as
+            | ToutiaoFiber
+            | null
+            | undefined;
+          for (let depth = 0; fiber && depth < 48; depth += 1) {
+            const editor = fiber.stateNode?.editor;
+            if (
+              editor &&
+              typeof editor.setHTML === 'function' &&
+              typeof editor.getHTML === 'function'
+            ) {
+              return { host, editor };
+            }
+            fiber = fiber.return || null;
+          }
+          return null;
+        };
+
+        if (action === 'toutiao-set-html') {
+          const html = String(payload?.html || '').trim();
+          const markers = Array.isArray(payload?.markers)
+            ? (payload.markers as unknown[]).map((value) => String(value || '')).filter(Boolean)
+            : [];
+          if (!html) return { ok: false, error: 'toutiao-content-html-empty' };
+          const binding = findToutiaoEditor();
+          if (!binding) return { ok: false, error: 'toutiao-editor-instance-not-found' };
+
+          await Promise.resolve(
+            binding.editor.setHTML?.(html, {
+              allowUndo: true,
+              silent: false,
+              mergeEmpty: true
+            })
+          );
+          await wait(180);
+          const finalHtml = String(binding.editor.getHTML?.() || '');
+          const missingMarkers = markers.filter((marker) => !finalHtml.includes(marker));
+          if (missingMarkers.length) {
+            return {
+              ok: false,
+              error: 'toutiao-editor-set-html-incomplete',
+              missingMarkers,
+              finalHtmlLength: finalHtml.length
+            };
+          }
+          return {
+            ok: true,
+            finalHtmlLength: finalHtml.length,
+            markerCount: markers.length,
+            method: 'syl-editor-setHTML'
+          };
+        }
+
+        if (action === 'toutiao-select-image-marker') {
+          const marker = String(payload?.marker || '').trim();
+          if (!marker) return { ok: false, error: 'toutiao-image-marker-empty' };
+          const binding = findToutiaoEditor();
+          if (!binding) return { ok: false, error: 'toutiao-editor-instance-not-found' };
+          const editor = binding.editor;
+          const editorDoc = editor.view?.state?.doc;
+          if (
+            typeof editorDoc?.descendants !== 'function' ||
+            typeof editor.setSelection !== 'function' ||
+            typeof editor.delete !== 'function'
+          ) {
+            return { ok: false, error: 'toutiao-image-marker-selection-unavailable' };
+          }
+
+          let markerIndex = -1;
+          try {
+            editorDoc.descendants((node, position) => {
+              if (markerIndex >= 0) return false;
+              const text = String(node?.text || '');
+              const offset = text.indexOf(marker);
+              if (offset < 0) return true;
+              markerIndex = Number(position) + offset;
+              return false;
+            });
+          } catch (error) {
+            return {
+              ok: false,
+              error: `toutiao-image-marker-scan-failed:${error instanceof Error ? error.message : String(error)}`
+            };
+          }
+          if (markerIndex < 0) {
+            return { ok: false, error: 'toutiao-image-marker-not-found', marker };
+          }
+
+          await Promise.resolve(editor.setSelection({ index: markerIndex, length: marker.length }));
+          await Promise.resolve(
+            editor.delete(markerIndex, marker.length, { allowUndo: true, silent: false })
+          );
+          await Promise.resolve(editor.setSelection({ index: markerIndex, length: 0 }));
+          await wait(100);
+          const finalHtml = String(editor.getHTML?.() || '');
+          if (finalHtml.includes(marker)) {
+            return { ok: false, error: 'toutiao-image-marker-delete-failed', marker };
+          }
+          return {
+            ok: true,
+            marker,
+            markerIndex,
+            finalHtmlLength: finalHtml.length,
+            method: 'syl-editor-selection-delete'
+          };
+        }
+
         if (action === 'tencent-set-title') {
-          const input = document.querySelector('textarea.article-title') as HTMLTextAreaElement | null;
+          const input = document.querySelector(
+            'textarea.article-title'
+          ) as HTMLTextAreaElement | null;
           if (!input) return { ok: false, reason: 'title-input-not-found' };
           const value = String(payload?.value || '');
           const desc = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value');
@@ -1046,7 +1378,7 @@ async function handleV3ExecuteMainWorld(
                 bubbles: true,
                 cancelable: true,
                 data: value,
-                inputType: 'insertText',
+                inputType: 'insertText'
               })
             );
           } catch {
@@ -1057,12 +1389,14 @@ async function handleV3ExecuteMainWorld(
           return {
             ok: true,
             value: input.value,
-            hasCounter: /标题字数[:：]\s*\d+\s*\/\s*80/.test(bodyText()),
+            hasCounter: /标题字数[:：]\s*\d+\s*\/\s*80/.test(bodyText())
           };
         }
 
         if (action === 'tencent-set-tag-input') {
-          const input = document.querySelectorAll('input.com-2-tag-input')[0] as HTMLInputElement | undefined;
+          const input = document.querySelectorAll('input.com-2-tag-input')[0] as
+            | HTMLInputElement
+            | undefined;
           if (!input) return { ok: false, reason: 'tag-input-not-found' };
           const value = String(payload?.value || '');
           const desc = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value');
@@ -1075,7 +1409,7 @@ async function handleV3ExecuteMainWorld(
                 bubbles: true,
                 cancelable: true,
                 data: value,
-                inputType: 'insertText',
+                inputType: 'insertText'
               })
             );
           } catch {
@@ -1091,15 +1425,282 @@ async function handleV3ExecuteMainWorld(
             const rect = (node as HTMLElement).getBoundingClientRect();
             return rect.width > 0 && rect.height > 0;
           };
-          const items = Array.from(document.querySelectorAll('li[data-id]')).filter((node) => isVisible(node));
+          const items = Array.from(document.querySelectorAll('li[data-id]')).filter((node) =>
+            isVisible(node)
+          );
           const exact = items.find((node) => (node.textContent || '').trim() === expected);
           const fuzzy = items.find((node) => (node.textContent || '').trim().includes(expected));
           const pick = exact || fuzzy || items[0] || null;
           if (!pick) return { ok: false, reason: 'tag-suggestion-not-found' };
           ['mousedown', 'mouseup', 'click'].forEach((type) => {
-            pick.dispatchEvent(new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, buttons: 1 }));
+            pick.dispatchEvent(
+              new MouseEvent(type, { bubbles: true, cancelable: true, button: 0, buttons: 1 })
+            );
           });
           return { ok: true, picked: (pick.textContent || '').trim() };
+        }
+
+        if (action === 'oschina-editor-command') {
+          type OschinaEditorCommands = {
+            clearContent?: (emitUpdate?: boolean) => boolean;
+            focus?: (position?: string) => boolean;
+            insertContent?: (content: string) => boolean;
+            setContent?: (content: string, emitUpdate?: boolean) => boolean;
+            setTextSelection?: (position: { from: number; to: number }) => boolean;
+            uploadImage?: (file: File) => boolean;
+          };
+          type OschinaEditor = {
+            commands?: OschinaEditorCommands;
+            getHTML?: () => string;
+            state?: {
+              doc?: {
+                descendants?: (
+                  callback: (node: { text?: string }, position: number) => boolean
+                ) => void;
+              };
+            };
+          };
+          const root = document.querySelector(
+            '.tiptap.ProseMirror.aie-content, .ProseMirror[role="textbox"].aie-content'
+          ) as (HTMLElement & { editor?: OschinaEditor }) | null;
+          const editor = root?.editor || null;
+          const commands = editor?.commands || null;
+          if (!root || !commands) return { ok: false, error: 'oschina-tiptap-editor-not-found' };
+
+          const command = String(payload?.command || '').trim();
+          if (command === 'reset') {
+            if (typeof editor?.commands?.clearContent !== 'function') {
+              return { ok: false, error: 'oschina-clear-content-unavailable' };
+            }
+            editor.commands.clearContent(true);
+            editor.commands?.focus?.('end');
+          } else if (command === 'insert-html') {
+            const html = String(payload?.html || '');
+            if (!html.trim()) return { ok: false, error: 'oschina-insert-html-empty' };
+            if (typeof editor?.commands?.insertContent !== 'function') {
+              return { ok: false, error: 'oschina-insert-content-unavailable' };
+            }
+            editor.commands?.focus?.('end');
+            editor.commands.insertContent(html);
+            editor.commands?.focus?.('end');
+          } else if (command === 'replace-html') {
+            const html = String(payload?.html || '');
+            if (!html.trim()) return { ok: false, error: 'oschina-replace-content-empty' };
+            if (typeof editor?.commands?.setContent !== 'function') {
+              return { ok: false, error: 'oschina-set-content-unavailable' };
+            }
+            editor.commands.setContent(html, true);
+            editor.commands?.focus?.('end');
+          } else if (command === 'focus-end') {
+            if (typeof editor?.commands?.focus !== 'function') {
+              return { ok: false, error: 'oschina-focus-unavailable' };
+            }
+            editor.commands.focus('end');
+          } else if (command === 'upload-image') {
+            if (typeof editor?.commands?.uploadImage !== 'function') {
+              return { ok: false, error: 'oschina-upload-image-unavailable' };
+            }
+            const imageFile = (payload?.imageFile || {}) as Record<string, unknown>;
+            const encoded = String(imageFile.base64 || '');
+            if (!encoded) return { ok: false, error: 'oschina-upload-image-empty' };
+            const binary = atob(encoded);
+            const bytes = new Uint8Array(binary.length);
+            for (let index = 0; index < binary.length; index += 1) {
+              bytes[index] = binary.charCodeAt(index);
+            }
+            const file = new File([bytes], String(imageFile.name || 'bawei-image'), {
+              type: String(imageFile.type || 'application/octet-stream')
+            });
+            const marker = String(imageFile.marker || '');
+            if (marker) {
+              if (
+                typeof editor.commands?.setTextSelection !== 'function' ||
+                typeof editor?.state?.doc?.descendants !== 'function'
+              ) {
+                return { ok: false, error: 'oschina-image-marker-selection-unavailable' };
+              }
+              let markerFrom = -1;
+              editor.state.doc.descendants((node, position) => {
+                if (markerFrom >= 0) return false;
+                const text = String(node?.text || '');
+                const offset = text.indexOf(marker);
+                if (offset < 0) return true;
+                markerFrom = Number(position) + offset;
+                return false;
+              });
+              if (markerFrom < 0) {
+                return { ok: false, error: 'oschina-image-marker-not-found' };
+              }
+              editor.commands.setTextSelection({
+                from: markerFrom,
+                to: markerFrom + marker.length
+              });
+            } else {
+              editor.commands?.focus?.('end');
+            }
+            editor.commands.uploadImage(file);
+          } else {
+            return { ok: false, error: `oschina-command-unsupported:${command || 'empty'}` };
+          }
+
+          await wait(120);
+          const finalHtml = String(editor?.getHTML?.() || root.innerHTML || '');
+          return {
+            ok: true,
+            command,
+            finalHtmlLength: finalHtml.length,
+            finalTextLength: String(root.innerText || root.textContent || '').length,
+            imageCount: root.querySelectorAll('img').length
+          };
+        }
+
+        if (action === 'baijiahao-set-title') {
+          const value = String(payload?.value || '')
+            .replace(/\s+/g, ' ')
+            .trim();
+          if (!value) return { ok: false, error: 'title-value-empty' };
+
+          const titleRoot = document.querySelector<HTMLElement>('[data-testid="news-title-input"]');
+          const target = titleRoot?.querySelector<HTMLElement>('[contenteditable="true"]') || null;
+          if (!target) return { ok: false, error: 'title-editor-not-found' };
+
+          type LexicalSerializedNode = {
+            type?: string;
+            text?: string;
+            children?: LexicalSerializedNode[];
+            [key: string]: unknown;
+          };
+          type LexicalEditor = {
+            getEditorState?: () => { toJSON?: () => LexicalSerializedNode };
+            parseEditorState?: (serialized: string) => unknown;
+            setEditorState?: (state: unknown, options?: { tag?: string }) => void;
+          };
+          const lexicalEditor = (target as HTMLElement & { __lexicalEditor?: LexicalEditor })
+            .__lexicalEditor;
+
+          if (
+            lexicalEditor &&
+            typeof lexicalEditor.getEditorState === 'function' &&
+            typeof lexicalEditor.parseEditorState === 'function' &&
+            typeof lexicalEditor.setEditorState === 'function'
+          ) {
+            const stateJson = lexicalEditor.getEditorState()?.toJSON?.();
+            const root = stateJson?.root as LexicalSerializedNode | undefined;
+            const firstBlock = Array.isArray(root?.children) ? root.children[0] : undefined;
+            if (!stateJson || !firstBlock || !Array.isArray(firstBlock.children)) {
+              return { ok: false, error: 'title-editor-state-invalid' };
+            }
+
+            const findFirstText = (node: LexicalSerializedNode): LexicalSerializedNode | null => {
+              if (node.type === 'text') return node;
+              if (!Array.isArray(node.children)) return null;
+              for (const child of node.children) {
+                const found = findFirstText(child);
+                if (found) return found;
+              }
+              return null;
+            };
+            const existingText = findFirstText(firstBlock);
+            firstBlock.children = [
+              {
+                detail: 0,
+                format: 0,
+                mode: 'normal',
+                style: '',
+                type: 'text',
+                version: 1,
+                ...(existingText || {}),
+                text: value
+              }
+            ];
+
+            const nextState = lexicalEditor.parseEditorState(JSON.stringify(stateJson));
+            lexicalEditor.setEditorState(nextState, { tag: 'history-push' });
+            await wait(80);
+            const actual = String(target.textContent || '')
+              .replace(/\s+/g, ' ')
+              .trim();
+            return {
+              ok: actual === value,
+              error: actual === value ? '' : 'title-editor-state-not-committed',
+              value: actual,
+              method: 'lexical-state'
+            };
+          }
+
+          target.focus();
+          target.textContent = value;
+          target.dispatchEvent(new InputEvent('input', { bubbles: true, cancelable: true }));
+          target.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+          await wait(50);
+          const actual = String(target.textContent || '')
+            .replace(/\s+/g, ' ')
+            .trim();
+          return {
+            ok: actual === value,
+            error: actual === value ? '' : 'title-dom-fallback-not-committed',
+            value: actual,
+            method: 'dom-fallback'
+          };
+        }
+
+        if (action === 'baijiahao-open-image-dialog') {
+          for (let attempt = 0; attempt < 8; attempt += 1) {
+            const editor =
+              (window as unknown as { editor?: { focus?: (toEnd?: boolean) => void } }).editor ||
+              ((
+                window as unknown as {
+                  UE_V2?: {
+                    getEditor?: (id: string) => { focus?: (toEnd?: boolean) => void } | null;
+                  };
+                }
+              ).UE_V2?.getEditor?.('ueditor_0') as { focus?: (toEnd?: boolean) => void } | null) ||
+              null;
+            if (typeof editor?.focus === 'function') {
+              try {
+                editor.focus(true);
+                await wait(120);
+              } catch {
+                // The E2E fixture keeps this branch harmless.
+              }
+            }
+            const button =
+              document.querySelector<HTMLElement>('.edui-for-insertimage .edui-button-body') ||
+              document.querySelector<HTMLElement>('.edui-for-insertimage');
+            if (!button) {
+              await wait(250);
+              continue;
+            }
+            button.click();
+
+            for (let index = 0; index < 10; index += 1) {
+              const modals = Array.from(
+                document.querySelectorAll<HTMLElement>('.cheetah-ui-pro-image-modal')
+              );
+              const visibleModal = modals.find((modal) => {
+                const rect = modal.getBoundingClientRect();
+                if (rect.width <= 0 || rect.height <= 0) return false;
+                const style = getComputedStyle(modal);
+                return !(
+                  style.display === 'none' ||
+                  style.visibility === 'hidden' ||
+                  style.opacity === '0'
+                );
+              });
+              const inputScope: ParentNode | null =
+                visibleModal || (modals.length ? null : document);
+              const imageInput = Array.from(
+                inputScope?.querySelectorAll<HTMLInputElement>('input[type="file"]') || []
+              ).find(
+                (input) =>
+                  input.accept.toLowerCase().includes('image') ||
+                  /image/i.test(`${input.className} ${input.id} ${input.name}`)
+              );
+              if (imageInput) return { ok: true };
+              await wait(100);
+            }
+          }
+          return { ok: false, error: 'image-upload-input-not-ready' };
         }
 
         if (action === 'baijiahao-set-content') {
@@ -1112,9 +1713,11 @@ async function handleV3ExecuteMainWorld(
           for (let i = 0; i < 40; i += 1) {
             editor =
               (window as unknown as { editor?: Record<string, unknown> }).editor ||
-              ((window as unknown as { UE_V2?: { getEditor?: (id: string) => Record<string, unknown> | null } }).UE_V2?.getEditor?.(
-                'ueditor_0'
-              ) as Record<string, unknown> | null) ||
+              ((
+                window as unknown as {
+                  UE_V2?: { getEditor?: (id: string) => Record<string, unknown> | null };
+                }
+              ).UE_V2?.getEditor?.('ueditor_0') as Record<string, unknown> | null) ||
               null;
             const iframe = document.querySelector('iframe#ueditor_0') as HTMLIFrameElement | null;
             body = (iframe?.contentDocument?.body as HTMLElement | null) || null;
@@ -1124,8 +1727,10 @@ async function handleV3ExecuteMainWorld(
           if (!editor) return { ok: false, error: 'editor-not-found' };
           if (!body) return { ok: false, error: 'editor-body-not-ready' };
 
-          const execCommand = typeof editor.execCommand === 'function' ? editor.execCommand.bind(editor) : null;
-          const setContent = typeof editor.setContent === 'function' ? editor.setContent.bind(editor) : null;
+          const execCommand =
+            typeof editor.execCommand === 'function' ? editor.execCommand.bind(editor) : null;
+          const setContent =
+            typeof editor.setContent === 'function' ? editor.setContent.bind(editor) : null;
           const sync = typeof editor.sync === 'function' ? editor.sync.bind(editor) : null;
           const focus = typeof editor.focus === 'function' ? editor.focus.bind(editor) : null;
 
@@ -1153,7 +1758,8 @@ async function handleV3ExecuteMainWorld(
           for (let i = 0; i < 20; i += 1) {
             const bodyHtml = String(body.innerHTML || '');
             const bodyText = String(body.innerText || body.textContent || '');
-            const hasSource = !sourceUrl || bodyHtml.includes(sourceUrl) || bodyText.includes(sourceUrl);
+            const hasSource =
+              !sourceUrl || bodyHtml.includes(sourceUrl) || bodyText.includes(sourceUrl);
             if (bodyHtml.trim() && hasSource) break;
             await wait(150);
           }
@@ -1163,7 +1769,8 @@ async function handleV3ExecuteMainWorld(
             : '';
           let finalHtml = String(body.innerHTML || '');
           let finalText = String(body.innerText || body.textContent || '');
-          const hasSource = !sourceUrl || finalHtml.includes(sourceUrl) || finalText.includes(sourceUrl);
+          const hasSource =
+            !sourceUrl || finalHtml.includes(sourceUrl) || finalText.includes(sourceUrl);
           if (!hasSource && sourceHtml && execCommand) {
             execCommand('inserthtml', sourceHtml);
             await wait(150);
@@ -1179,13 +1786,20 @@ async function handleV3ExecuteMainWorld(
             }
           }
 
-          const ok = !!finalHtml.trim() && (!sourceUrl || finalHtml.includes(sourceUrl) || finalText.includes(sourceUrl));
+          const ok =
+            !!finalHtml.trim() &&
+            (!sourceUrl || finalHtml.includes(sourceUrl) || finalText.includes(sourceUrl));
           return {
             ok,
-            error: ok ? '' : !finalHtml.trim() ? 'editor-body-empty-after-set-content' : 'source-url-missing-after-set-content',
+            error: ok
+              ? ''
+              : !finalHtml.trim()
+                ? 'editor-body-empty-after-set-content'
+                : 'source-url-missing-after-set-content',
             finalHtmlLength: finalHtml.length,
             finalTextLength: finalText.length,
-            hasSourceUrl: !sourceUrl || finalHtml.includes(sourceUrl) || finalText.includes(sourceUrl),
+            hasSourceUrl:
+              !sourceUrl || finalHtml.includes(sourceUrl) || finalText.includes(sourceUrl)
           };
         }
 
@@ -1198,7 +1812,9 @@ async function handleV3ExecuteMainWorld(
           if (launcher) {
             launcher.click();
           } else {
-            window.dispatchEvent(new CustomEvent('bawei-v2-ensure-panel', { detail: { action: 'show' } }));
+            window.dispatchEvent(
+              new CustomEvent('bawei-v2-ensure-panel', { detail: { action: 'show' } })
+            );
           }
           for (let i = 0; i < 10; i += 1) {
             if (panelVisible()) break;
@@ -1209,7 +1825,9 @@ async function handleV3ExecuteMainWorld(
 
         if (action === 'weixin-set-action') {
           const value = String(payload?.value || '').trim();
-          const input = document.querySelector(`input[name="bawei_v2_action"][value="${value}"]`) as HTMLInputElement | null;
+          const input = document.querySelector(
+            `input[name="bawei_v2_action"][value="${value}"]`
+          ) as HTMLInputElement | null;
           if (!input) return { ok: false, reason: 'action-input-not-found', value };
           input.click();
           input.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
@@ -1238,7 +1856,12 @@ async function handleV3ExecuteMainWorld(
         if (action === 'weixin-start') {
           const startButton = document.querySelector('#bawei-v2-start') as HTMLButtonElement | null;
           if (!startButton) return { ok: false, reason: 'start-button-not-found' };
-          if (startButton.disabled) return { ok: false, reason: 'start-button-disabled', ...(collectUiState() as Record<string, unknown>) };
+          if (startButton.disabled)
+            return {
+              ok: false,
+              reason: 'start-button-disabled',
+              ...(collectUiState() as Record<string, unknown>)
+            };
           startButton.click();
           await wait(200);
           return { ok: true, ...(collectUiState() as Record<string, unknown>) };
@@ -1250,16 +1873,22 @@ async function handleV3ExecuteMainWorld(
 
         throw new Error(`Unsupported main-world action: ${action}`);
       },
-      args: [message.action, message.payload || {}],
+      args: [message.action, message.payload || {}]
     });
 
     sendResponse({ success: true, result: injected?.[0]?.result });
   } catch (error) {
-    sendResponse({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
+    sendResponse({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
   }
 }
 
-async function handleV2Control(message: ContinueRequest | RetryRequest, sendResponse: (response: { success: boolean; error?: string }) => void) {
+async function handleV2Control(
+  message: ContinueRequest | RetryRequest,
+  sendResponse: (response: { success: boolean; error?: string }) => void
+) {
   try {
     const jobId: string = message.jobId;
     const channelId: ChannelId = message.channelId;
@@ -1275,7 +1904,9 @@ async function handleV2Control(message: ContinueRequest | RetryRequest, sendResp
     const tabId = state?.[channelId]?.tabId;
     if (!tabId) throw new Error('Channel tab not found');
 
-    const channels = (job?.channels || ALL_CHANNELS).filter((id): id is ChannelId => ALL_CHANNELS.includes(id));
+    const channels = (job?.channels || ALL_CHANNELS).filter((id): id is ChannelId =>
+      ALL_CHANNELS.includes(id)
+    );
     const runningChannel = state ? getRunningSerialChannel(channels, state) : null;
     if (runningChannel && runningChannel !== channelId) {
       throw new Error(`Serial job is running channel: ${runningChannel}`);
@@ -1288,7 +1919,7 @@ async function handleV2Control(message: ContinueRequest | RetryRequest, sendResp
     if (shouldRestoreStatus) {
       await patchJobChannelState(jobId, channelId, {
         status: 'running',
-        userSuggestion: undefined,
+        userSuggestion: undefined
       });
     }
 
@@ -1302,28 +1933,17 @@ async function handleV2Control(message: ContinueRequest | RetryRequest, sendResp
     }
     sendResponse({ success: true });
   } catch (error) {
-    sendResponse({ success: false, error: error instanceof Error ? error.message : 'Unknown error' });
+    sendResponse({
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    });
   }
 }
 
 function looksLikeLoginUrl(url: string, channelId: ChannelId): boolean {
   const raw = String(url || '');
-  const low = raw.toLowerCase();
-  const patterns: Record<ChannelId, RegExp[]> = {
-    csdn: [/passport\.csdn\.net\/login/i, /\/login/i],
-    'tencent-cloud-dev': [/cloud\.tencent\.com\/login/i, /\/account\/login/i, /\/login/i],
-    cnblogs: [/account\.cnblogs\.com\/signin/i, /\/signin/i, /\/login/i],
-    oschina: [/oschina\.net\/home\/login/i, /\/login/i],
-    woshipm: [/passport/i, /\/login/i, /\/signin/i],
-    mowen: [/\/login/i, /\/signin/i],
-    sspai: [/\/login/i, /\/signin/i],
-    baijiahao: [/passport/i, /\/login/i],
-    toutiao: [/\/auth\/page\/login/i, /\/login/i],
-    'feishu-docs': [/passport\.feishu\.cn/i, /\/login/i, /\/signin/i],
-  };
-
-  if (patterns[channelId].some((r) => r.test(low))) return true;
-  return /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i.test(low);
+  if (matchesChannelUrl(raw, getChannelConfig(channelId).loginUrlPatterns)) return true;
+  return /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i.test(raw);
 }
 
 chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
@@ -1346,7 +1966,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
         await patchJobChannelState(ctx.jobId, ctx.channelId, {
           status: 'running',
           stage: 'detectLogin',
-          userMessage: chrome.i18n.getMessage('v3MsgDetectingLogin'),
+          userMessage: chrome.i18n.getMessage('v3MsgDetectingLogin')
         });
       } catch {
         // ignore
@@ -1359,7 +1979,7 @@ chrome.tabs.onUpdated.addListener((tabId, changeInfo, tab) => {
       status: 'not_logged_in',
       stage: 'detectLogin',
       userMessage: chrome.i18n.getMessage('v3MsgNotLoggedIn'),
-      userSuggestion: chrome.i18n.getMessage('v3SugLoginThenRetry'),
+      userSuggestion: chrome.i18n.getMessage('v3SugLoginThenRetry')
     });
   }
 });
@@ -1375,13 +1995,14 @@ chrome.tabs.onRemoved.addListener((tabId) => {
       const cur = state?.[ctx.channelId];
       const status = cur?.status || 'not_started';
 
-      // 如果渠道已成功/已失败，不要因为用户关闭 tab 而回退状态。
-      if (status === 'success' || status === 'failed') return;
+      // 已完成投稿判断的终态不应因用户关闭 tab 被覆写；等待用户处理的状态仍补充重开提示。
+      if (isSerialTerminalStatus(status) && status !== 'waiting_user' && status !== 'not_logged_in')
+        return;
 
       // 对于 waiting_user / not_logged_in：保留原状态，只提示可点击状态重开。
       if (status === 'waiting_user' || status === 'not_logged_in') {
         await patchJobChannelState(ctx.jobId, ctx.channelId, {
-          userSuggestion: chrome.i18n.getMessage('v3SugClickStatusToReopen'),
+          userSuggestion: chrome.i18n.getMessage('v3SugClickStatusToReopen')
         });
         return;
       }
@@ -1390,7 +2011,7 @@ chrome.tabs.onRemoved.addListener((tabId) => {
       await patchJobChannelState(ctx.jobId, ctx.channelId, {
         status: 'failed',
         userMessage: chrome.i18n.getMessage('v2MsgFailed'),
-        userSuggestion: chrome.i18n.getMessage('v3SugClickStatusToReopen'),
+        userSuggestion: chrome.i18n.getMessage('v3SugClickStatusToReopen')
       });
     } catch {
       // ignore
@@ -1415,6 +2036,12 @@ async function dispatchDirectMessage(message: unknown): Promise<unknown> {
     });
   }
 
+  if (type === V2_CHANNEL_UPDATE) {
+    return await new Promise<{ success: boolean; error?: string }>((resolve) => {
+      handleV2ChannelUpdate(message as ChannelUpdate, {} as chrome.runtime.MessageSender, resolve);
+    });
+  }
+
   if (type === V2_REQUEST_CONTINUE || type === V2_REQUEST_RETRY) {
     return await new Promise<{ success: boolean; error?: string }>((resolve) => {
       handleV2Control(message as ContinueRequest | RetryRequest, resolve);
@@ -1435,13 +2062,21 @@ async function dispatchDirectMessage(message: unknown): Promise<unknown> {
 
   if (type === V2_AUDIT_CHANNEL_LOGIN) {
     return await new Promise<AuditChannelLoginResponse>((resolve) => {
-      handleV2AuditChannelLogin(message as AuditChannelLoginRequest, {} as chrome.runtime.MessageSender, resolve);
+      handleV2AuditChannelLogin(
+        message as AuditChannelLoginRequest,
+        {} as chrome.runtime.MessageSender,
+        resolve
+      );
     });
   }
 
   if (type === V3_EXECUTE_MAIN_WORLD) {
     return await new Promise<ExecuteMainWorldResponse>((resolve) => {
-      handleV3ExecuteMainWorld(message as ExecuteMainWorldRequest, {} as chrome.runtime.MessageSender, resolve);
+      handleV3ExecuteMainWorld(
+        message as ExecuteMainWorldRequest,
+        {} as chrome.runtime.MessageSender,
+        resolve
+      );
     });
   }
 

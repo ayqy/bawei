@@ -13,13 +13,14 @@ import type { ChannelId, ChannelRuntimeState, PublishJob } from '../shared/v2-ty
 /* INLINE:dom */
 /* INLINE:events */
 /* INLINE:v2-protocol */
+/* INLINE:channel-config */
 /* INLINE:publish-verify */
 /* INLINE:rich-content */
 /* INLINE:image-bridge */
 
 const CHANNEL_ID: ChannelId = 'feishu-docs';
 
-const FEISHU_FOLDER_URL = 'https://wuxinxuexi.feishu.cn/drive/folder/PyWAfSFwrlMgiydvlHectMn2nSd';
+const FEISHU_FOLDER_URL = getChannelConfig(CHANNEL_ID).entryUrl;
 
 type AnyJob = Pick<PublishJob, 'jobId' | 'action' | 'article' | 'stoppedAt'>;
 
@@ -27,7 +28,9 @@ let currentJob: AnyJob | null = null;
 let currentStage: ChannelRuntimeState['stage'] = 'init';
 let stopRequested = false;
 
-(globalThis as unknown as { __BAWEI_V2_IS_STOP_REQUESTED?: () => boolean }).__BAWEI_V2_IS_STOP_REQUESTED = () => stopRequested;
+(
+  globalThis as unknown as { __BAWEI_V2_IS_STOP_REQUESTED?: () => boolean }
+).__BAWEI_V2_IS_STOP_REQUESTED = () => stopRequested;
 
 function getMessage(key: string, substitutions?: string[]): string {
   try {
@@ -82,7 +85,9 @@ function shouldRunOnThisPage(): boolean {
 }
 
 function isFolderPage(): boolean {
-  return location.hostname === 'wuxinxuexi.feishu.cn' && location.pathname.startsWith('/drive/folder/');
+  return (
+    location.hostname === 'wuxinxuexi.feishu.cn' && location.pathname.startsWith('/drive/folder/')
+  );
 }
 
 function isDocxPage(): boolean {
@@ -90,21 +95,96 @@ function isDocxPage(): boolean {
 }
 
 function findFeishuBodyEditor(): HTMLElement | null {
-  const direct = document.querySelector<HTMLElement>(
-    '.page-block-children .block.docx-text-block .zone-container.text-editor[contenteditable="true"], .page-block-children .zone-container.text-editor[contenteditable="true"]'
+  return document.querySelector<HTMLElement>(
+    '.page-block-children .block.docx-text-block .zone-container.text-editor[contenteditable="true"]'
   );
-  if (direct) return direct;
-
-  const editors = Array.from(
-    document.querySelectorAll<HTMLElement>('.zone-container.text-editor[contenteditable="true"], .zone-container.text-editor')
-  );
-  const bodyCandidates = editors.filter((el) => !el.closest('h1') && !el.closest('.page-block-header') && !!el.closest('.page-block-children'));
-  if (bodyCandidates.length) return bodyCandidates[0];
-
-  return editors.find((el) => !el.closest('h1') && !el.closest('.page-block-header')) || null;
 }
 
-async function appendSourceUrlToFeishuEditor(editor: HTMLElement, sourceUrl: string): Promise<void> {
+type FeishuDocumentEvidence = {
+  title: string;
+  text: string;
+  blockCount: number;
+  imageUrls: string[];
+};
+
+function expectedFeishuTextBlocks(contentHtml: string): string[] {
+  const root = document.createElement('div');
+  root.innerHTML = String(contentHtml || '');
+  return Array.from(root.querySelectorAll<HTMLElement>('p,h1,h2,h3,h4,h5,h6,li,blockquote'))
+    .map((node) =>
+      String(node.textContent || '')
+        .replace(/\s+/g, ' ')
+        .trim()
+    )
+    .filter((text) => text.length >= 8);
+}
+
+async function collectFeishuDocumentEvidence(): Promise<FeishuDocumentEvidence> {
+  const scrollRoot = document.querySelector<HTMLElement>('.bear-web-x-container');
+  const originalScrollTop = scrollRoot?.scrollTop || 0;
+  const blocks = new Map<string, { text: string; imageUrls: string[] }>();
+  const collectVisibleBlocks = () => {
+    for (const block of Array.from(
+      document.querySelectorAll<HTMLElement>('.page-block-children .block[data-block-id]')
+    )) {
+      const key =
+        String(block.getAttribute('data-record-id') || '').trim() ||
+        String(block.getAttribute('data-block-id') || '').trim();
+      if (!key) continue;
+      const text = String(block.innerText || block.textContent || '')
+        .replace(/\u200b/g, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+      const imageUrls = Array.from(block.querySelectorAll<HTMLImageElement>('img.docx-image, img'))
+        .map((image) => String(image.currentSrc || image.src || '').trim())
+        .filter((url) => url && isPlatformHostedImageUrl(url));
+      blocks.set(key, { text, imageUrls });
+    }
+  };
+
+  if (scrollRoot) {
+    const max = Math.max(0, scrollRoot.scrollHeight - scrollRoot.clientHeight);
+    const step = Math.max(240, Math.floor(scrollRoot.clientHeight * 0.6));
+    for (let top = 0; top <= max; top += step) {
+      scrollRoot.scrollTop = top;
+      scrollRoot.dispatchEvent(new Event('scroll', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 140));
+      collectVisibleBlocks();
+    }
+    if (max > 0) {
+      scrollRoot.scrollTop = max;
+      scrollRoot.dispatchEvent(new Event('scroll', { bubbles: true }));
+      await new Promise((resolve) => setTimeout(resolve, 140));
+      collectVisibleBlocks();
+    }
+    scrollRoot.scrollTop = originalScrollTop;
+    scrollRoot.dispatchEvent(new Event('scroll', { bubbles: true }));
+  } else {
+    collectVisibleBlocks();
+  }
+
+  const title = String(
+    document.querySelector<HTMLElement>('h1.page-block-content')?.innerText || ''
+  )
+    .replace(/\u200b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  const values = Array.from(blocks.values());
+  return {
+    title,
+    text: values
+      .map((value) => value.text)
+      .filter(Boolean)
+      .join('\n'),
+    blockCount: values.length,
+    imageUrls: Array.from(new Set(values.flatMap((value) => value.imageUrls)))
+  };
+}
+
+async function appendSourceUrlToFeishuEditor(
+  editor: HTMLElement,
+  sourceUrl: string
+): Promise<void> {
   const text = String(sourceUrl || '').trim();
   if (!text) return;
   const value = `原文链接：${text}`;
@@ -128,7 +208,7 @@ async function appendSourceUrlToFeishuEditor(editor: HTMLElement, sourceUrl: str
       const ev = new ClipboardEvent('paste', {
         bubbles: true,
         cancelable: true,
-        clipboardData: dt,
+        clipboardData: dt
       } as unknown as ClipboardEventInit);
       editor.dispatchEvent(ev);
     } catch {
@@ -183,7 +263,7 @@ async function report(patch: Partial<ChannelRuntimeState>): Promise<void> {
     type: V2_CHANNEL_UPDATE,
     jobId: currentJob.jobId,
     channelId: CHANNEL_ID,
-    patch,
+    patch
   });
 }
 
@@ -196,13 +276,17 @@ async function getContextFromBackground(): Promise<{ job: AnyJob; channelId: str
 function getCurrentLoginState() {
   return detectPageLoginState({
     loginUrlPattern: /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i,
-    loggedInPattern: /飞书|云文档|工作台|新建|共享|退出登录|账号设置|空间/i,
+    loggedInPattern: /飞书|云文档|工作台|新建|共享|退出登录|账号设置|空间/i
   });
 }
 
 async function stageDetectLogin(): Promise<void> {
   currentStage = 'detectLogin';
-  await report({ status: 'running', stage: 'detectLogin', userMessage: getMessage('v3MsgDetectingLogin') });
+  await report({
+    status: 'running',
+    stage: 'detectLogin',
+    userMessage: getMessage('v3MsgDetectingLogin')
+  });
 
   const loginState = getCurrentLoginState();
   if (loginState.status === 'not_logged_in') {
@@ -210,14 +294,16 @@ async function stageDetectLogin(): Promise<void> {
       status: 'not_logged_in',
       stage: 'detectLogin',
       userMessage: getMessage('v3MsgNotLoggedIn'),
-      userSuggestion: getMessage('v3SugLoginThenRetry'),
+      userSuggestion: getMessage('v3SugLoginThenRetry')
     });
     throw new Error('__BAWEI_V2_STOPPED__');
   }
 }
 
 function findClickableByText(text: string): HTMLElement | null {
-  const nodes = Array.from(document.querySelectorAll<HTMLElement>('button,[role="menuitem"],a,div,span,li'));
+  const nodes = Array.from(
+    document.querySelectorAll<HTMLElement>('button,[role="menuitem"],a,div,span,li')
+  );
   return nodes.find((n) => (n.textContent || '').replace(/\s+/g, ' ').trim() === text) || null;
 }
 
@@ -225,7 +311,9 @@ function pickClickTarget(el: HTMLElement): HTMLElement {
   // Feishu Drive buttons are often plain divs with internal click handlers.
   if (el.classList.contains('workspace-next-layout-btn-wrapper')) {
     const inner =
-      (el.querySelector('[data-selector="workspace-next-create_new_file"]') as HTMLElement | null) ||
+      (el.querySelector(
+        '[data-selector="workspace-next-create_new_file"]'
+      ) as HTMLElement | null) ||
       (el.querySelector('[data-selector]') as HTMLElement | null) ||
       null;
     if (inner) return inner;
@@ -278,7 +366,7 @@ async function createBlankDocxByApi(folderToken: string, name: string): Promise<
     source: '0',
     ua_type: 'Web',
     scene: 'space_create',
-    ext_info: JSON.stringify({ platform: 'web' }),
+    ext_info: JSON.stringify({ platform: 'web' })
   }).toString();
 
   const csrfToken = getCookieValue('_csrf_token') || getCookieValue('lgw_csrf_token');
@@ -291,9 +379,9 @@ async function createBlankDocxByApi(folderToken: string, name: string): Promise<
     signal: controller.signal,
     headers: {
       'content-type': 'application/x-www-form-urlencoded; charset=UTF-8',
-      ...(csrfToken ? { 'x-csrftoken': csrfToken } : {}),
+      ...(csrfToken ? { 'x-csrftoken': csrfToken } : {})
     },
-    body,
+    body
   }).finally(() => clearTimeout(timer));
 
   type FeishuCreateDocResponse = {
@@ -314,7 +402,8 @@ async function createBlankDocxByApi(folderToken: string, name: string): Promise<
     // ignore
   }
   if (!res.ok) throw new Error(`create doc http ${res.status}`);
-  if (data?.code !== 0) throw new Error(`create doc failed: ${data?.msg || data?.message || data?.code || 'unknown'}`);
+  if (data?.code !== 0)
+    throw new Error(`create doc failed: ${data?.msg || data?.message || data?.code || 'unknown'}`);
 
   const nodes = data?.data?.entities?.nodes;
   if (nodes && typeof nodes === 'object') {
@@ -332,10 +421,15 @@ async function createBlankDocxByApi(folderToken: string, name: string): Promise<
 
 async function ensureNewBlankDocxCreated(job: AnyJob): Promise<void> {
   currentStage = 'openEntry';
-  await report({ status: 'running', stage: 'openEntry', userMessage: getMessage('v2MsgFeishuCreatingBlankDoc') });
+  await report({
+    status: 'running',
+    stage: 'openEntry',
+    userMessage: getMessage('v2MsgFeishuCreatingBlankDoc')
+  });
 
   // Prefer API creation to avoid menu click instability and to keep the doc opened in the same tab.
-  const folderToken = getFolderTokenFromUrl(location.href) || getFolderTokenFromUrl(FEISHU_FOLDER_URL);
+  const folderToken =
+    getFolderTokenFromUrl(location.href) || getFolderTokenFromUrl(FEISHU_FOLDER_URL);
   if (folderToken) {
     try {
       const docUrl = await createBlankDocxByApi(folderToken, job.article.title);
@@ -347,7 +441,7 @@ async function ensureNewBlankDocxCreated(job: AnyJob): Promise<void> {
         status: 'running',
         stage: 'openEntry',
         userMessage: getMessage('v2MsgFeishuApiCreateFailedFallbackUi'),
-        devDetails: { message: e instanceof Error ? e.message : String(e) },
+        devDetails: { message: e instanceof Error ? e.message : String(e) }
       });
     }
   }
@@ -356,9 +450,10 @@ async function ensureNewBlankDocxCreated(job: AnyJob): Promise<void> {
   const newBtn = await retryUntil(
     async () => {
       const el =
-        Array.from(document.querySelectorAll<HTMLElement>('.workspace-next-layout-btn-wrapper')).find((n) =>
-          (n.textContent || '').replace(/\s+/g, ' ').trim().startsWith('新建')
-        ) || findClickableByText('新建');
+        Array.from(
+          document.querySelectorAll<HTMLElement>('.workspace-next-layout-btn-wrapper')
+        ).find((n) => (n.textContent || '').replace(/\s+/g, ' ').trim().startsWith('新建')) ||
+        findClickableByText('新建');
       if (!el) throw new Error('new button not ready');
       return el;
     },
@@ -371,8 +466,9 @@ async function ensureNewBlankDocxCreated(job: AnyJob): Promise<void> {
   const docMenu = await retryUntil(
     async () => {
       const el =
-        Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find((n) => (n.textContent || '').trim() === '文档') ||
-        findClickableByText('文档');
+        Array.from(document.querySelectorAll<HTMLElement>('[role="menuitem"]')).find(
+          (n) => (n.textContent || '').trim() === '文档'
+        ) || findClickableByText('文档');
       if (!el) throw new Error('doc menu not ready');
       return el;
     },
@@ -384,7 +480,8 @@ async function ensureNewBlankDocxCreated(job: AnyJob): Promise<void> {
   // In template modal, click "新建空白文档"
   const blank = await retryUntil(
     async () => {
-      const el = findClickableByText('新建空白文档') || findAnyElementContainingText('新建空白文档');
+      const el =
+        findClickableByText('新建空白文档') || findAnyElementContainingText('新建空白文档');
       if (!el) throw new Error('blank doc entry not ready');
       return el;
     },
@@ -409,21 +506,33 @@ async function ensureNewBlankDocxCreated(job: AnyJob): Promise<void> {
 
 async function stageFillTitle(title: string): Promise<void> {
   currentStage = 'fillTitle';
-  await report({ status: 'running', stage: 'fillTitle', userMessage: getMessage('v2MsgFillingTitle') });
+  await report({
+    status: 'running',
+    stage: 'fillTitle',
+    userMessage: getMessage('v2MsgFillingTitle')
+  });
 
   // Best-effort: some Feishu doc layouts do not expose the title as a stable h1. We already set the file name
   // during creation, so title editing is optional and must not block the whole flow.
-  const h1 = document.querySelector<HTMLElement>('h1.page-block-title-empty') || document.querySelector<HTMLElement>('h1');
+  const h1 =
+    document.querySelector<HTMLElement>('h1.page-block-title-empty') ||
+    document.querySelector<HTMLElement>('h1');
   if (!h1) {
-    await report({ status: 'running', stage: 'fillTitle', userMessage: getMessage('v2MsgFeishuTitleAreaNotFoundSkipUseFilename') });
+    await report({
+      status: 'running',
+      stage: 'fillTitle',
+      userMessage: getMessage('v2MsgFeishuTitleAreaNotFoundSkipUseFilename')
+    });
     return;
   }
 
-  simulateClick(h1);
+  const titleEditor =
+    h1.querySelector<HTMLElement>('.zone-container.text-editor[contenteditable="true"]') || h1;
+  simulateClick(titleEditor);
   await new Promise((r) => setTimeout(r, 100));
 
   // Feishu doc title editing uses selection in the document; keep selection scoped to title node.
-  selectContents(h1);
+  selectContents(titleEditor);
   try {
     document.execCommand('delete', false);
   } catch {
@@ -434,6 +543,12 @@ async function stageFillTitle(title: string): Promise<void> {
   } catch {
     // ignore
   }
+  await new Promise((r) => setTimeout(r, 300));
+  const actual = String(h1.innerText || h1.textContent || '')
+    .replace(/\u200b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (actual !== title.trim()) throw new Error(`飞书标题写入未生效（actual=${actual || 'empty'}）`);
 }
 
 async function stageFillContent(contentHtml: string, sourceUrl: string): Promise<void> {
@@ -442,15 +557,12 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
     status: 'running',
     stage: 'fillContent',
     userMessage: getMessage('v2MsgFillingContent'),
-    userSuggestion: getMessage('v2SugFeishuNoSourceFieldAppend'),
+    userSuggestion: getMessage('v2SugFeishuNoSourceFieldAppend')
   });
 
   const editor = await retryUntil(
     async () => {
-      const fallback = findContentEditor(document) as HTMLElement | null;
-      const el =
-        findFeishuBodyEditor() ||
-        (fallback && !fallback.closest('h1') && !fallback.closest('.page-block-header') ? fallback : null);
+      const el = findFeishuBodyEditor();
       if (!el) throw new Error('editor not ready');
       return el;
     },
@@ -458,31 +570,28 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
   );
 
   const rawTokens = buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
-  const tokens = rawTokens.filter((token) => token?.kind !== 'image');
+  const tokens = [...rawTokens];
   const sourceToken = buildFeishuSourceToken(sourceUrl);
-  if (sourceToken && !tokens.some((token) => token?.kind === 'html' && String(token.html || '').includes(sourceUrl))) {
+  if (
+    sourceToken &&
+    !tokens.some((token) => token?.kind === 'html' && String(token.html || '').includes(sourceUrl))
+  ) {
     tokens.push(sourceToken);
   }
 
-  const expectedImages = 0;
+  const expectedImages = tokens.filter((token) => token?.kind === 'image').length;
 
-  const existingText = (() => {
-    try {
-      return String(editor.textContent || '');
-    } catch {
-      return '';
-    }
-  })();
-  const existingHasSource = !!(sourceUrl && (existingText.includes(sourceUrl) || pageContainsSourceUrl(sourceUrl)));
+  const expectedTextBlocks = expectedFeishuTextBlocks(contentHtml);
+  const existingEvidence = await collectFeishuDocumentEvidence();
+  const existingText = existingEvidence.text;
+  const existingHasSource = !!(
+    sourceUrl &&
+    (existingText.includes(sourceUrl) || pageContainsSourceUrl(sourceUrl))
+  );
   const existingOk =
-    existingHasSource &&
-    (expectedImages === 0 ||
-      Array.from(editor.querySelectorAll<HTMLImageElement>('img')).filter((img) => {
-        const src = String(img.getAttribute('src') || '').trim();
-        if (!src) return false;
-        if (src.startsWith('blob:') || src.startsWith('data:')) return true;
-        return !src.includes('qpic.cn') && !src.includes('qlogo.cn');
-      }).length >= expectedImages);
+    (!sourceUrl || existingHasSource) &&
+    expectedTextBlocks.every((text) => existingText.includes(text)) &&
+    (expectedImages === 0 || existingEvidence.imageUrls.length >= expectedImages);
 
   if (!existingOk) {
     try {
@@ -495,9 +604,9 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
           await report({
             status: 'running',
             stage: 'fillContent',
-            userMessage: getMessage('v3MsgUploadingImageProgress', [String(current), String(total)]),
+            userMessage: getMessage('v3MsgUploadingImageProgress', [String(current), String(total)])
           });
-        },
+        }
       });
     } catch (e) {
       await report({
@@ -505,7 +614,7 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
         stage: 'waitingUser',
         userMessage: getMessage('v3MsgImageUploadFailed'),
         userSuggestion: getMessage('v3SugManualUploadImagesThenContinue'),
-        devDetails: { message: e instanceof Error ? e.message : String(e) },
+        devDetails: { message: e instanceof Error ? e.message : String(e) }
       });
       throw new Error('__BAWEI_V2_STOPPED__');
     }
@@ -513,13 +622,28 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
 
   // Verify we can observe the source URL in the DOM. (Some accounts may render link cards, so also accept the label.)
   await new Promise((r) => setTimeout(r, 800));
-  let ok = pageContainsSourceUrl(sourceUrl) || pageContainsText('原文链接');
+  let ok = !sourceUrl || pageContainsSourceUrl(sourceUrl) || pageContainsText('原文链接');
   if (!ok && sourceUrl) {
     await appendSourceUrlToFeishuEditor(editor, sourceUrl);
     await new Promise((r) => setTimeout(r, 800));
     ok = pageContainsSourceUrl(sourceUrl) || pageContainsText('原文链接');
   }
   if (!ok) throw new Error('正文填充失败：未检测到“原文链接/原文URL”写入');
+
+  if (expectedImages > 0) {
+    await retryUntil(
+      async () => {
+        const evidence = await collectFeishuDocumentEvidence();
+        if (evidence.imageUrls.length < expectedImages)
+          throw new Error(`等待飞书图片云端落地（${evidence.imageUrls.length}/${expectedImages}）`);
+        const missingText = expectedTextBlocks.filter((text) => !evidence.text.includes(text));
+        if (missingText.length)
+          throw new Error(`等待飞书正文云端落地（缺失段落 ${missingText.length}）`);
+        return true;
+      },
+      { timeoutMs: 180_000, intervalMs: 1000 }
+    );
+  }
 
   await report({ userMessage: getMessage('v2MsgAppendedSourceLinkKeepOriginal') });
 }
@@ -533,43 +657,114 @@ async function waitForAutoSave(): Promise<void> {
     // - "保存中..." -> still saving
     // - "已经保存到云端" -> saved
     // - "最近修改: 刚刚/xx 分钟前" -> saved
-    if (t && !t.includes('保存中') && (t.includes('已经保存到云端') || t.includes('已保存到云端') || t.includes('已保存至云端') || t.includes('最近修改'))) {
+    if (
+      t &&
+      !t.includes('保存中') &&
+      (t.includes('已经保存到云端') ||
+        t.includes('已保存到云端') ||
+        t.includes('已保存至云端') ||
+        t.includes('最近修改'))
+    ) {
       return;
     }
 
     const text = document.body?.innerText || '';
-    if (text.includes('已经保存到云端') || text.includes('已保存到云端') || text.includes('已保存至云端') || text.includes('保存成功')) return;
+    if (
+      text.includes('已经保存到云端') ||
+      text.includes('已保存到云端') ||
+      text.includes('已保存至云端') ||
+      text.includes('保存成功')
+    )
+      return;
     await new Promise((r) => setTimeout(r, 800));
   }
+  throw new Error('飞书文档等待云端自动保存超时');
+}
+
+async function ensureAnonymousLinkReadable(): Promise<void> {
+  const shareButton =
+    Array.from(document.querySelectorAll<HTMLElement>('button,[role="button"],div,span')).find(
+      (node) => (node.textContent || '').replace(/\s+/g, '').trim() === '分享'
+    ) || null;
+  if (!shareButton) throw new Error('飞书未找到分享按钮');
+  simulateClick(shareButton);
+
+  const option = await retryUntil(
+    async () => {
+      const nodes = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          'button,[role="button"],[role="menuitem"],label,div,span'
+        )
+      );
+      const target = nodes.find((node) =>
+        /互联网上获得链接的任何人可阅读|任何获得链接的人可阅读|任何人可阅读|开启互联网访问/.test(
+          (node.textContent || '').replace(/\s+/g, '')
+        )
+      );
+      if (!target) throw new Error('等待飞书匿名分享选项');
+      return target;
+    },
+    { timeoutMs: 30_000, intervalMs: 600 }
+  );
+  const target =
+    (option.closest('label') as HTMLElement | null) ||
+    (option.closest('[role="menuitem"]') as HTMLElement | null) ||
+    (option.closest('[role="button"]') as HTMLElement | null) ||
+    option;
+  const switchNode =
+    target.querySelector<HTMLElement>('[role="switch"],input[type="checkbox"]') || target;
+  const checked =
+    switchNode.getAttribute('aria-checked') === 'true' ||
+    (switchNode instanceof HTMLInputElement && switchNode.checked) ||
+    /已开启|任何人可阅读/.test((target.textContent || '').replace(/\s+/g, ''));
+  if (!checked) simulateClick(switchNode);
+
+  await retryUntil(
+    async () => {
+      const text = (document.body?.innerText || '').replace(/\s+/g, '');
+      if (/互联网上获得链接的任何人可阅读|任何获得链接的人可阅读|互联网访问已开启/.test(text))
+        return true;
+      throw new Error('等待飞书匿名分享设置生效');
+    },
+    { timeoutMs: 30_000, intervalMs: 600 }
+  );
 }
 
 async function runDocxFlow(job: AnyJob): Promise<void> {
   await stageDetectLogin();
   await stageFillTitle(job.article.title);
-  await stageFillContent(job.article.contentHtml, job.article.sourceUrl);
+  await stageFillContent(job.article.contentHtml, job.article.sourceUrl || '');
 
   // Feishu docs auto-saves; treat both actions as "created + saved".
   currentStage = job.action === 'draft' ? 'saveDraft' : 'submitPublish';
   await report({
     status: 'running',
     stage: currentStage,
-    userMessage: job.action === 'draft' ? getMessage('v2MsgFeishuWaitingAutosaveDraft') : getMessage('v2MsgFeishuWaitingAutosavePublish'),
+    userMessage:
+      job.action === 'draft'
+        ? getMessage('v2MsgFeishuWaitingAutosaveDraft')
+        : getMessage('v2MsgFeishuWaitingAutosavePublish')
   });
 
   await waitForAutoSave();
+  if (job.action === 'publish') await ensureAnonymousLinkReadable();
 
   await report({
     status: 'running',
     stage: 'confirmSuccess',
     userMessage: getMessage('v2MsgFeishuContentWrittenBackToFolderVerify'),
-    devDetails: summarizeVerifyDetails({ listUrl: FEISHU_FOLDER_URL }),
+    devDetails: summarizeVerifyDetails({ listUrl: FEISHU_FOLDER_URL })
   });
   navigateWithinChannel(FEISHU_FOLDER_URL);
 }
 
 async function verifyFromFolder(job: AnyJob): Promise<void> {
   currentStage = 'confirmSuccess';
-  await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgVerifyFindNewDocInFolderList') });
+  await report({
+    status: 'running',
+    stage: 'confirmSuccess',
+    userMessage: getMessage('v2MsgVerifyFindNewDocInFolderList')
+  });
 
   // Folder list renders async; wait a bit before deciding "not found", otherwise we may refresh too early and never see the item.
   const waitDeadline = Date.now() + 18_000;
@@ -591,7 +786,7 @@ async function verifyFromFolder(job: AnyJob): Promise<void> {
         status: 'running',
         stage: 'confirmSuccess',
         userMessage: getMessage('v2MsgVerifyListNoTitleRefresh8s12', [String(n)]),
-        devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: false }),
+        devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: false })
       });
       setTimeout(() => location.reload(), 8000);
       return;
@@ -603,7 +798,7 @@ async function verifyFromFolder(job: AnyJob): Promise<void> {
       stage: 'waitingUser',
       userMessage: getMessage('v2MsgVerifyFailedFolderListNoTitle'),
       userSuggestion: getMessage('v2SugRefreshListThenContinue'),
-      devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: false }),
+      devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: false })
     });
     return;
   }
@@ -616,7 +811,7 @@ async function verifyFromFolder(job: AnyJob): Promise<void> {
       status: 'running',
       stage: 'confirmSuccess',
       userMessage: getMessage('v2MsgVerifyFoundTitleOpeningDocDetail'),
-      devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: true }),
+      devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: true })
     });
     navigateWithinChannel(docUrl);
     return;
@@ -627,13 +822,15 @@ async function verifyFromFolder(job: AnyJob): Promise<void> {
     stage: 'waitingUser',
     userMessage: getMessage('v2MsgVerifyBlockedNoDocLink'),
     userSuggestion: getMessage('v2SugFeishuOpenDocDetailManuallyThenWaitVerify'),
-    devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: true }),
+    devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: true })
   });
 }
 
 async function verifyFromDocx(job: AnyJob): Promise<void> {
   // Auto-save indicator is the strongest signal that edits are persisted to the cloud.
-  const savedText = (document.querySelector<HTMLElement>('.note-title__time')?.textContent || '').trim();
+  const savedText = (
+    document.querySelector<HTMLElement>('.note-title__time')?.textContent || ''
+  ).trim();
   const isSaved =
     !!savedText &&
     !savedText.includes('保存中') &&
@@ -641,14 +838,48 @@ async function verifyFromDocx(job: AnyJob): Promise<void> {
       savedText.includes('已保存到云端') ||
       savedText.includes('已保存至云端') ||
       savedText.includes('最近修改'));
-  const sourceUrlPresent = pageContainsSourceUrl(job.article.sourceUrl) || pageContainsText('原文链接');
-  const ok = isSaved;
+  const sourceUrl = job.article.sourceUrl || '';
+  const sourceUrlPresent = sourceUrl
+    ? pageContainsSourceUrl(sourceUrl) || pageContainsText('原文链接')
+    : false;
+  const evidence = await collectFeishuDocumentEvidence();
+  const expectedImageCount = buildRichContentTokens({
+    contentHtml: job.article.contentHtml,
+    baseUrl: sourceUrl,
+    sourceUrl
+  }).filter((token) => token?.kind === 'image').length;
+  const expectedTextBlocks = expectedFeishuTextBlocks(job.article.contentHtml);
+  const missingTextBlocks = expectedTextBlocks.filter((text) => !evidence.text.includes(text));
+  const titleMatches = evidence.title === job.article.title.trim();
+  const ok =
+    isSaved &&
+    titleMatches &&
+    missingTextBlocks.length === 0 &&
+    evidence.imageUrls.length >= expectedImageCount;
   await report({
-    status: ok ? 'success' : 'waiting_user',
+    status: ok ? (job.action === 'draft' ? 'success' : 'pending_review') : 'waiting_user',
     stage: ok ? 'done' : 'waitingUser',
-    userMessage: ok ? (job.action === 'draft' ? getMessage('v2MsgDraftSavedVerifyDone') : getMessage('v2MsgVerifyPassedSavedToCloudAndHasSource')) : getMessage('v2MsgVerifyFailedNoSavedToCloudOrSource'),
-    userSuggestion: ok ? undefined : getMessage('v2SugFeishuConfirmSavedToCloudAndSourceThenContinue'),
-    devDetails: summarizeVerifyDetails({ publishedUrl: location.href, sourceUrlPresent, savedToCloud: isSaved }),
+    userMessage: ok
+      ? job.action === 'draft'
+        ? getMessage('v2MsgDraftSavedVerifyDone')
+        : getMessage('v2MsgVerifyPassedSavedToCloudAndHasSource')
+      : getMessage('v2MsgVerifyFailedNoSavedToCloudOrSource'),
+    userSuggestion: ok
+      ? undefined
+      : getMessage('v2SugFeishuConfirmSavedToCloudAndSourceThenContinue'),
+    devDetails: summarizeVerifyDetails({
+      publishedUrl: location.href,
+      ...(job.action === 'publish' ? { candidatePublicUrl: location.href } : {}),
+      managementUrl: FEISHU_FOLDER_URL,
+      reviewStatus: job.action === 'publish' ? 'anonymous_link_enabled' : 'draft_saved',
+      sourceUrlPresent,
+      savedToCloud: isSaved,
+      titleMatches,
+      missingTextBlockCount: missingTextBlocks.length,
+      observedBlockCount: evidence.blockCount,
+      expectedImageCount,
+      observedImageCount: evidence.imageUrls.length
+    })
   });
 }
 
@@ -690,7 +921,7 @@ async function bootstrap(): Promise<void> {
       stage: currentStage,
       userMessage: getMessage('v2MsgFailed'),
       userSuggestion: getMessage('v2SugCheckLoginOrDomThenRetry'),
-      devDetails: { message: error instanceof Error ? error.message : String(error) },
+      devDetails: { message: error instanceof Error ? error.message : String(error) }
     });
   }
 }
@@ -705,10 +936,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     stopRequested = true;
     return;
   }
-  if (message?.type === V2_REQUEST_RETRY && message.jobId === currentJob.jobId && message.channelId === CHANNEL_ID) {
+  if (
+    message?.type === V2_REQUEST_RETRY &&
+    message.jobId === currentJob.jobId &&
+    message.channelId === CHANNEL_ID
+  ) {
     bootstrap();
   }
-  if (message?.type === V2_REQUEST_CONTINUE && message.jobId === currentJob.jobId && message.channelId === CHANNEL_ID) {
+  if (
+    message?.type === V2_REQUEST_CONTINUE &&
+    message.jobId === currentJob.jobId &&
+    message.channelId === CHANNEL_ID
+  ) {
     bootstrap();
   }
 });

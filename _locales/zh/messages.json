@@ -259,6 +259,14 @@
     "message": "成功",
     "description": "Status success"
   },
+  "statusPendingReview": {
+    "message": "待审",
+    "description": "Submitted and awaiting review or anonymous verification"
+  },
+  "statusRejected": {
+    "message": "已退回",
+    "description": "Publication rejected"
+  },
   "statusFailed": {
     "message": "失败",
     "description": "Status failed"

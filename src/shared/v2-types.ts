@@ -25,7 +25,15 @@ export type ChannelStage =
   | 'waitingUser'
   | 'done';
 
-export type ChannelResultStatus = 'not_started' | 'running' | 'success' | 'failed' | 'waiting_user' | 'not_logged_in';
+export type ChannelResultStatus =
+  | 'not_started'
+  | 'running'
+  | 'success'
+  | 'pending_review'
+  | 'rejected'
+  | 'failed'
+  | 'waiting_user'
+  | 'not_logged_in';
 
 export type RichContentToken =
   | {
@@ -42,7 +50,7 @@ export interface ArticlePayload {
   title: string;
   contentHtml: string;
   contentTokens?: RichContentToken[];
-  sourceUrl: string;
+  sourceUrl?: string;
   author?: string;
   publishTime?: string;
   coverUrl?: string;
@@ -64,14 +72,30 @@ export interface ChannelRuntimeState {
   stage?: ChannelStage;
   userMessage?: string;
   userSuggestion?: string;
-  devDetails?:
-    | unknown
-    | {
-        publishedUrl?: string;
-        listUrl?: string;
-        verified?: { listVisible?: boolean; sourceUrlPresent?: boolean };
-        message?: string;
-      };
+  devDetails?: unknown | ChannelEvidenceDetails;
   updatedAt: number;
   tabId?: number;
+}
+
+export interface ChannelEvidenceDetails {
+  publishedUrl?: string;
+  draftUrl?: string;
+  editorUrl?: string;
+  listUrl?: string;
+  managementUrl?: string;
+  candidatePublicUrl?: string;
+  reviewStatus?: string;
+  rejectionReason?: string;
+  expectedImageCount?: number;
+  observedImageCount?: number;
+  contentHash?: string;
+  anonymousEvidence?: unknown;
+  verified?: {
+    listVisible?: boolean;
+    sourceUrlPresent?: boolean;
+    savedToCloud?: boolean;
+    anonymousPublic?: boolean;
+  };
+  message?: string;
+  [key: string]: unknown;
 }

@@ -23,7 +23,7 @@ bawei 是一款专为内容同步发布设计的浏览器插件：打开微信�
    - 自动检测登录状态（未登录会在面板提示）
    - 自动填充标题与正文
    - 自动下载并上传正文图片（按原文顺序插入）
-   - 支持“保存草稿 / 直接发布”
+   - 支持“保存草稿 / 提交发布”；投稿后需平台审核的渠道先显示“待审”，不会提前报公开成功
    - 点击任一渠道状态可跳转/重开该渠道 Tab
 
 3. **智能兼容性**
@@ -34,6 +34,11 @@ bawei 是一款专为内容同步发布设计的浏览器插件：打开微信�
    - 支持自动发布开关
    - 支持自动关闭原页面
    - 多语言界面支持
+
+5. **公开验收与防重复投稿**
+   - `success` 只表示文章详情页可在无 Cookie 的匿名浏览器中访问，且标题、正文锚点和平台托管图片通过验收
+   - `pending_review`、`rejected`、`waiting_user`、`failed`、`not_logged_in` 分开记录，不再把点击投稿按钮或得到候选链接当成成功
+   - 发布台账按“渠道 + 内容哈希”防重：公开成功、待审、退回和待人工验证内容都不会重复投稿；待审内容只复核公开状态
 
 ## 如何使用
 
@@ -60,7 +65,8 @@ bawei 是一款专为内容同步发布设计的浏览器插件：打开微信�
 1. **内容提取**：提取标题、正文渲染后 HTML、原文链接（当前页面 URL）
 2. **串行执行渠道**：逐个聚焦所选平台编辑页并开始执行，并自动检测登录状态
 3. **填充与上传**：按原文顺序写入文本段落，并把正文图片下载后上传到各平台
-4. **诊断与处理**：诊断区开始后自动展开；如遇未登录/验证码/实名/风控/图片上传失败等平台要求，按诊断提示手动完成后点击“继续/重试”
+4. **诊断与处理**：诊断区开始后自动展开；如遇未登录/验证码/实名/风控/图片上传失败等平台要求，按诊断提示处理
+5. **终态验收**：草稿以平台保存结果为准；正式发布只有匿名公开验收通过才记为成功，审核中和退回会保留各自终态及证据
 
 ### 4. 设置选项
 
@@ -117,10 +123,12 @@ bawei 是一款专为内容同步发布设计的浏览器插件：打开微信�
     - 后续发布：`CHROME_PROFILE_DIR="$HOME/.bawei-live-profile" BOOTSTRAP_PROFILE=0 npm run live:publish -- <微信文章URL>`
     - 如果已经在某次真测里完成了登录，可把当前会话的专用 profile 路径记录到独立文件（例如 `artifacts/live-publish/reuse-profile.env`），后续直接 `source` 该文件再执行命令，避免手填路径时切错 profile
   - 若确实要从你日常 Chrome 导入一次登录态，可显式设置 `BOOTSTRAP_PROFILE=1`；脚本默认只在目标 profile 未初始化时引导一次，如需强制再次覆盖可再加 `BOOTSTRAP_PROFILE_REFRESH=1`
-  - 若同一篇文章在修复代码后需要强制重跑某个已成功渠道，可加：`LIVE_PUBLISH_FORCE_CHANNELS=tencent-cloud-dev npm run live:publish -- <微信文章URL>`
+  - `LIVE_PUBLISH_FORCE_CHANNELS` 只重置旧进度文件，不能绕过正式发布台账；已公开、待审、退回或待人工验证的同内容仍禁止重投
   - 历史失败路径简表见 `docs/live-publish-failure-paths.md`
 - 本地 Markdown 一键串行发布到默认 10 个渠道：`npm run publish:markdown -- /path/to/article.md`
-  - 命令会先构建扩展，再逐个聚焦渠道并执行正式发布；完整格式、登录准备和本地图片说明见 `docs/local-markdown-publish.md`
+  - 命令会先构建扩展，再逐个聚焦渠道并执行正式发布；人人都是产品经理正式投稿必须提供 `bawei:variant woshipm` 专用变体
+  - `source_url` 可省略；省略时不会把 `127.0.0.1` 临时地址写进正文，本机 HTTP 服务只负责传输本地图片
+  - 完整格式、七类终态、防重规则、登录准备和本地图片说明见 `docs/local-markdown-publish.md`
 - 基于 Playwright persistent context 的单渠道真跑脚本：`node scripts/mcp-live-publish.mjs <微信文章URL>`
   - 支持只跑指定渠道：`LIVE_PUBLISH_CHANNELS=cnblogs,woshipm node scripts/mcp-live-publish.mjs <微信文章URL>`
   - 如需强制改用本机稳定版 Chrome，可加：`PW_EXECUTABLE_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"`
@@ -131,10 +139,14 @@ bawei 是一款专为内容同步发布设计的浏览器插件：打开微信�
 
 - `baijiahao`
   - 当前重点保证正文结构 fidelity：标题、段落、正文图片、原文链接都要在编辑器落地态和最终发布态保持完整。
-- `toutiao` / `feishu-docs` / `woshipm`
-  - 当前自动化优先保证“标题 + 正文文本 + 原文链接”闭环；正文图片默认跳过自动上传。
-  - 若平台额外要求封面或图片，请按面板提示手动补齐后继续执行。
+- `toutiao` / `feishu-docs`
+  - 当前自动化优先保证“标题 + 正文文本 + 原文链接”闭环；正文图片仍按渠道能力降级处理。
+- `woshipm`
+  - 正式投稿必须使用面向产品经理读者的渠道变体，并覆盖用户问题、产品决策、取舍、适用边界和可复用洞察。
+  - 投稿后会读取“我的文章”中的审核状态和退回原因；“作品与平台定位不符，无法发布”记为 `rejected`，不会再算成功或自动重投。
 - `oschina` / `woshipm`
   - 入口页若已经退回首页且页面出现明显登录文案，当前脚本会直接判定 `not_logged_in`，不再反复首页跳转。
-  - `oschina` 真实可写入口优先走 `https://my.oschina.net/u/1/blog/write`，不要再依赖 `https://www.oschina.net/blog/write` 的中转页。
+  - `oschina` 真实可写入口统一走 `https://my.oschina.net/blog/ai-write`，不要再依赖旧的 `/blog/write` 中转页。
+  - `oschina` 的 Tiptap 主世界写入优先加载仅对 `my.oschina.net` 开放的外部页面桥接，仅开放清空、插入 HTML、聚焦结尾、上传图片四种命令；`https://my.oschina.net/*` 主机权限保留给外部脚本不可用时的后台注入后备路径。
+  - `oschina` 图片先由扩展读取为 `File`，再调用编辑器自身的 `commands.uploadImage(file)`；只有平台托管图片数达到期望值才允许投稿。
   - `oschina` 发布后优先在详情页直接验收原文链接；不要在 `/blog/write` 成功弹层刚出现时就提前回退到列表页。

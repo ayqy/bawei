@@ -7,6 +7,7 @@ import type { ChannelId, ChannelRuntimeState, PublishJob } from '../shared/v2-ty
 /* INLINE:dom */
 /* INLINE:events */
 /* INLINE:v2-protocol */
+/* INLINE:channel-config */
 /* INLINE:publish-verify */
 /* INLINE:rich-content */
 /* INLINE:image-bridge */
@@ -22,7 +23,9 @@ let stopRequested = false;
 let lastTencentTitleWriteDebug = '';
 let lastTencentMainWorldError = '';
 
-(globalThis as unknown as { __BAWEI_V2_IS_STOP_REQUESTED?: () => boolean }).__BAWEI_V2_IS_STOP_REQUESTED = () => stopRequested;
+(
+  globalThis as unknown as { __BAWEI_V2_IS_STOP_REQUESTED?: () => boolean }
+).__BAWEI_V2_IS_STOP_REQUESTED = () => stopRequested;
 
 function getMessage(key: string, substitutions?: string[]): string {
   try {
@@ -95,20 +98,28 @@ function ensureMinLengthText(text: string, minLen: number, sourceUrl: string): s
   if (sourceUrl && !out.includes(sourceUrl)) out += `\n\n原文链接：${sourceUrl}`;
   if (out.length >= minLen) return out;
   let pad = '\n\n（内容来自原文链接，更多细节请查看原文。）';
-  if (sourceUrl && !out.includes(sourceUrl) && !pad.includes(sourceUrl)) pad += `\n原文链接：${sourceUrl}`;
+  if (sourceUrl && !out.includes(sourceUrl) && !pad.includes(sourceUrl))
+    pad += `\n原文链接：${sourceUrl}`;
   while ((out + pad).length < minLen + 20) pad += '。';
   return `${out}${pad}`;
 }
 
 function getTencentEditable(): HTMLElement | null {
   return (
-    (document.querySelector<HTMLElement>('div.public-DraftEditor-content[contenteditable="true"]') as HTMLElement | null) ||
-    (document.querySelector<HTMLElement>('div[role="textbox"][contenteditable="true"]') as HTMLElement | null) ||
+    (document.querySelector<HTMLElement>(
+      'div.public-DraftEditor-content[contenteditable="true"]'
+    ) as HTMLElement | null) ||
+    (document.querySelector<HTMLElement>(
+      'div[role="textbox"][contenteditable="true"]'
+    ) as HTMLElement | null) ||
     null
   );
 }
 
-function getTencentMarkdownModel(): { getValue: () => string; setValue: (value: string) => void } | null {
+function getTencentMarkdownModel(): {
+  getValue: () => string;
+  setValue: (value: string) => void;
+} | null {
   try {
     const view = window as unknown as {
       monaco?: {
@@ -119,12 +130,13 @@ function getTencentMarkdownModel(): { getValue: () => string; setValue: (value: 
     };
     const models = view.monaco?.editor?.getModels?.() || [];
     const model = models[0];
-    if (!model || typeof model.getValue !== 'function' || typeof model.setValue !== 'function') return null;
+    if (!model || typeof model.getValue !== 'function' || typeof model.setValue !== 'function')
+      return null;
     return {
       getValue: () => String(model.getValue?.() || ''),
       setValue: (value: string) => {
         model.setValue?.(value);
-      },
+      }
     };
   } catch {
     return null;
@@ -146,7 +158,9 @@ function getTencentVisibleButtonByText(text: string): HTMLButtonElement | null {
 function getTencentDraftFetchCount(): number {
   try {
     return (performance.getEntriesByType('resource') as PerformanceEntry[]).filter((entry) =>
-      String(entry?.name || '').includes('/developer/services/ajax/column/article?action=FetchArticleDrafts')
+      String(entry?.name || '').includes(
+        '/developer/services/ajax/column/article?action=FetchArticleDrafts'
+      )
     ).length;
   } catch {
     return 0;
@@ -159,7 +173,8 @@ function getTencentEditorReadySignature(): string {
   const monacoView = getTencentMonacoViewLines();
   const editable = getTencentEditable();
   const publishBtn = getTencentVisibleButtonByText('发布');
-  const modeSwitch = findTencentSwitchLink('切换到富文本编辑器') || findTencentSwitchLink('切换到Markdown编辑器');
+  const modeSwitch =
+    findTencentSwitchLink('切换到富文本编辑器') || findTencentSwitchLink('切换到Markdown编辑器');
   const bodyText = document.body?.innerText || '';
   const hasCounter = /标题字数[:：]\s*\d+\s*\/\s*80/.test(bodyText);
 
@@ -173,16 +188,18 @@ function getTencentEditorReadySignature(): string {
     publishBtn ? 'publish:1' : 'publish:0',
     modeSwitch ? 'switch:1' : 'switch:0',
     hasCounter ? 'counter:1' : 'counter:0',
-    `draftFetch:${getTencentDraftFetchCount()}`,
+    `draftFetch:${getTencentDraftFetchCount()}`
   ].join('|');
 }
 
 function isTencentEditorReady(): boolean {
   const titleInput = getTencentTitleInput();
-  if (!titleInput || !isElementVisible(titleInput) || titleInput.disabled || titleInput.readOnly) return false;
+  if (!titleInput || !isElementVisible(titleInput) || titleInput.disabled || titleInput.readOnly)
+    return false;
 
   const hasContentSurface = !!(
-    (getTencentMonacoInputArea() && isElementVisible(getTencentMonacoInputArea() as HTMLTextAreaElement)) ||
+    (getTencentMonacoInputArea() &&
+      isElementVisible(getTencentMonacoInputArea() as HTMLTextAreaElement)) ||
     getTencentMonacoViewLines() ||
     getTencentEditable()
   );
@@ -200,7 +217,10 @@ function isTencentEditorReady(): boolean {
 async function waitForTencentEditorReady(): Promise<void> {
   await waitForVisibleElement('textarea.article-title', 30000);
   try {
-    await waitForVisibleElement('textarea.inputarea, .monaco-editor, div.public-DraftEditor-content[contenteditable="true"]', 30000);
+    await waitForVisibleElement(
+      'textarea.inputarea, .monaco-editor, div.public-DraftEditor-content[contenteditable="true"]',
+      30000
+    );
   } catch {
     // ignore
   }
@@ -224,10 +244,17 @@ async function waitForTencentEditorReady(): Promise<void> {
 function setTencentNativeValue(input: HTMLInputElement | HTMLTextAreaElement, value: string): void {
   const proto =
     Object.getPrototypeOf(input) ||
-    (input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype);
+    (input instanceof HTMLTextAreaElement
+      ? HTMLTextAreaElement.prototype
+      : HTMLInputElement.prototype);
   const desc =
     Object.getOwnPropertyDescriptor(proto, 'value') ||
-    Object.getOwnPropertyDescriptor(input instanceof HTMLTextAreaElement ? HTMLTextAreaElement.prototype : HTMLInputElement.prototype, 'value');
+    Object.getOwnPropertyDescriptor(
+      input instanceof HTMLTextAreaElement
+        ? HTMLTextAreaElement.prototype
+        : HTMLInputElement.prototype,
+      'value'
+    );
 
   if (typeof desc?.set === 'function') {
     desc.set.call(input, value);
@@ -249,7 +276,7 @@ function dispatchTencentTextInput(
         bubbles: true,
         cancelable: true,
         data: value,
-        inputType,
+        inputType
       })
     );
   } catch {
@@ -270,7 +297,9 @@ function getTencentSelectedTagTexts(sidebar?: HTMLElement | null): string[] {
   const root = sidebar || getTencentPublishSidebar() || document.body;
   const container = root.querySelector('.com-2-tag-cont');
   if (!container) return [];
-  return Array.from(container.querySelectorAll<HTMLElement>('.com-2-tag-txt span[title], .com-2-tag-txt > span'))
+  return Array.from(
+    container.querySelectorAll<HTMLElement>('.com-2-tag-txt span[title], .com-2-tag-txt > span')
+  )
     .map((n) => (n.getAttribute('title') || n.textContent || '').trim())
     .filter(Boolean);
 }
@@ -297,7 +326,9 @@ function isTencentTitleCommitted(expectedTitle: string): boolean {
   if (current !== title) return false;
   const text = document.body?.innerText || '';
   const hasCounter = /标题字数[:：]\s*\d+\s*\/\s*80/.test(text);
-  return hasCounter || !!getTencentVisibleButtonByText('发布') || (!input.disabled && !input.readOnly);
+  return (
+    hasCounter || !!getTencentVisibleButtonByText('发布') || (!input.disabled && !input.readOnly)
+  );
 }
 
 async function fillTencentTitleByNativeSetter(title: string): Promise<boolean> {
@@ -336,7 +367,7 @@ async function fillTencentTitleByNativeSetter(title: string): Promise<boolean> {
               bubbles: true,
               cancelable: true,
               data: expected,
-              inputType: 'insertText',
+              inputType: 'insertText'
             })
           );
         } catch {
@@ -352,7 +383,7 @@ async function fillTencentTitleByNativeSetter(title: string): Promise<boolean> {
     const result = {
       value: String(getTencentTitleInput()?.value || '').trim(),
       hasCounter: /标题字数[:：]\s*\d+\s*\/\s*80/.test(document.body?.innerText || ''),
-      execOk,
+      execOk
     };
     try {
       lastTencentTitleWriteDebug = JSON.stringify(result ?? null).slice(0, 240);
@@ -432,7 +463,9 @@ function isTencentRichMode(): boolean {
 }
 
 function findTencentSwitchLink(text: string): HTMLElement | null {
-  const exact = Array.from(document.querySelectorAll<HTMLElement>('a,button')).find((n) => (n.textContent || '').trim() === text);
+  const exact = Array.from(document.querySelectorAll<HTMLElement>('a,button')).find(
+    (n) => (n.textContent || '').trim() === text
+  );
   if (exact) return exact;
   const fuzzy = Array.from(document.querySelectorAll<HTMLElement>('a,button,span,div')).find((n) =>
     (n.textContent || '').trim().includes(text)
@@ -504,15 +537,25 @@ function getTencentInlineImageInput(): HTMLInputElement | null {
     .map((input, index) => {
       const accept = String(input.getAttribute('accept') || '').toLowerCase();
       const cls = String(input.className || '').toLowerCase();
-      const parentText = String(input.parentElement?.textContent || input.closest('button,div,section')?.textContent || '')
+      const parentText = String(
+        input.parentElement?.textContent || input.closest('button,div,section')?.textContent || ''
+      )
         .replace(/\s+/g, ' ')
         .trim()
         .toLowerCase();
       const inSidebar = !!input.closest('section.col-editor-sidebar');
-      const inImageButton = !!input.closest('button.qa-r-editor-btn.select-file, .qa-r-editor-btn.select-file');
+      const inImageButton = !!input.closest(
+        'button.qa-r-editor-btn.select-file, .qa-r-editor-btn.select-file'
+      );
       let score = 0;
       if (isElementVisible(input)) score += 10;
-      if (accept.includes('.png') || accept.includes('.jpg') || accept.includes('.jpeg') || accept.includes('.gif')) score += 12;
+      if (
+        accept.includes('.png') ||
+        accept.includes('.jpg') ||
+        accept.includes('.jpeg') ||
+        accept.includes('.gif')
+      )
+        score += 12;
       if (inImageButton) score += 20;
       if (cls.includes('upload')) score += 4;
       if (parentText.includes('插入图片')) score += 16;
@@ -562,7 +605,11 @@ function hasTencentInlineImageUploadCompletedSince(beforeIndex: number): boolean
   });
 }
 
-async function insertTencentImageAtCursor(args: { jobId: string; imageUrl: string; editorRoot: HTMLElement }): Promise<void> {
+async function insertTencentImageAtCursor(args: {
+  jobId: string;
+  imageUrl: string;
+  editorRoot: HTMLElement;
+}): Promise<void> {
   try {
     const file = await fetchImageAsFile(args.jobId, args.imageUrl);
     const input = await retryUntil(
@@ -633,7 +680,10 @@ function markdownToPlainText(markdown: string): string {
     .trim();
 }
 
-function buildTencentMarkdownFromTokens(tokens: Array<{ kind?: string; html?: string; src?: string; alt?: string }>, sourceUrl: string): string {
+function buildTencentMarkdownFromTokens(
+  tokens: Array<{ kind?: string; html?: string; src?: string; alt?: string }>,
+  sourceUrl: string
+): string {
   const lines: string[] = [];
   let imageIndex = 0;
 
@@ -672,7 +722,9 @@ function buildTencentMarkdownFromTokens(tokens: Array<{ kind?: string; html?: st
 }
 
 function findTencentVisibleTagSuggestion(preferredTag: string): HTMLElement | null {
-  const items = Array.from(document.querySelectorAll<HTMLElement>('li[data-id]')).filter((el) => isElementVisible(el));
+  const items = Array.from(document.querySelectorAll<HTMLElement>('li[data-id]')).filter((el) =>
+    isElementVisible(el)
+  );
   if (!items.length) return null;
   const exact = items.find((el) => (el.textContent || '').trim() === preferredTag);
   if (exact) return exact;
@@ -684,8 +736,8 @@ async function ensureTencentOriginalSelected(sidebar?: HTMLElement | null): Prom
   const root = sidebar || getTencentPublishSidebar();
   if (!root) return false;
   if (isTencentOriginalChecked(root)) return true;
-  const originalLabel = Array.from(root.querySelectorAll<HTMLElement>('label.com-check-item')).find((n) =>
-    ((n.textContent || '').trim() || '').includes('原创')
+  const originalLabel = Array.from(root.querySelectorAll<HTMLElement>('label.com-check-item')).find(
+    (n) => ((n.textContent || '').trim() || '').includes('原创')
   );
   if (!originalLabel) return false;
   simulateClick(originalLabel);
@@ -693,12 +745,18 @@ async function ensureTencentOriginalSelected(sidebar?: HTMLElement | null): Prom
   return isTencentOriginalChecked(root);
 }
 
-async function ensureTencentTagSelected(tag: string, sidebar?: HTMLElement | null): Promise<boolean> {
+async function ensureTencentTagSelected(
+  tag: string,
+  sidebar?: HTMLElement | null
+): Promise<boolean> {
   const root = sidebar || getTencentPublishSidebar();
   if (!root) return false;
   if (getTencentSelectedTagTexts(root).length > 0) return true;
 
-  const tagInput = Array.from(root.querySelectorAll<HTMLInputElement>('input.com-2-tag-input')).find((i) => isElementVisible(i)) || null;
+  const tagInput =
+    Array.from(root.querySelectorAll<HTMLInputElement>('input.com-2-tag-input')).find((i) =>
+      isElementVisible(i)
+    ) || null;
   if (!tagInput) return false;
 
   try {
@@ -729,7 +787,7 @@ async function ensureTencentTagSelected(tag: string, sidebar?: HTMLElement | nul
             bubbles: true,
             cancelable: true,
             data: tag,
-            inputType: 'insertText',
+            inputType: 'insertText'
           })
         );
       } catch {
@@ -770,7 +828,9 @@ async function ensureTencentCoverUploaded(sidebar?: HTMLElement | null): Promise
   if (!root) return false;
   if (hasTencentCoverUploaded(root)) return true;
 
-  const coverInput = root.querySelector<HTMLInputElement>('input[type="file"][name="article-cover-image"]');
+  const coverInput = root.querySelector<HTMLInputElement>(
+    'input[type="file"][name="article-cover-image"]'
+  );
   if (!coverInput) return false;
 
   const url = chrome.runtime.getURL('icons/icon-128.png');
@@ -865,11 +925,17 @@ function shouldRunOnThisPage(): boolean {
 }
 
 function isEditorPage(): boolean {
-  return location.hostname === 'cloud.tencent.com' && location.pathname.startsWith('/developer/article/write');
+  return (
+    location.hostname === 'cloud.tencent.com' &&
+    location.pathname.startsWith('/developer/article/write')
+  );
 }
 
 function isListPage(): boolean {
-  return location.hostname === 'cloud.tencent.com' && location.pathname.startsWith('/developer/creator/article');
+  return (
+    location.hostname === 'cloud.tencent.com' &&
+    location.pathname.startsWith('/developer/creator/article')
+  );
 }
 
 function isDetailPage(): boolean {
@@ -886,7 +952,7 @@ async function report(patch: Partial<ChannelRuntimeState>): Promise<void> {
     type: V2_CHANNEL_UPDATE,
     jobId: currentJob.jobId,
     channelId: CHANNEL_ID,
-    patch,
+    patch
   });
 }
 
@@ -899,13 +965,17 @@ async function getContextFromBackground(): Promise<{ job: AnyJob; channelId: str
 function getCurrentLoginState() {
   return detectPageLoginState({
     loginUrlPattern: /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i,
-    loggedInPattern: /开发者社区|写文章|发布|草稿|内容管理|账号设置|退出登录|个人中心/i,
+    loggedInPattern: /开发者社区|写文章|发布|草稿|内容管理|账号设置|退出登录|个人中心/i
   });
 }
 
 async function stageDetectLogin(): Promise<void> {
   currentStage = 'detectLogin';
-  await report({ status: 'running', stage: 'detectLogin', userMessage: getMessage('v3MsgDetectingLogin') });
+  await report({
+    status: 'running',
+    stage: 'detectLogin',
+    userMessage: getMessage('v3MsgDetectingLogin')
+  });
 
   const loginState = getCurrentLoginState();
   if (loginState.status === 'not_logged_in') {
@@ -913,7 +983,7 @@ async function stageDetectLogin(): Promise<void> {
       status: 'not_logged_in',
       stage: 'detectLogin',
       userMessage: getMessage('v3MsgNotLoggedIn'),
-      userSuggestion: getMessage('v3SugLoginThenRetry'),
+      userSuggestion: getMessage('v3SugLoginThenRetry')
     });
     throw new Error('__BAWEI_V2_STOPPED__');
   }
@@ -939,10 +1009,16 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
     status: 'running',
     stage: 'fillContent',
     userMessage: getMessage('v2MsgFillingContent'),
-    userSuggestion: getMessage('v2SugTencentNoSourceUrlFieldAppend'),
+    userSuggestion: getMessage('v2SugTencentNoSourceUrlFieldAppend')
   });
 
-  const tokens = buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl, htmlMode: 'raw', splitBlocks: true });
+  const tokens = buildRichContentTokens({
+    contentHtml,
+    baseUrl: sourceUrl,
+    sourceUrl,
+    htmlMode: 'raw',
+    splitBlocks: true
+  });
 
   const minLen = 140;
   const expectedImages = tokens.filter((t) => t?.kind === 'image').length;
@@ -959,7 +1035,10 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
         if ((editor as HTMLElement).getAttribute('contenteditable') === 'true') {
           target = editor as HTMLElement;
         } else {
-          target = ((editor as HTMLElement).querySelector('[contenteditable="true"]') as HTMLElement | null) || null;
+          target =
+            ((editor as HTMLElement).querySelector(
+              '[contenteditable="true"]'
+            ) as HTMLElement | null) || null;
         }
       }
       if (!target) return false;
@@ -975,10 +1054,13 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
             await report({
               status: 'running',
               stage: 'fillContent',
-              userMessage: getMessage('v3MsgUploadingImageProgress', [String(current), String(total)]),
+              userMessage: getMessage('v3MsgUploadingImageProgress', [
+                String(current),
+                String(total)
+              ])
             });
           },
-          insertImageAtCursorOverride: insertTencentImageAtCursor,
+          insertImageAtCursorOverride: insertTencentImageAtCursor
         });
       } catch (e) {
         await report({
@@ -986,15 +1068,15 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
           stage: 'waitingUser',
           userMessage: getMessage('v3MsgImageUploadFailed'),
           userSuggestion: getMessage('v3SugManualUploadImagesThenContinue'),
-          devDetails: { message: e instanceof Error ? e.message : String(e) },
+          devDetails: { message: e instanceof Error ? e.message : String(e) }
         });
         throw new Error('__BAWEI_V2_STOPPED__');
       }
 
       await new Promise((r) => setTimeout(r, 1200));
       len = getTextLen(target);
-      const currentImages = Array.from(target.querySelectorAll<HTMLImageElement>('img')).filter((img) =>
-        isElementVisible(img) || String(img.getAttribute('src') || '').trim().length > 0
+      const currentImages = Array.from(target.querySelectorAll<HTMLImageElement>('img')).filter(
+        (img) => isElementVisible(img) || String(img.getAttribute('src') || '').trim().length > 0
       ).length;
       mode = 'rich';
 
@@ -1003,7 +1085,9 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
       await report({
         status: 'running',
         stage: 'fillContent',
-        devDetails: { message: `rich fill fallback: ${error instanceof Error ? error.message : String(error)}` },
+        devDetails: {
+          message: `rich fill fallback: ${error instanceof Error ? error.message : String(error)}`
+        }
       });
       return false;
     }
@@ -1012,43 +1096,51 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
   const markdownFilled = richFilled
     ? false
     : await (async () => {
-    try {
-      await ensureTencentMarkdownMode();
-      const model = getTencentMarkdownModel();
+        try {
+          await ensureTencentMarkdownMode();
+          const model = getTencentMarkdownModel();
 
-      if (expectedImages > 0) {
-        for (let i = 1; i <= expectedImages; i += 1) {
+          if (expectedImages > 0) {
+            for (let i = 1; i <= expectedImages; i += 1) {
+              await report({
+                status: 'running',
+                stage: 'fillContent',
+                userMessage: getMessage('v3MsgUploadingImageProgress', [
+                  String(i),
+                  String(expectedImages)
+                ])
+              });
+            }
+          }
+
+          const markdown = buildTencentMarkdownFromTokens(
+            tokens as Array<{ kind?: string; html?: string; src?: string; alt?: string }>,
+            sourceUrl
+          );
+          let ok = false;
+          if (model) {
+            model.setValue(markdown);
+            ok = true;
+          } else {
+            ok = await fillTencentMonacoByInput(markdown);
+          }
+          if (!ok) return false;
+
+          ensureTencentMarkdownMinLength(minLen, sourceUrl);
+          len = getTencentContentTextLen(sourceUrl);
+          mode = 'markdown';
+          return true;
+        } catch (error) {
           await report({
             status: 'running',
             stage: 'fillContent',
-            userMessage: getMessage('v3MsgUploadingImageProgress', [String(i), String(expectedImages)]),
+            devDetails: {
+              message: `markdown fill fallback: ${error instanceof Error ? error.message : String(error)}`
+            }
           });
+          return false;
         }
-      }
-
-      const markdown = buildTencentMarkdownFromTokens(tokens as Array<{ kind?: string; html?: string; src?: string; alt?: string }>, sourceUrl);
-      let ok = false;
-      if (model) {
-        model.setValue(markdown);
-        ok = true;
-      } else {
-        ok = await fillTencentMonacoByInput(markdown);
-      }
-      if (!ok) return false;
-
-      ensureTencentMarkdownMinLength(minLen, sourceUrl);
-      len = getTencentContentTextLen(sourceUrl);
-      mode = 'markdown';
-      return true;
-    } catch (error) {
-      await report({
-        status: 'running',
-        stage: 'fillContent',
-        devDetails: { message: `markdown fill fallback: ${error instanceof Error ? error.message : String(error)}` },
-      });
-      return false;
-    }
-  })();
+      })();
 
   if (!richFilled && !markdownFilled) {
     const editable = getTencentEditable();
@@ -1058,7 +1150,10 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
       if ((editor as HTMLElement).getAttribute('contenteditable') === 'true') {
         target = editor as HTMLElement;
       } else {
-        target = ((editor as HTMLElement).querySelector('[contenteditable="true"]') as HTMLElement | null) || null;
+        target =
+          ((editor as HTMLElement).querySelector(
+            '[contenteditable="true"]'
+          ) as HTMLElement | null) || null;
       }
     }
 
@@ -1094,10 +1189,13 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
               await report({
                 status: 'running',
                 stage: 'fillContent',
-                userMessage: getMessage('v3MsgUploadingImageProgress', [String(current), String(total)]),
+                userMessage: getMessage('v3MsgUploadingImageProgress', [
+                  String(current),
+                  String(total)
+                ])
               });
             },
-            insertImageAtCursorOverride: insertTencentImageAtCursor,
+            insertImageAtCursorOverride: insertTencentImageAtCursor
           });
         } catch (e) {
           await report({
@@ -1105,7 +1203,7 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
             stage: 'waitingUser',
             userMessage: getMessage('v3MsgImageUploadFailed'),
             userSuggestion: getMessage('v3SugManualUploadImagesThenContinue'),
-            devDetails: { message: e instanceof Error ? e.message : String(e) },
+            devDetails: { message: e instanceof Error ? e.message : String(e) }
           });
           throw new Error('__BAWEI_V2_STOPPED__');
         }
@@ -1143,42 +1241,60 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
 
   await report({
     userMessage: getMessage('v2MsgTencentContentWrittenLenNeedMin', [String(len), String(minLen)]),
-    userSuggestion: len < minLen ? getMessage('v2SugContentTooShortMin140AlreadyAutoPadded') : undefined,
-    devDetails: { mode, expectedImages, textLength: len },
+    userSuggestion:
+      len < minLen ? getMessage('v2SugContentTooShortMin140AlreadyAutoPadded') : undefined,
+    devDetails: { mode, expectedImages, textLength: len }
   });
 
   await report({
     userMessage: getMessage('v2MsgAppendedSourceLinkKeepOriginal'),
-    userSuggestion: getMessage('v2SugAdjustFormatAtEnd'),
+    userSuggestion: getMessage('v2SugAdjustFormatAtEnd')
   });
 }
 
 async function stageSaveDraft(): Promise<void> {
   currentStage = 'saveDraft';
-  await report({ status: 'running', stage: 'saveDraft', userMessage: getMessage('v2MsgSavingDraft') });
-  const btn = Array.from(document.querySelectorAll('button')).find((b) => (b.textContent || '').includes('保存草稿'));
+  await report({
+    status: 'running',
+    stage: 'saveDraft',
+    userMessage: getMessage('v2MsgSavingDraft')
+  });
+  const btn = Array.from(document.querySelectorAll('button')).find((b) =>
+    (b.textContent || '').includes('保存草稿')
+  );
   if (!btn) throw new Error('未找到保存草稿按钮');
   (btn as HTMLButtonElement).click();
 }
 
 async function stageSubmitPublish(): Promise<void> {
   currentStage = 'submitPublish';
-  await report({ status: 'running', stage: 'submitPublish', userMessage: getMessage('v2MsgTryingToPublish') });
-  const btn = Array.from(document.querySelectorAll('button')).find((b) => (b.textContent || '').trim() === '发布');
+  await report({
+    status: 'running',
+    stage: 'submitPublish',
+    userMessage: getMessage('v2MsgTryingToPublish')
+  });
+  const btn = Array.from(document.querySelectorAll('button')).find(
+    (b) => (b.textContent || '').trim() === '发布'
+  );
   if (!btn) throw new Error('未找到发布按钮');
   (btn as HTMLButtonElement).click();
 
   // 发布弹窗：选择“原创”、添加至少一个标签，然后“确认发布”
   const confirm = await retryUntil(
     async () => {
-      const c = Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find((b) => (b.textContent || '').trim() === '确认发布');
+      const c = Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(
+        (b) => (b.textContent || '').trim() === '确认发布'
+      );
       if (!c) throw new Error('confirm not ready');
       return c;
     },
     { timeoutMs: 15000, intervalMs: 400 }
   );
 
-  const sidebar = (confirm.closest('section.col-editor-sidebar') as HTMLElement | null) || getTencentPublishSidebar() || null;
+  const sidebar =
+    (confirm.closest('section.col-editor-sidebar') as HTMLElement | null) ||
+    getTencentPublishSidebar() ||
+    null;
 
   // 选择“原创”（不选转载）
   try {
@@ -1247,7 +1363,11 @@ async function stageSubmitPublish(): Promise<void> {
 
 async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
   currentStage = 'confirmSuccess';
-  await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgConfirmingResult') });
+  await report({
+    status: 'running',
+    stage: 'confirmSuccess',
+    userMessage: getMessage('v2MsgConfirmingResult')
+  });
 
   // 发布成功的 toast 文案在腾讯云站点上不稳定，而且页面本身也可能包含“已发布”等文案；
   // 为避免误判（导致提前跳转、只生成草稿不真正发布），publish 仅以 CreateArticle 请求为准。
@@ -1262,8 +1382,15 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
     const text = document.body?.innerText || '';
 
     // 若发布后已跳转到详情页，优先直接进入详情页验收（避免列表检索误判/超时）。
-    if (location.pathname.startsWith('/developer/article/') && !location.pathname.startsWith('/developer/article/write')) {
-      await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgRedirectedToDetailStartVerify') });
+    if (
+      location.pathname.startsWith('/developer/article/') &&
+      !location.pathname.startsWith('/developer/article/write')
+    ) {
+      await report({
+        status: 'running',
+        stage: 'confirmSuccess',
+        userMessage: getMessage('v2MsgRedirectedToDetailStartVerify')
+      });
       return;
     }
 
@@ -1275,7 +1402,7 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
         await report({
           status: 'running',
           stage: 'confirmSuccess',
-          userMessage: `检测到校验错误：请输入文章标题（自动补齐并重试 ${fixAttempts}/${maxFixAttempts}）`,
+          userMessage: `检测到校验错误：请输入文章标题（自动补齐并重试 ${fixAttempts}/${maxFixAttempts}）`
         });
         try {
           await fillTencentTitleByNativeSetter(currentJob?.article?.title || '');
@@ -1283,9 +1410,9 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
           // ignore
         }
         try {
-          const confirmBtn = Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(
-            (b) => (b.textContent || '').trim() === '确认发布'
-          );
+          const confirmBtn = Array.from(
+            document.querySelectorAll<HTMLButtonElement>('button')
+          ).find((b) => (b.textContent || '').trim() === '确认发布');
           if (confirmBtn && !confirmBtn.disabled) confirmBtn.click();
         } catch {
           // ignore
@@ -1299,7 +1426,7 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
         await report({
           status: 'running',
           stage: 'confirmSuccess',
-          userMessage: `检测到校验错误：请输入文章内容（自动补齐并重试 ${fixAttempts}/${maxFixAttempts}）`,
+          userMessage: `检测到校验错误：请输入文章内容（自动补齐并重试 ${fixAttempts}/${maxFixAttempts}）`
         });
         try {
           const sourceUrl = currentJob?.article?.sourceUrl || '';
@@ -1329,9 +1456,9 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
           // ignore
         }
         try {
-          const confirmBtn = Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(
-            (b) => (b.textContent || '').trim() === '确认发布'
-          );
+          const confirmBtn = Array.from(
+            document.querySelectorAll<HTMLButtonElement>('button')
+          ).find((b) => (b.textContent || '').trim() === '确认发布');
           if (confirmBtn && !confirmBtn.disabled) confirmBtn.click();
         } catch {
           // ignore
@@ -1345,7 +1472,7 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
         await report({
           status: 'running',
           stage: 'confirmSuccess',
-          userMessage: `检测到校验错误：文章标签未选择（自动补齐并重试 ${fixAttempts}/${maxFixAttempts}）`,
+          userMessage: `检测到校验错误：文章标签未选择（自动补齐并重试 ${fixAttempts}/${maxFixAttempts}）`
         });
         try {
           await ensureTencentTagSelected('前端', getTencentPublishSidebar());
@@ -1353,9 +1480,9 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
           // ignore
         }
         try {
-          const confirmBtn = Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(
-            (b) => (b.textContent || '').trim() === '确认发布'
-          );
+          const confirmBtn = Array.from(
+            document.querySelectorAll<HTMLButtonElement>('button')
+          ).find((b) => (b.textContent || '').trim() === '确认发布');
           if (confirmBtn && !confirmBtn.disabled) confirmBtn.click();
         } catch {
           // ignore
@@ -1369,7 +1496,7 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
         await report({
           status: 'running',
           stage: 'confirmSuccess',
-          userMessage: `检测到校验错误：文章封面未上传（自动补齐并重试 ${fixAttempts}/${maxFixAttempts}）`,
+          userMessage: `检测到校验错误：文章封面未上传（自动补齐并重试 ${fixAttempts}/${maxFixAttempts}）`
         });
         try {
           await ensureTencentCoverUploaded(getTencentPublishSidebar());
@@ -1377,9 +1504,9 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
           // ignore
         }
         try {
-          const confirmBtn = Array.from(document.querySelectorAll<HTMLButtonElement>('button')).find(
-            (b) => (b.textContent || '').trim() === '确认发布'
-          );
+          const confirmBtn = Array.from(
+            document.querySelectorAll<HTMLButtonElement>('button')
+          ).find((b) => (b.textContent || '').trim() === '确认发布');
           if (confirmBtn && !confirmBtn.disabled) confirmBtn.click();
         } catch {
           // ignore
@@ -1392,10 +1519,18 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
     // 若此处立刻跳走验收列表，可能把“发布动作”打断，导致最终只落草稿、不进入发布/审核流。
     if (action === 'publish' && hasArticleActionSince(publishProbeResourceIndex, 'CreateArticle')) {
       try {
-        const title = String((document.querySelector('textarea.article-title') as HTMLTextAreaElement | null)?.value || '').trim();
+        const title = String(
+          (document.querySelector('textarea.article-title') as HTMLTextAreaElement | null)?.value ||
+            ''
+        ).trim();
         const sourceUrl = currentJob?.article?.sourceUrl || '';
         const len = getTencentContentTextLen(sourceUrl);
-        if (!title || len < 20 || text.includes('请输入文章标题') || text.includes('请输入文章内容')) {
+        if (
+          !title ||
+          len < 20 ||
+          text.includes('请输入文章标题') ||
+          text.includes('请输入文章内容')
+        ) {
           throw new Error('create-article-but-content-missing');
         }
         if (createDetectedAt == null) {
@@ -1403,7 +1538,7 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
           await report({
             status: 'running',
             stage: 'confirmSuccess',
-            userMessage: '检测到 CreateArticle（等待发布链路继续完成…）',
+            userMessage: '检测到 CreateArticle（等待发布链路继续完成…）'
           });
         }
       } catch {
@@ -1412,38 +1547,59 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
       }
     }
 
-    if (action === 'publish' && createDetectedAt == null && hasArticleActionSince(publishProbeResourceIndex, 'CreateArticleDraft')) {
+    if (
+      action === 'publish' &&
+      createDetectedAt == null &&
+      hasArticleActionSince(publishProbeResourceIndex, 'CreateArticleDraft')
+    ) {
       if (draftOnlyDetectedAt == null) {
         draftOnlyDetectedAt = Date.now();
         await report({
           status: 'running',
           stage: 'confirmSuccess',
-          userMessage: '检测到 CreateArticleDraft（仅草稿保存），继续等待真正发布请求…',
+          userMessage: '检测到 CreateArticleDraft（仅草稿保存），继续等待真正发布请求…'
         });
       }
     }
 
     if (action === 'publish' && createDetectedAt != null) {
       const elapsed = Date.now() - createDetectedAt;
-      const hasConfirmBtn = Array.from(document.querySelectorAll('button')).some((b) => (b.textContent || '').trim() === '确认发布');
-      const successToastLike = ['发布成功', '提交成功', '已提交', '已发布', '发布完成'].some((t) => text.includes(t));
+      const hasConfirmBtn = Array.from(document.querySelectorAll('button')).some(
+        (b) => (b.textContent || '').trim() === '确认发布'
+      );
+      const successToastLike = ['发布成功', '提交成功', '已提交', '已发布', '发布完成'].some((t) =>
+        text.includes(t)
+      );
       if ((successToastLike || !hasConfirmBtn) && elapsed >= 5000) {
-        await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgTencentCreateArticleDetectedStartVerify') });
+        await report({
+          status: 'running',
+          stage: 'confirmSuccess',
+          userMessage: getMessage('v2MsgTencentCreateArticleDetectedStartVerify')
+        });
         return;
       }
     }
 
     if (okTexts.length && okTexts.some((t) => text.includes(t))) {
-      await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgSuccessDetectedStartVerify') });
+      await report({
+        status: 'running',
+        stage: 'confirmSuccess',
+        userMessage: getMessage('v2MsgSuccessDetectedStartVerify')
+      });
       return;
     }
 
     // 若确认发布后被拦截（常见：正文不足 140 字），自动补足并再次点击确认发布
-    if (action === 'publish' && text.includes('文章内容') && text.includes('140') && (text.includes('不能少于') || text.includes('不少于'))) {
+    if (
+      action === 'publish' &&
+      text.includes('文章内容') &&
+      text.includes('140') &&
+      (text.includes('不能少于') || text.includes('不少于'))
+    ) {
       await report({
         status: 'running',
         stage: 'confirmSuccess',
-        userMessage: getMessage('v2MsgContentTooShortAutoPadAndRepublish'),
+        userMessage: getMessage('v2MsgContentTooShortAutoPadAndRepublish')
       });
       try {
         const sourceUrl = currentJob?.article?.sourceUrl || '';
@@ -1492,8 +1648,16 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
       await new Promise((r) => setTimeout(r, 800));
       continue;
     }
-    if (action === 'draft' && location.pathname.startsWith('/developer/article/') && !location.pathname.startsWith('/developer/article/write')) {
-      await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgRedirectedToDetailStartVerify') });
+    if (
+      action === 'draft' &&
+      location.pathname.startsWith('/developer/article/') &&
+      !location.pathname.startsWith('/developer/article/write')
+    ) {
+      await report({
+        status: 'running',
+        stage: 'confirmSuccess',
+        userMessage: getMessage('v2MsgRedirectedToDetailStartVerify')
+      });
       return;
     }
     await new Promise((r) => setTimeout(r, 300));
@@ -1502,15 +1666,18 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
   await report({
     status: 'waiting_user',
     stage: 'waitingUser',
-    userMessage: action === 'draft' ? getMessage('v2MsgPleaseConfirmDraftSaved') : getMessage('v2MsgPleaseConfirmPublishCompleted'),
+    userMessage:
+      action === 'draft'
+        ? getMessage('v2MsgPleaseConfirmDraftSaved')
+        : getMessage('v2MsgPleaseConfirmPublishCompleted'),
     userSuggestion: getMessage('v2SugHandleRequiredCaptchaModalThenContinueOrRetry'),
     devDetails:
       action === 'publish'
         ? {
             createArticleDetected: createDetectedAt != null,
-            createArticleDraftDetected: draftOnlyDetectedAt != null,
+            createArticleDraftDetected: draftOnlyDetectedAt != null
           }
-        : undefined,
+        : undefined
   });
   if (currentJob) {
     removeSessionValue(getVerifyReadyKey(currentJob.jobId));
@@ -1519,11 +1686,15 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
 }
 
 async function runFlow(job: AnyJob): Promise<void> {
-  await report({ status: 'running', stage: 'openEntry', userMessage: getMessage('v2MsgEnteredEditorPage') });
+  await report({
+    status: 'running',
+    stage: 'openEntry',
+    userMessage: getMessage('v2MsgEnteredEditorPage')
+  });
   removeSessionValue(getVerifyReadyKey(job.jobId));
   await stageDetectLogin();
   await stageFillTitle(job.article.title);
-  await stageFillContent(job.article.contentHtml, job.article.sourceUrl);
+  await stageFillContent(job.article.contentHtml, job.article.sourceUrl || '');
   if (job.action === 'draft') {
     await stageSaveDraft();
     await stageConfirmSuccess('draft');
@@ -1531,7 +1702,7 @@ async function runFlow(job: AnyJob): Promise<void> {
       status: 'success',
       stage: 'done',
       userMessage: getMessage('v2MsgDraftSavedVerifyDone'),
-      devDetails: summarizeVerifyDetails({ draftUrl: location.href }),
+      devDetails: summarizeVerifyDetails({ draftUrl: location.href })
     });
     return;
   } else {
@@ -1542,7 +1713,15 @@ async function runFlow(job: AnyJob): Promise<void> {
         status: 'running',
         stage: 'confirmSuccess',
         userMessage: getMessage('v2MsgRedirectedToDetailStartVerify'),
-        devDetails: summarizeVerifyDetails({ publishedUrl: location.href, sourceUrlPresent: pageContainsSourceUrl(job.article.sourceUrl) }),
+        devDetails: summarizeVerifyDetails({
+          publishedUrl: location.href,
+          candidatePublicUrl: location.href,
+          managementUrl: getChannelConfig(CHANNEL_ID).managementUrl,
+          reviewStatus: 'candidate_public_url',
+          sourceUrlPresent: job.article.sourceUrl
+            ? pageContainsSourceUrl(job.article.sourceUrl)
+            : false
+        })
       });
       return;
     }
@@ -1551,7 +1730,9 @@ async function runFlow(job: AnyJob): Promise<void> {
       status: 'running',
       stage: 'confirmSuccess',
       userMessage: getMessage('v2MsgPublishTriggeredGoManageListVerify'),
-      devDetails: summarizeVerifyDetails({ listUrl: 'https://cloud.tencent.com/developer/creator/article' }),
+      devDetails: summarizeVerifyDetails({
+        listUrl: 'https://cloud.tencent.com/developer/creator/article'
+      })
     });
     location.href = 'https://cloud.tencent.com/developer/creator/article';
     return;
@@ -1572,19 +1753,26 @@ async function bootstrap(): Promise<void> {
     }
 
     if (isListPage()) {
-      if (currentJob.action === 'publish' && getSessionValue(getVerifyReadyKey(currentJob.jobId)) !== 'publish') {
+      if (
+        currentJob.action === 'publish' &&
+        getSessionValue(getVerifyReadyKey(currentJob.jobId)) !== 'publish'
+      ) {
         await report({
           status: 'waiting_user',
           stage: 'waitingUser',
           userMessage: '腾讯云已到文章管理页，但当前轮未确认真实发布请求，停止自动验收',
           userSuggestion: getMessage('v2SugHandleRequiredCaptchaModalThenContinueOrRetry'),
-          devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: true }),
+          devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: true })
         });
         return;
       }
 
       currentStage = 'confirmSuccess';
-      await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgVerifyFindNewArticleInList') });
+      await report({
+        status: 'running',
+        stage: 'confirmSuccess',
+        userMessage: getMessage('v2MsgVerifyFindNewArticleInList')
+      });
 
       // 状态筛选：仅点击可点击元素，且文本 startsWith 匹配
       // 验收只应切到“已发布/审核中/全部”之一，避免误切到“草稿箱”导致无法找到新发布文章
@@ -1613,7 +1801,8 @@ async function bootstrap(): Promise<void> {
       const listUrl = location.href;
       setSessionValue(getListUrlKey(currentJob.jobId), listUrl);
 
-      let listRoot = (document.querySelector('.com-2-course-panel-list') as HTMLElement | null) || null;
+      let listRoot =
+        (document.querySelector('.com-2-course-panel-list') as HTMLElement | null) || null;
       try {
         listRoot = (await waitForElement('.com-2-course-panel-list', 12000)) as HTMLElement;
       } catch {
@@ -1639,8 +1828,9 @@ async function bootstrap(): Promise<void> {
       try {
         const pager = document.querySelector<HTMLElement>('.tp1-pagination') as HTMLElement | null;
         const page1 =
-          Array.from(pager?.querySelectorAll<HTMLElement>('.tp1-pagination__item') || []).find((n) => (n.textContent || '').trim() === '1') ||
-          null;
+          Array.from(pager?.querySelectorAll<HTMLElement>('.tp1-pagination__item') || []).find(
+            (n) => (n.textContent || '').trim() === '1'
+          ) || null;
         if (page1 && isElementVisible(page1) && !page1.classList.contains('is-active')) {
           simulateClick(page1);
           await new Promise((r) => setTimeout(r, 1500));
@@ -1649,25 +1839,39 @@ async function bootstrap(): Promise<void> {
         // ignore
       }
 
-      const panels = Array.from(root.querySelectorAll<HTMLElement>('.cdc-2-course-panel')).filter((p) => isElementVisible(p));
+      const panels = Array.from(root.querySelectorAll<HTMLElement>('.cdc-2-course-panel')).filter(
+        (p) => isElementVisible(p)
+      );
       const panelLinks = panels
-        .map((p) => p.querySelector<HTMLAnchorElement>('a[href*="/developer/article/"]')?.href || '')
+        .map(
+          (p) => p.querySelector<HTMLAnchorElement>('a[href*="/developer/article/"]')?.href || ''
+        )
         .map((href) => href.trim())
-        .filter((href) => href.includes('/developer/article/') && !href.includes('/developer/article/write'));
+        .filter(
+          (href) =>
+            href.includes('/developer/article/') && !href.includes('/developer/article/write')
+        );
       const uniq = Array.from(new Set(panelLinks));
 
       // token 命中优先（只在可见 panel 中检索，避免命中隐藏 DOM）
       const hitPanel = panels.find((p) => (p.textContent || '').includes(token)) || null;
-      const panelLink = hitPanel?.querySelector<HTMLAnchorElement>('a[href*="/developer/article/"]') || null;
+      const panelLink =
+        hitPanel?.querySelector<HTMLAnchorElement>('a[href*="/developer/article/"]') || null;
 
       const tokenLink =
         panelLink ||
         uniq
           .map((href) => {
-            const a = Array.from(root.querySelectorAll<HTMLAnchorElement>('a[href]')).find((it) => it.href === href) || null;
+            const a =
+              Array.from(root.querySelectorAll<HTMLAnchorElement>('a[href]')).find(
+                (it) => it.href === href
+              ) || null;
             return a && isElementVisible(a) ? a : null;
           })
-          .find((a) => !!a && ((a.textContent || '') + ' ' + (a.getAttribute('title') || '')).includes(token)) ||
+          .find(
+            (a) =>
+              !!a && ((a.textContent || '') + ' ' + (a.getAttribute('title') || '')).includes(token)
+          ) ||
         null;
       if (tokenLink?.href) {
         removeSessionValue(getProbeActiveKey(currentJob.jobId));
@@ -1678,7 +1882,11 @@ async function bootstrap(): Promise<void> {
           status: 'running',
           stage: 'confirmSuccess',
           userMessage: getMessage('v2MsgVerifyMatchedTokenBySearchOpeningDetail'),
-          devDetails: summarizeVerifyDetails({ listUrl, listVisible: true, publishedUrl: tokenLink.href }),
+          devDetails: summarizeVerifyDetails({
+            listUrl,
+            listVisible: true,
+            publishedUrl: tokenLink.href
+          })
         });
         location.href = tokenLink.href;
         return;
@@ -1693,8 +1901,15 @@ async function bootstrap(): Promise<void> {
         await report({
           status: 'running',
           stage: 'confirmSuccess',
-          userMessage: getMessage('v2MsgVerifyTokenNotMatchedProbingDetails', [String(idx + 1), String(candidates.length)]),
-          devDetails: summarizeVerifyDetails({ listUrl, listVisible: true, publishedUrl: candidates[idx] }),
+          userMessage: getMessage('v2MsgVerifyTokenNotMatchedProbingDetails', [
+            String(idx + 1),
+            String(candidates.length)
+          ]),
+          devDetails: summarizeVerifyDetails({
+            listUrl,
+            listVisible: true,
+            publishedUrl: candidates[idx]
+          })
         });
         location.href = candidates[idx];
         return;
@@ -1711,7 +1926,7 @@ async function bootstrap(): Promise<void> {
             status: 'running',
             stage: 'confirmSuccess',
             userMessage: getMessage('v2MsgVerifyListNoNewArticleRefresh3s24', [String(n)]),
-            devDetails: summarizeVerifyDetails({ listUrl, listVisible: uniq.length > 0 }),
+            devDetails: summarizeVerifyDetails({ listUrl, listVisible: uniq.length > 0 })
           });
           setTimeout(() => location.reload(), 3000);
           return;
@@ -1724,14 +1939,15 @@ async function bootstrap(): Promise<void> {
           stage: 'waitingUser',
           userMessage: getMessage('v2MsgVerifyFailedListNoArticleWithSourceLink'),
           userSuggestion: getMessage('v2SugConfirmPublishIndexedOrSearchTitleThenContinue'),
-          devDetails: summarizeVerifyDetails({ listUrl, listVisible: false }),
+          devDetails: summarizeVerifyDetails({ listUrl, listVisible: false })
         });
         return;
       }
     }
 
     if (isDetailPage()) {
-      const ok = pageContainsSourceUrl(currentJob.article.sourceUrl);
+      const sourceUrl = currentJob.article.sourceUrl || '';
+      const ok = !sourceUrl || pageContainsSourceUrl(sourceUrl);
       const probeActive = getSessionValue(getProbeActiveKey(currentJob.jobId)) === '1';
       const listUrl = getSessionValue(getListUrlKey(currentJob.jobId));
       if (!ok && probeActive && listUrl) {
@@ -1739,7 +1955,12 @@ async function bootstrap(): Promise<void> {
           status: 'running',
           stage: 'confirmSuccess',
           userMessage: getMessage('v2MsgVerifyNoSourceOnPageBackToListProbe'),
-          devDetails: summarizeVerifyDetails({ listUrl, listVisible: true, publishedUrl: location.href, sourceUrlPresent: false }),
+          devDetails: summarizeVerifyDetails({
+            listUrl,
+            listVisible: true,
+            publishedUrl: location.href,
+            sourceUrlPresent: false
+          })
         });
         location.href = listUrl;
         return;
@@ -1747,11 +1968,23 @@ async function bootstrap(): Promise<void> {
 
       removeSessionValue(getVerifyReadyKey(currentJob.jobId));
       await report({
-        status: ok ? 'success' : 'waiting_user',
+        status: ok
+          ? currentJob.action === 'draft'
+            ? 'success'
+            : 'pending_review'
+          : 'waiting_user',
         stage: ok ? 'done' : 'waitingUser',
-        userMessage: ok ? getMessage('v2MsgVerifyPassedDetailHasSourceLink') : getMessage('v2MsgVerifyFailedDetailNoSourceLink'),
+        userMessage: ok
+          ? getMessage('v2MsgVerifyPassedDetailHasSourceLink')
+          : getMessage('v2MsgVerifyFailedDetailNoSourceLink'),
         userSuggestion: ok ? undefined : getMessage('v2SugCheckSourceLinkAtEndThenContinue'),
-        devDetails: summarizeVerifyDetails({ publishedUrl: location.href, sourceUrlPresent: ok }),
+        devDetails: summarizeVerifyDetails({
+          publishedUrl: location.href,
+          candidatePublicUrl: location.href,
+          managementUrl: getChannelConfig(CHANNEL_ID).managementUrl,
+          reviewStatus: 'candidate_public_url',
+          sourceUrlPresent: sourceUrl ? ok : false
+        })
       });
       return;
     }
@@ -1762,7 +1995,7 @@ async function bootstrap(): Promise<void> {
       stage: currentStage,
       userMessage: getMessage('v2MsgFailed'),
       userSuggestion: getMessage('v2SugCheckLoginOrDomThenRetry'),
-      devDetails: { message: error instanceof Error ? error.message : String(error) },
+      devDetails: { message: error instanceof Error ? error.message : String(error) }
     });
   }
 }
@@ -1777,10 +2010,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     stopRequested = true;
     return;
   }
-  if (message?.type === V2_REQUEST_RETRY && message.jobId === currentJob.jobId && message.channelId === CHANNEL_ID) {
+  if (
+    message?.type === V2_REQUEST_RETRY &&
+    message.jobId === currentJob.jobId &&
+    message.channelId === CHANNEL_ID
+  ) {
     bootstrap();
   }
-  if (message?.type === V2_REQUEST_CONTINUE && message.jobId === currentJob.jobId && message.channelId === CHANNEL_ID) {
+  if (
+    message?.type === V2_REQUEST_CONTINUE &&
+    message.jobId === currentJob.jobId &&
+    message.channelId === CHANNEL_ID
+  ) {
     bootstrap();
   }
 });

@@ -15,6 +15,7 @@ import type { ChannelId, ChannelRuntimeState, PublishJob } from '../shared/v2-ty
 /* INLINE:dom */
 /* INLINE:events */
 /* INLINE:v2-protocol */
+/* INLINE:channel-config */
 /* INLINE:publish-verify */
 /* INLINE:rich-content */
 /* INLINE:image-bridge */
@@ -29,7 +30,9 @@ let stopRequested = false;
 let lastMetaSnapshot: { tagInputPlaceholder: string; selectedTags: string[] } | null = null;
 let expectedImagesForJob = 0;
 
-(globalThis as unknown as { __BAWEI_V2_IS_STOP_REQUESTED?: () => boolean }).__BAWEI_V2_IS_STOP_REQUESTED = () => stopRequested;
+(
+  globalThis as unknown as { __BAWEI_V2_IS_STOP_REQUESTED?: () => boolean }
+).__BAWEI_V2_IS_STOP_REQUESTED = () => stopRequested;
 
 function getMessage(key: string, substitutions?: string[]): string {
   try {
@@ -72,7 +75,8 @@ type SspaiArticleInfo = {
 };
 
 function assertSspaiApiOk(payload: unknown, label: string): void {
-  const p = (payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : null) || {};
+  const p =
+    (payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : null) || {};
   const err = Number(p?.error || 0);
   if (!err) return;
   const msg = String(p?.msg || '').trim();
@@ -91,7 +95,10 @@ function getSspaiJwt(): string {
     const raw = localStorage.getItem('vuex') || '';
     if (raw) {
       const parsed = JSON.parse(raw) as { token?: unknown } | null;
-      const token = parsed && typeof parsed === 'object' ? String((parsed as { token?: unknown }).token || '') : '';
+      const token =
+        parsed && typeof parsed === 'object'
+          ? String((parsed as { token?: unknown }).token || '')
+          : '';
       if (token) return token;
     }
   } catch {
@@ -127,12 +134,19 @@ function isDetailPage(): boolean {
 }
 
 function isMyPage(): boolean {
-  return location.hostname === 'sspai.com' && (location.pathname.startsWith('/my') || location.pathname.startsWith('/whoops'));
+  return (
+    location.hostname === 'sspai.com' &&
+    (location.pathname.startsWith('/my') || location.pathname.startsWith('/whoops'))
+  );
 }
 
 function isEditPage(): boolean {
   // After publishing, SSPAI typically redirects to /write#<id>
-  return location.hostname === 'sspai.com' && location.pathname.startsWith('/write') && /#\d+/.test(location.hash || '');
+  return (
+    location.hostname === 'sspai.com' &&
+    location.pathname.startsWith('/write') &&
+    /#\d+/.test(location.hash || '')
+  );
 }
 
 function parseArticleIdFromHash(): string {
@@ -159,8 +173,8 @@ async function fetchArticleInfo(id: string): Promise<SspaiArticleInfo> {
       accept: 'application/json, text/plain, */*',
       // 部分接口在缺少该 header 时会返回 HTML（导致 token 取不到）
       'x-requested-with': 'XMLHttpRequest',
-      ...sspaiAuthHeaders(),
-    },
+      ...sspaiAuthHeaders()
+    }
   });
   const ct = res.headers.get('content-type') || '';
   if (!res.ok) throw new Error(`fetch article info failed: ${res.status}`);
@@ -169,7 +183,9 @@ async function fetchArticleInfo(id: string): Promise<SspaiArticleInfo> {
       .text()
       .then((t) => String(t || '').slice(0, 160))
       .catch(() => '');
-    throw new Error(`fetch article info not json: ${ct || 'unknown'} ${snippet ? `| ${snippet}` : ''}`.trim());
+    throw new Error(
+      `fetch article info not json: ${ct || 'unknown'} ${snippet ? `| ${snippet}` : ''}`.trim()
+    );
   }
   const json = (await res.json().catch(() => ({}))) as SspaiArticleInfo;
   assertSspaiApiOk(json, 'fetch article info failed');
@@ -184,9 +200,9 @@ async function updateArticleViaApi(payload: Record<string, unknown>): Promise<Ss
       accept: 'application/json, text/plain, */*',
       'content-type': 'application/json',
       'x-requested-with': 'XMLHttpRequest',
-      ...sspaiAuthHeaders(),
+      ...sspaiAuthHeaders()
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(payload)
   });
   const ct = res.headers.get('content-type') || '';
   if (!res.ok) throw new Error(`article update failed: ${res.status}`);
@@ -195,7 +211,9 @@ async function updateArticleViaApi(payload: Record<string, unknown>): Promise<Ss
       .text()
       .then((t) => String(t || '').slice(0, 160))
       .catch(() => '');
-    throw new Error(`article update not json: ${ct || 'unknown'} ${snippet ? `| ${snippet}` : ''}`.trim());
+    throw new Error(
+      `article update not json: ${ct || 'unknown'} ${snippet ? `| ${snippet}` : ''}`.trim()
+    );
   }
   const json = (await res.json().catch(() => ({}))) as SspaiArticleInfo;
   assertSspaiApiOk(json, 'article update failed');
@@ -211,7 +229,9 @@ type SspaiArticleAddResponse = {
   msg?: string;
 };
 
-async function createDraftArticleViaApi(title: string): Promise<{ articleId: string; token: string }> {
+async function createDraftArticleViaApi(
+  title: string
+): Promise<{ articleId: string; token: string }> {
   const t = String(title || '').trim();
   if (!t) throw new Error('missing title');
 
@@ -226,7 +246,7 @@ async function createDraftArticleViaApi(title: string): Promise<{ articleId: str
     allow_comment: true,
     tags: [],
     custom_tags: [],
-    delete_status: false,
+    delete_status: false
   };
 
   const res = await fetch('/api/v1/matrix/editor/article/add', {
@@ -236,9 +256,9 @@ async function createDraftArticleViaApi(title: string): Promise<{ articleId: str
       accept: 'application/json, text/plain, */*',
       'content-type': 'application/json',
       'x-requested-with': 'XMLHttpRequest',
-      ...sspaiAuthHeaders(),
+      ...sspaiAuthHeaders()
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(payload)
   });
   const ct = res.headers.get('content-type') || '';
   if (!res.ok) throw new Error(`article add failed: ${res.status}`);
@@ -247,7 +267,9 @@ async function createDraftArticleViaApi(title: string): Promise<{ articleId: str
       .text()
       .then((t2) => String(t2 || '').slice(0, 160))
       .catch(() => '');
-    throw new Error(`article add not json: ${ct || 'unknown'} ${snippet ? `| ${snippet}` : ''}`.trim());
+    throw new Error(
+      `article add not json: ${ct || 'unknown'} ${snippet ? `| ${snippet}` : ''}`.trim()
+    );
   }
   const json = (await res.json().catch(() => ({}))) as SspaiArticleAddResponse;
   assertSspaiApiOk(json, 'article add failed');
@@ -271,6 +293,30 @@ type SspaiAttachmentUploadResponse = {
   msg?: string;
 };
 
+type SspaiUploadTokenResponse = {
+  data?: {
+    file_path?: string;
+    id?: number;
+    key?: string;
+    token?: string;
+  };
+  error?: number;
+  msg?: string;
+};
+
+type SspaiDraftListResponse = {
+  data?: Array<{
+    id?: number;
+    title?: string;
+    title_last?: string;
+    released_at?: number;
+    created_at?: number;
+    type?: number;
+  }>;
+  error?: number;
+  msg?: string;
+};
+
 function extractOriginalImageUrlFromProxyUrl(proxyUrl: string): string {
   const raw = String(proxyUrl || '').trim();
   if (!raw) return '';
@@ -288,25 +334,20 @@ function extractOriginalImageUrlFromProxyUrl(proxyUrl: string): string {
 function isLoopbackPictureUrl(pictureUrl: string): boolean {
   try {
     const url = new URL(String(pictureUrl || '').trim());
-    return url.protocol === 'http:' && (url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '[::1]');
+    return (
+      url.protocol === 'http:' &&
+      (url.hostname === '127.0.0.1' || url.hostname === 'localhost' || url.hostname === '[::1]')
+    );
   } catch {
     return false;
   }
 }
 
-function isStableUploadedPictureUrl(pictureUrl: string): boolean {
-  const raw = String(pictureUrl || '').trim();
-  if (!raw || raw.startsWith('blob:') || raw.startsWith('data:') || isLoopbackPictureUrl(raw)) return false;
-  try {
-    const url = new URL(raw);
-    if (url.protocol !== 'https:' && url.protocol !== 'http:') return false;
-    return !(url.hostname === 'read.useai.online' && url.pathname.startsWith('/api/image-proxy'));
-  } catch {
-    return false;
-  }
-}
-
-async function fetchJsonWithTimeout(url: string, init: RequestInit, timeoutMs: number): Promise<unknown> {
+async function fetchJsonWithTimeout(
+  url: string,
+  init: RequestInit,
+  timeoutMs: number
+): Promise<unknown> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
   try {
@@ -348,9 +389,9 @@ async function uploadPictureUrlToSspaiCdn(pictureUrl: string): Promise<string> {
             accept: 'application/json, text/plain, */*',
             'content-type': 'application/json',
             'x-requested-with': 'XMLHttpRequest',
-            ...sspaiAuthHeaders(),
+            ...sspaiAuthHeaders()
           },
-          body: JSON.stringify({ pictures: [candidate] }),
+          body: JSON.stringify({ pictures: [candidate] })
         },
         240_000
       )) as SspaiAttachmentUploadResponse;
@@ -368,15 +409,107 @@ async function uploadPictureUrlToSspaiCdn(pictureUrl: string): Promise<string> {
   throw new Error(lastErr || 'attachment upload failed');
 }
 
+function extensionForImageFile(file: File): string {
+  const fromName = String(file.name || '')
+    .trim()
+    .toLowerCase()
+    .match(/\.([a-z0-9]{2,5})$/)?.[1];
+  if (fromName && ['png', 'jpg', 'jpeg', 'gif', 'webp'].includes(fromName)) return fromName;
+  const fromType = String(file.type || '').toLowerCase();
+  if (fromType.includes('jpeg')) return 'jpg';
+  if (fromType.includes('gif')) return 'gif';
+  if (fromType.includes('webp')) return 'webp';
+  return 'png';
+}
+
+async function uploadPictureFileToSspaiCdn(
+  jobId: string,
+  pictureUrl: string,
+  sequence: number
+): Promise<string> {
+  const file = await fetchImageAsFile(jobId, pictureUrl);
+  const ext = extensionForImageFile(file);
+  const cname = `bawei-${Date.now()}-${sequence}.${ext}`;
+  const tokenPayload = (await fetchJsonWithTimeout(
+    `/api/v1/matrix/editor/attachment/upload/token/get?cname=${encodeURIComponent(cname)}`,
+    {
+      method: 'GET',
+      credentials: 'include',
+      headers: {
+        accept: 'application/json, text/plain, */*',
+        'x-requested-with': 'XMLHttpRequest',
+        ...sspaiAuthHeaders()
+      }
+    },
+    60_000
+  )) as SspaiUploadTokenResponse;
+  assertSspaiApiOk(tokenPayload, 'attachment upload token failed');
+
+  const uploadToken = String(tokenPayload?.data?.token || '').trim();
+  const key = String(tokenPayload?.data?.key || '').trim();
+  const filePath = String(tokenPayload?.data?.file_path || '').trim();
+  if (!uploadToken || !key || !filePath) {
+    throw new Error('attachment upload token missing token/key/file_path');
+  }
+
+  const form = new FormData();
+  form.append('file', file, cname);
+  form.append('token', uploadToken);
+  form.append('key', key);
+  await fetchJsonWithTimeout(
+    'https://upload.qiniup.com/',
+    {
+      method: 'POST',
+      body: form
+    },
+    240_000
+  );
+  return filePath;
+}
+
+async function findReusableDraftArticleByTitle(title: string): Promise<string> {
+  const wanted = String(title || '').trim();
+  if (!wanted) return '';
+  const payload = (await fetchJsonWithTimeout(
+    '/api/v1/matrix/editor/article/self/page/get?limit=50&offset=0&type=4',
+    {
+      method: 'GET',
+      credentials: 'include',
+      headers: {
+        accept: 'application/json, text/plain, */*',
+        'x-requested-with': 'XMLHttpRequest',
+        ...sspaiAuthHeaders()
+      }
+    },
+    60_000
+  )) as SspaiDraftListResponse;
+  assertSspaiApiOk(payload, 'draft list failed');
+  const matches = (Array.isArray(payload?.data) ? payload.data : [])
+    .filter((item) => String(item?.title_last || item?.title || '').trim() === wanted)
+    .filter((item) => !Number(item?.released_at || 0))
+    .filter((item) => Number(item?.type || 4) === 4)
+    .sort(
+      (left, right) =>
+        Number(right?.created_at || right?.id || 0) - Number(left?.created_at || left?.id || 0)
+    );
+  return String(matches[0]?.id || '').trim();
+}
+
 async function findVisibleSspaiEditor(): Promise<HTMLElement | null> {
   if (!isWritePage()) return null;
   return await retryUntil(
     async () => {
       const el =
-        (document.querySelector<HTMLElement>('.ck-editor__editable[contenteditable="true"]') as HTMLElement | null) ||
+        (document.querySelector<HTMLElement>(
+          '.ck-editor__editable[contenteditable="true"]'
+        ) as HTMLElement | null) ||
         (document.querySelector<HTMLElement>('.ck-editor__editable') as HTMLElement | null) ||
-        (document.querySelector<HTMLElement>('.x-editor-inst.wangEditor-txt') as HTMLElement | null) ||
-        (document.querySelector<HTMLElement>('[class*="ck-editor__editable"]') as HTMLElement | null) ||
+        (document.querySelector<HTMLElement>(
+          '.x-editor-inst.wangEditor-txt'
+        ) as HTMLElement | null) ||
+        (document.querySelector<HTMLElement>(
+          '[class*="ck-editor__editable"]'
+        ) as HTMLElement | null) ||
         (findContentEditor(document) as HTMLElement | null) ||
         null;
       if (!el) throw new Error('editor not ready');
@@ -386,7 +519,8 @@ async function findVisibleSspaiEditor(): Promise<HTMLElement | null> {
       try {
         simulateClick(el);
         simulateFocus(el);
-        if (el.getAttribute('contenteditable') !== 'true') el.setAttribute('contenteditable', 'true');
+        if (el.getAttribute('contenteditable') !== 'true')
+          el.setAttribute('contenteditable', 'true');
       } catch {
         // ignore
       }
@@ -394,50 +528,6 @@ async function findVisibleSspaiEditor(): Promise<HTMLElement | null> {
     },
     { timeoutMs: 30_000, intervalMs: 800 }
   ).catch(() => null);
-}
-
-async function uploadLoopbackPicturesViaEditor(pictureUrls: string[], editor: HTMLElement): Promise<Map<string, string>> {
-  const uniqueUrls = Array.from(new Set(pictureUrls.map((url) => String(url || '').trim()).filter(Boolean)));
-  if (!uniqueUrls.length) return new Map();
-
-  await fillEditorByTokens({
-    jobId: currentJob?.jobId || '',
-    tokens: uniqueUrls.map((src) => ({ kind: 'image' as const, src })),
-    editorRoot: editor,
-    writeMode: 'html',
-    onImageProgress: async (current, total) => {
-      await report({
-        status: 'running',
-        stage: 'fillContent',
-        userMessage: getMessage('v3MsgUploadingImageProgress', [String(current), String(total)]),
-      });
-    },
-  });
-
-  const uploadedUrls = await retryUntil(
-    async () => {
-      const urls = Array.from(editor.querySelectorAll<HTMLImageElement>('img'))
-        .map((img) => {
-          const candidates = [
-            img.currentSrc,
-            img.src,
-            img.getAttribute('src'),
-            img.getAttribute('data-src'),
-            img.getAttribute('data-url'),
-            img.getAttribute('data-original'),
-          ];
-          return candidates.map((value) => String(value || '').trim()).find(isStableUploadedPictureUrl) || '';
-        })
-        .filter(Boolean);
-      if (urls.length < uniqueUrls.length) {
-        throw new Error(`waiting SSPAI local image upload (${urls.length}/${uniqueUrls.length})`);
-      }
-      return urls.slice(0, uniqueUrls.length);
-    },
-    { timeoutMs: 180_000, intervalMs: 1000 }
-  );
-
-  return new Map(uniqueUrls.map((sourceUrl, index) => [sourceUrl, uploadedUrls[index]]));
 }
 
 async function saveBodyLastViaUpdateApi(articleId: string, bodyLast: string): Promise<void> {
@@ -461,14 +551,16 @@ async function saveBodyLastViaUpdateApi(articleId: string, bodyLast: string): Pr
     words_count_last: Number(data?.words_count_last || 0),
     tags: Array.isArray(data?.tags) ? data?.tags : [],
     allow_comment: data?.allow_comment !== false,
-    custom_tags: Array.isArray((data as { custom_tags?: unknown }).custom_tags) ? (data as { custom_tags?: unknown }).custom_tags : [],
+    custom_tags: Array.isArray((data as { custom_tags?: unknown }).custom_tags)
+      ? (data as { custom_tags?: unknown }).custom_tags
+      : [],
     token,
     show_content_table: Boolean(data?.show_content_table),
     delete_status: Boolean(data?.delete_status),
     free: data?.free !== false,
     benefits_statement_on: Boolean(data?.benefits_statement_on),
     benefits_statement_id: Number(data?.benefits_statement_id || 0),
-    body_updated_at: Number(data?.body_updated_at || 0),
+    body_updated_at: Number(data?.body_updated_at || 0)
   };
 
   await updateArticleViaApi(payload);
@@ -481,7 +573,9 @@ async function tryPublishViaApi(articleId: string, preferredTags: string[]): Pro
     const token = String(data?.token || '').trim();
     if (!token) return false;
 
-    const tags = Array.from(new Set((preferredTags || []).map((t) => String(t || '').trim()).filter(Boolean))).slice(0, 8);
+    const tags = Array.from(
+      new Set((preferredTags || []).map((t) => String(t || '').trim()).filter(Boolean))
+    ).slice(0, 8);
     const customTags = tags.length ? tags : ['AI'];
 
     const bodyLast = String(data?.body_last || data?.body || '').trim();
@@ -509,7 +603,7 @@ async function tryPublishViaApi(articleId: string, preferredTags: string[]): Pro
       free: data?.free !== false,
       benefits_statement_on: Boolean(data?.benefits_statement_on),
       benefits_statement_id: Number(data?.benefits_statement_id || 0),
-      body_updated_at: Number(data?.body_updated_at || 0),
+      body_updated_at: Number(data?.body_updated_at || 0)
     };
 
     await updateArticleViaApi(payload);
@@ -551,7 +645,7 @@ async function report(patch: Partial<ChannelRuntimeState>): Promise<void> {
     type: V2_CHANNEL_UPDATE,
     jobId: currentJob.jobId,
     channelId: CHANNEL_ID,
-    patch,
+    patch
   });
 }
 
@@ -582,7 +676,9 @@ function findVisibleDialogContainingText(text: string): HTMLElement | null {
   const needle = String(text || '').trim();
   if (!needle) return null;
   const candidates = Array.from(
-    document.querySelectorAll<HTMLElement>('.el-dialog[role="dialog"],.el-dialog.ss-dialog[role="dialog"],[role="dialog"].ss-dialog')
+    document.querySelectorAll<HTMLElement>(
+      '.el-dialog[role="dialog"],.el-dialog.ss-dialog[role="dialog"],[role="dialog"].ss-dialog'
+    )
   );
   return (
     candidates.find((el) => {
@@ -600,7 +696,8 @@ function clickDialogButtonByText(root: HTMLElement, text: string): boolean {
     try {
       const rect = el.getBoundingClientRect();
       const style = window.getComputedStyle(el);
-      if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+      if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0')
+        return false;
       return rect.width > 6 && rect.height > 6;
     } catch {
       return false;
@@ -618,8 +715,18 @@ function clickDialogButtonByText(root: HTMLElement, text: string): boolean {
 
   const nodes = Array.from(root.querySelectorAll<HTMLElement>('button,[role="button"],a,div,span'));
   const hit =
-    nodes.find((b) => isVisible(b) && isClickable(b) && (b.textContent || '').replace(/\s+/g, ' ').trim() === target) ||
-    nodes.find((b) => isVisible(b) && isClickable(b) && (b.textContent || '').replace(/\s+/g, ' ').trim().includes(target)) ||
+    nodes.find(
+      (b) =>
+        isVisible(b) &&
+        isClickable(b) &&
+        (b.textContent || '').replace(/\s+/g, ' ').trim() === target
+    ) ||
+    nodes.find(
+      (b) =>
+        isVisible(b) &&
+        isClickable(b) &&
+        (b.textContent || '').replace(/\s+/g, ' ').trim().includes(target)
+    ) ||
     null;
   if (!hit) return false;
   try {
@@ -636,7 +743,9 @@ function clickDialogButtonByText(root: HTMLElement, text: string): boolean {
 
 function getVisibleTextSnippet(el: HTMLElement, maxLen = 240): string {
   try {
-    const txt = String(el.innerText || el.textContent || '').replace(/\s+/g, ' ').trim();
+    const txt = String(el.innerText || el.textContent || '')
+      .replace(/\s+/g, ' ')
+      .trim();
     if (!txt) return '';
     return txt.length > maxLen ? `${txt.slice(0, maxLen)}…` : txt;
   } catch {
@@ -652,7 +761,7 @@ function getTagInput(): HTMLInputElement | null {
     'input[placeholder*="回车"][placeholder*="标签"]',
     'input[placeholder*="回车键确认标签"]',
     'input[placeholder*="确认标签"]',
-    'input[placeholder*="标签"]',
+    'input[placeholder*="标签"]'
   ];
   for (const selector of selectors) {
     const el = document.querySelector<HTMLInputElement>(selector);
@@ -670,17 +779,30 @@ function collectSelectedTagsNearInput(input: HTMLInputElement): string[] {
     input.parentElement;
   if (!root) return [];
 
-  const selectedFromMultiselect = Array.from(root.querySelectorAll<HTMLElement>('.multiselect__tag, .multiselect__tags-wrap .multiselect__tag'))
+  const selectedFromMultiselect = Array.from(
+    root.querySelectorAll<HTMLElement>(
+      '.multiselect__tag, .multiselect__tags-wrap .multiselect__tag'
+    )
+  )
     .map((n) => (n.textContent || '').replace(/\s+/g, ' ').trim())
     .filter(Boolean)
     .filter((t) => t.length <= 12);
-  if (selectedFromMultiselect.length) return Array.from(new Set(selectedFromMultiselect)).slice(0, 8);
+  if (selectedFromMultiselect.length)
+    return Array.from(new Set(selectedFromMultiselect)).slice(0, 8);
 
   const texts = Array.from(root.querySelectorAll<HTMLElement>('span,div,a'))
     .filter((n) => !n.closest('.multiselect__content-wrapper')) // 排除候选下拉列表
     .map((n) => (n.textContent || '').replace(/\s+/g, ' ').trim())
     .filter(Boolean)
-    .filter((t) => t.length <= 12 && t !== input.value && !t.includes('标签') && !t.includes('搜索') && !t.includes('回车') && t !== '暂无数据');
+    .filter(
+      (t) =>
+        t.length <= 12 &&
+        t !== input.value &&
+        !t.includes('标签') &&
+        !t.includes('搜索') &&
+        !t.includes('回车') &&
+        t !== '暂无数据'
+    );
   return Array.from(new Set(texts)).slice(0, 8);
 }
 
@@ -689,13 +811,13 @@ function refreshMetaSnapshot(): void {
   if (!input) {
     lastMetaSnapshot = {
       tagInputPlaceholder: '',
-      selectedTags: [],
+      selectedTags: []
     };
     return;
   }
   lastMetaSnapshot = {
     tagInputPlaceholder: input.getAttribute('placeholder') || '',
-    selectedTags: collectSelectedTagsNearInput(input),
+    selectedTags: collectSelectedTagsNearInput(input)
   };
 }
 
@@ -750,13 +872,26 @@ async function ensureAtLeastOneTag(): Promise<void> {
           ? Array.from(tagRoot.querySelectorAll<HTMLElement>('.multiselect__option')).find(
               (n) => (n.textContent || '').replace(/\s+/g, ' ').trim() === tag
             )
-          : null) ||
-        null;
+          : null) || null;
       if (pick) {
         simulateClick(pick);
       } else {
-        input.dispatchEvent(new KeyboardEvent('keydown', { bubbles: true, cancelable: true, key: 'Enter', code: 'Enter' }));
-        input.dispatchEvent(new KeyboardEvent('keyup', { bubbles: true, cancelable: true, key: 'Enter', code: 'Enter' }));
+        input.dispatchEvent(
+          new KeyboardEvent('keydown', {
+            bubbles: true,
+            cancelable: true,
+            key: 'Enter',
+            code: 'Enter'
+          })
+        );
+        input.dispatchEvent(
+          new KeyboardEvent('keyup', {
+            bubbles: true,
+            cancelable: true,
+            key: 'Enter',
+            code: 'Enter'
+          })
+        );
       }
 
       const ok = await retryUntil(
@@ -797,10 +932,16 @@ async function fillCoverIfPossible(articleId?: string): Promise<void> {
 
     const candidates = await retryUntil(
       async () => {
-        const nodes = Array.from(document.querySelectorAll<HTMLInputElement>('input[type="file"]')).filter((el) => {
+        const nodes = Array.from(
+          document.querySelectorAll<HTMLInputElement>('input[type="file"]')
+        ).filter((el) => {
           const accept = String(el.getAttribute('accept') || '').toLowerCase();
           return (
-            accept.includes('image') || accept.includes('png') || accept.includes('jpg') || accept.includes('jpeg') || accept.includes('gif')
+            accept.includes('image') ||
+            accept.includes('png') ||
+            accept.includes('jpg') ||
+            accept.includes('jpeg') ||
+            accept.includes('gif')
           );
         });
         if (!nodes.length) throw new Error('cover input not ready');
@@ -814,7 +955,9 @@ async function fillCoverIfPossible(articleId?: string): Promise<void> {
         const name = String(input.getAttribute('name') || '').toLowerCase();
         const id = String(input.id || '').toLowerCase();
         const cls = String(input.className || '').toLowerCase();
-        const parentText = String(input.closest('section,div,form,article')?.textContent || '').slice(0, 240).toLowerCase();
+        const parentText = String(input.closest('section,div,form,article')?.textContent || '')
+          .slice(0, 240)
+          .toLowerCase();
         let score = 0;
         if (name.includes('banner') || id.includes('banner') || cls.includes('banner')) score += 10;
         if (name.includes('cover') || id.includes('cover') || cls.includes('cover')) score += 10;
@@ -878,9 +1021,17 @@ function collectPublishBlockersSnapshot(): Record<string, unknown> {
   const editorOpen = findVisibleDialogContainingText('本文编辑窗口已打开');
   const publishDialog = findVisibleDialogContainingText('选择发布通道');
   const tagInput = getTagInput();
-  const tags = tagInput ? collectSelectedTagsNearInput(tagInput) : lastMetaSnapshot?.selectedTags || [];
+  const tags = tagInput
+    ? collectSelectedTagsNearInput(tagInput)
+    : lastMetaSnapshot?.selectedTags || [];
 
-  const toastSelectors = ['.el-message', '.el-notification', '.toast', '.ss-toast', '[role="alert"]'];
+  const toastSelectors = [
+    '.el-message',
+    '.el-notification',
+    '.toast',
+    '.ss-toast',
+    '[role="alert"]'
+  ];
   const toasts = toastSelectors
     .flatMap((sel) => Array.from(document.querySelectorAll<HTMLElement>(sel)))
     .filter((el) => isDialogVisible(el))
@@ -894,10 +1045,13 @@ function collectPublishBlockersSnapshot(): Record<string, unknown> {
     url: location.href,
     editorAlreadyOpenDialog: editorOpen ? getVisibleTextSnippet(editorOpen) : '',
     publishChannelDialog: publishDialog ? getVisibleTextSnippet(publishDialog) : '',
-    publishDialogSubmitDisabled: publishBtn ? publishBtn.disabled || publishBtn.getAttribute('aria-disabled') === 'true' : null,
-    tagInputPlaceholder: tagInput?.getAttribute('placeholder') || lastMetaSnapshot?.tagInputPlaceholder || '',
+    publishDialogSubmitDisabled: publishBtn
+      ? publishBtn.disabled || publishBtn.getAttribute('aria-disabled') === 'true'
+      : null,
+    tagInputPlaceholder:
+      tagInput?.getAttribute('placeholder') || lastMetaSnapshot?.tagInputPlaceholder || '',
     selectedTags: tags,
-    toastTexts: toasts,
+    toastTexts: toasts
   };
 }
 
@@ -906,20 +1060,25 @@ async function dismissEditorAlreadyOpenDialog(): Promise<boolean> {
   if (!dialog) return false;
   // ⚠️ 不要点击“返回”：会离开当前页，导致未保存内容丢失。
   const headerClose =
-    dialog.querySelector<HTMLElement>('.el-dialog__headerbtn,.el-dialog__header .el-icon-close,[aria-label="Close"]') || null;
-  const clicked = (headerClose && (() => {
-    try {
-      simulateClick(headerClose);
-      return true;
-    } catch {
-      try {
-        headerClose.click();
-        return true;
-      } catch {
-        return false;
-      }
-    }
-  })()) || clickDialogButtonByText(dialog, '关闭');
+    dialog.querySelector<HTMLElement>(
+      '.el-dialog__headerbtn,.el-dialog__header .el-icon-close,[aria-label="Close"]'
+    ) || null;
+  const clicked =
+    (headerClose &&
+      (() => {
+        try {
+          simulateClick(headerClose);
+          return true;
+        } catch {
+          try {
+            headerClose.click();
+            return true;
+          } catch {
+            return false;
+          }
+        }
+      })()) ||
+    clickDialogButtonByText(dialog, '关闭');
 
   if (!clicked) return false;
 
@@ -939,14 +1098,19 @@ function findPublishButtonOnWritePage(): HTMLElement | null {
     try {
       const style = window.getComputedStyle(el);
       const rect = el.getBoundingClientRect();
-      if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+      if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0')
+        return false;
       return rect.width > 8 && rect.height > 8;
     } catch {
       return false;
     }
   };
 
-  const btnByClass = Array.from(document.querySelectorAll<HTMLButtonElement>('button.btn__submit,button.el-button--primary,button'))
+  const btnByClass = Array.from(
+    document.querySelectorAll<HTMLButtonElement>(
+      'button.btn__submit,button.el-button--primary,button'
+    )
+  )
     .filter((b) => isVisible(b))
     .map((b) => ({ el: b as HTMLElement, text: (b.textContent || '').replace(/\s+/g, ' ').trim() }))
     .filter((b) => b.text)
@@ -1011,8 +1175,10 @@ async function handlePublishChannelDialog(): Promise<boolean> {
   };
 
   const options = Array.from(dialog.querySelectorAll<HTMLElement>('.contribute-option'));
-  const chooseImmediate = options.find((el) => String(el.innerText || '').includes('立即发布')) || options[0] || null;
-  const chooseEditorial = options.find((el) => String(el.innerText || '').includes('投稿编辑部')) || null;
+  const chooseImmediate =
+    options.find((el) => String(el.innerText || '').includes('立即发布')) || options[0] || null;
+  const chooseEditorial =
+    options.find((el) => String(el.innerText || '').includes('投稿编辑部')) || null;
   if (chooseImmediate) {
     try {
       simulateClick(chooseImmediate);
@@ -1025,7 +1191,9 @@ async function handlePublishChannelDialog(): Promise<boolean> {
 
   if (chooseImmediate && !isSelected(chooseImmediate)) {
     const inner =
-      (chooseImmediate.querySelector<HTMLElement>('label,[role="button"],button,input') as HTMLElement | null) || chooseImmediate;
+      (chooseImmediate.querySelector<HTMLElement>(
+        'label,[role="button"],button,input'
+      ) as HTMLElement | null) || chooseImmediate;
     try {
       simulateClick(inner);
     } catch {
@@ -1034,7 +1202,12 @@ async function handlePublishChannelDialog(): Promise<boolean> {
     await new Promise((r) => setTimeout(r, 260));
   }
 
-  if (chooseImmediate && chooseEditorial && isSelected(chooseEditorial) && !isSelected(chooseImmediate)) {
+  if (
+    chooseImmediate &&
+    chooseEditorial &&
+    isSelected(chooseEditorial) &&
+    !isSelected(chooseImmediate)
+  ) {
     try {
       simulateClick(chooseImmediate);
     } catch {
@@ -1052,7 +1225,10 @@ async function handlePublishChannelDialog(): Promise<boolean> {
 
   if (modalPublish) {
     const deadline = Date.now() + 6000;
-    while (Date.now() < deadline && (modalPublish.disabled || modalPublish.getAttribute('aria-disabled') === 'true')) {
+    while (
+      Date.now() < deadline &&
+      (modalPublish.disabled || modalPublish.getAttribute('aria-disabled') === 'true')
+    ) {
       if (chooseImmediate) {
         try {
           simulateClick(chooseImmediate);
@@ -1086,13 +1262,17 @@ async function handlePublishChannelDialog(): Promise<boolean> {
 function getCurrentLoginState() {
   return detectPageLoginState({
     loginUrlPattern: /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i,
-    loggedInPattern: /写文章|草稿|发布|账号设置|少数派|退出登录|我的文章/i,
+    loggedInPattern: /写文章|草稿|发布|账号设置|少数派|退出登录|我的文章/i
   });
 }
 
 async function stageDetectLogin(): Promise<void> {
   currentStage = 'detectLogin';
-  await report({ status: 'running', stage: 'detectLogin', userMessage: getMessage('v3MsgDetectingLogin') });
+  await report({
+    status: 'running',
+    stage: 'detectLogin',
+    userMessage: getMessage('v3MsgDetectingLogin')
+  });
 
   const loginState = getCurrentLoginState();
   if (loginState.status === 'not_logged_in') {
@@ -1100,7 +1280,7 @@ async function stageDetectLogin(): Promise<void> {
       status: 'not_logged_in',
       stage: 'detectLogin',
       userMessage: getMessage('v3MsgNotLoggedIn'),
-      userSuggestion: getMessage('v3SugLoginThenRetry'),
+      userSuggestion: getMessage('v3SugLoginThenRetry')
     });
     throw new Error('__BAWEI_V2_STOPPED__');
   }
@@ -1108,9 +1288,16 @@ async function stageDetectLogin(): Promise<void> {
 
 async function stageFillTitle(title: string): Promise<void> {
   currentStage = 'fillTitle';
-  await report({ status: 'running', stage: 'fillTitle', userMessage: getMessage('v2MsgFillingTitle') });
+  await report({
+    status: 'running',
+    stage: 'fillTitle',
+    userMessage: getMessage('v2MsgFillingTitle')
+  });
 
-  const input = (await waitForElement<HTMLTextAreaElement>('textarea[placeholder*="标题"]', 30000)) as HTMLTextAreaElement;
+  const input = (await waitForElement<HTMLTextAreaElement>(
+    'textarea[placeholder*="标题"]',
+    30000
+  )) as HTMLTextAreaElement;
   simulateFocus(input);
   try {
     input.value = title;
@@ -1121,32 +1308,44 @@ async function stageFillTitle(title: string): Promise<void> {
   }
 }
 
-async function stageFillContent(contentHtml: string, sourceUrl: string, articleId: string): Promise<void> {
+async function stageFillContent(
+  contentHtml: string,
+  sourceUrl: string,
+  articleId: string
+): Promise<void> {
   currentStage = 'fillContent';
   await report({
     status: 'running',
     stage: 'fillContent',
     userMessage: getMessage('v2MsgFillingContent'),
-    userSuggestion: getMessage('v2SugSspaiNoSourceFieldAppend'),
+    userSuggestion: getMessage('v2SugSspaiNoSourceFieldAppend')
   });
 
   // SSPAI 对排版（加粗/段落/换行）较敏感：不要使用微信提取时生成的“plain tokens”，
   // 这里直接基于 contentHtml 重建 raw tokens，尽可能保留原始 HTML 结构。
-  const tokens = buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl, htmlMode: 'raw' });
+  const tokens = buildRichContentTokens({
+    contentHtml,
+    baseUrl: sourceUrl,
+    sourceUrl,
+    htmlMode: 'raw'
+  });
 
   const plainLen = tokens
     .filter((t) => t?.kind === 'html')
     .map((t) => htmlToPlainTextSafe((t as { html?: string }).html || ''))
     .join('\n')
-    .replace(/\s+/g, '')
-    .length;
+    .replace(/\s+/g, '').length;
 
   if (plainLen < 120) {
     let pad = '（内容来自原文链接，更多细节请查看原文。）';
     while (pad.replace(/\s+/g, '').length < 140) pad += '。';
     const padHtml = `<p>${pad}</p>`;
     const last = tokens[tokens.length - 1];
-    if (last?.kind === 'html' && sourceUrl && String((last as { html?: string }).html || '').includes(sourceUrl)) {
+    if (
+      last?.kind === 'html' &&
+      sourceUrl &&
+      String((last as { html?: string }).html || '').includes(sourceUrl)
+    ) {
       tokens.splice(tokens.length - 1, 0, { kind: 'html', html: padHtml });
     } else {
       tokens.push({ kind: 'html', html: padHtml });
@@ -1188,25 +1387,28 @@ async function stageFillContent(contentHtml: string, sourceUrl: string, articleI
 
   // SSPAI 图片需要异步上传到 CDN，且部分情况下 editor auto-save 会被 3006 阻塞。
   // 这里主动走 batch/upload 拿到 download_url，再通过 article/update 写回 body_last，避免“空 src 落稿”。
-  const imageTokens = (tokens as Array<{ kind?: string; src?: string }>).filter((t) => t?.kind === 'image');
+  const imageTokens = (tokens as Array<{ kind?: string; src?: string }>).filter(
+    (t) => t?.kind === 'image'
+  );
   const uniqueImages = Array.from(
-    new Set(
-      imageTokens
-        .map((t) => String(t?.src || '').trim())
-        .filter(Boolean)
-    )
+    new Set(imageTokens.map((t) => String(t?.src || '').trim()).filter(Boolean))
   );
 
   const imageUrlMap = new Map<string, string>();
   const loopbackImages = uniqueImages.filter(isLoopbackPictureUrl);
   let writeEditor: HTMLElement | null = null;
-  if (loopbackImages.length) {
-    writeEditor = await findVisibleSspaiEditor();
-    if (!writeEditor) {
-      throw new Error('SSPAI 本地图片需要在可见写作页上传，但编辑器当前不可用');
-    }
-    const uploaded = await uploadLoopbackPicturesViaEditor(loopbackImages, writeEditor);
-    for (const [sourceUrl, uploadedUrl] of uploaded) imageUrlMap.set(sourceUrl, uploadedUrl);
+  for (let i = 0; i < loopbackImages.length; i += 1) {
+    await report({
+      status: 'running',
+      stage: 'fillContent',
+      userMessage: getMessage('v3MsgUploadingImageProgress', [
+        String(i + 1),
+        String(uniqueImages.length)
+      ])
+    });
+    const src = loopbackImages[i];
+    const uploadedUrl = await uploadPictureFileToSspaiCdn(currentJob?.jobId || '', src, i + 1);
+    imageUrlMap.set(src, uploadedUrl);
   }
 
   const remoteImages = uniqueImages.filter((src) => !isLoopbackPictureUrl(src));
@@ -1214,7 +1416,10 @@ async function stageFillContent(contentHtml: string, sourceUrl: string, articleI
     await report({
       status: 'running',
       stage: 'fillContent',
-      userMessage: getMessage('v3MsgUploadingImageProgress', [String(loopbackImages.length + i + 1), String(uniqueImages.length)]),
+      userMessage: getMessage('v3MsgUploadingImageProgress', [
+        String(loopbackImages.length + i + 1),
+        String(uniqueImages.length)
+      ])
     });
     const src = remoteImages[i];
     if (imageUrlMap.has(src)) continue;
@@ -1222,7 +1427,10 @@ async function stageFillContent(contentHtml: string, sourceUrl: string, articleI
     if (downloadUrl) imageUrlMap.set(src, downloadUrl);
   }
 
-  const htmlForSave = buildBodyHtml(tokens as Array<{ kind?: string; html?: string; src?: string; alt?: string }>, imageUrlMap);
+  const htmlForSave = buildBodyHtml(
+    tokens as Array<{ kind?: string; html?: string; src?: string; alt?: string }>,
+    imageUrlMap
+  );
   await saveBodyLastViaUpdateApi(articleId, htmlForSave);
 
   // 非写作页（例如 /my）不需要操作编辑器 DOM；写作页仅用于“可视化回填”，失败也不阻塞。
@@ -1240,16 +1448,17 @@ async function stageFillContent(contentHtml: string, sourceUrl: string, articleI
       const existingHasSource = !!(sourceUrl && existingHtml.includes(sourceUrl));
       const existingImageAnalysis = analyzeImagesInHtml(existingHtml);
       const existingOk =
-        existingHasSource &&
+        (!sourceUrl || existingHasSource) &&
         (expectedImages === 0 ||
-          (existingImageAnalysis.withSrc >= expectedImages && existingImageAnalysis.emptySrc === 0));
+          (existingImageAnalysis.withSrc >= expectedImages &&
+            existingImageAnalysis.emptySrc === 0));
 
       if (!existingOk) {
         await fillEditorByTokens({
           jobId: currentJob?.jobId || '',
           tokens: [{ kind: 'html', html: htmlForSave }],
           editorRoot: editor,
-          writeMode: 'html',
+          writeMode: 'html'
         }).catch(() => {});
       }
     }
@@ -1266,7 +1475,9 @@ async function stageFillContent(contentHtml: string, sourceUrl: string, articleI
     }
   })();
 
-  const uploadTimeoutMs = expectedImages ? Math.min(20 * 60_000, 180_000 + expectedImages * 120_000) : 120_000;
+  const uploadTimeoutMs = expectedImages
+    ? Math.min(20 * 60_000, 180_000 + expectedImages * 120_000)
+    : 120_000;
   const persisted = await retryUntil(
     async () => {
       const info = await fetchArticleInfo(articleId);
@@ -1274,7 +1485,10 @@ async function stageFillContent(contentHtml: string, sourceUrl: string, articleI
       if (!bodyLast) throw new Error('waiting body_last update');
 
       const normalized = bodyLast.replace(/\s+/g, '');
-      const hasSource = containsSourceUrlInHtml(bodyLast, sourceUrl) || (sourceHost && normalized.includes(sourceHost.replace(/\s+/g, '')));
+      const hasSource =
+        !sourceUrl ||
+        containsSourceUrlInHtml(bodyLast, sourceUrl) ||
+        (sourceHost && normalized.includes(sourceHost.replace(/\s+/g, '')));
       const imgAnalysis = analyzeImagesInHtml(bodyLast);
       const imgCount = imgAnalysis.total;
       const imgWithSrc = imgAnalysis.withSrc;
@@ -1286,13 +1500,19 @@ async function stageFillContent(contentHtml: string, sourceUrl: string, articleI
         await report({
           status: 'running',
           stage: 'fillContent',
-          userMessage: getMessage('v3MsgUploadingImageProgress', [String(Math.min(imgWithSrc, expectedImages)), String(expectedImages)]),
+          userMessage: getMessage('v3MsgUploadingImageProgress', [
+            String(Math.min(imgWithSrc, expectedImages)),
+            String(expectedImages)
+          ])
         });
       }
 
       if (hasSource && imgOk && notDowngraded) return true;
-      if (normalized.length > Math.max(baselineLen + 80, 240) && imgOk && notDowngraded) return true;
-      throw new Error(`waiting body_last update (imgSrc=${imgWithSrc}/${expectedImages || 0}, empty=${imgEmptySrc}, total=${imgCount})`);
+      if (normalized.length > Math.max(baselineLen + 80, 240) && imgOk && notDowngraded)
+        return true;
+      throw new Error(
+        `waiting body_last update (imgSrc=${imgWithSrc}/${expectedImages || 0}, empty=${imgEmptySrc}, total=${imgCount})`
+      );
     },
     { timeoutMs: uploadTimeoutMs, intervalMs: 1200 }
   ).catch(() => false);
@@ -1303,7 +1523,9 @@ async function stageFillContent(contentHtml: string, sourceUrl: string, articleI
       stage: 'waitingUser',
       userMessage: getMessage('v3MsgImageUploadFailed'),
       userSuggestion: getMessage('v3SugManualUploadImagesThenContinue'),
-      devDetails: { message: 'SSPAI: body_last 未包含足够图片或仍为降级占位（图片：），已停止以避免发布缺图文章' },
+      devDetails: {
+        message: 'SSPAI: body_last 未包含足够图片或仍为降级占位（图片：），已停止以避免发布缺图文章'
+      }
     });
     throw new Error('__BAWEI_V2_STOPPED__');
   }
@@ -1311,7 +1533,11 @@ async function stageFillContent(contentHtml: string, sourceUrl: string, articleI
 
 async function stageSaveDraft(): Promise<void> {
   currentStage = 'saveDraft';
-  await report({ status: 'running', stage: 'saveDraft', userMessage: getMessage('v2MsgSavingDraft') });
+  await report({
+    status: 'running',
+    stage: 'saveDraft',
+    userMessage: getMessage('v2MsgSavingDraft')
+  });
   const btn = findButtonExact('保存') || findAnyElementContainingText('保存');
   if (!btn) throw new Error('未找到保存按钮');
   (btn as HTMLElement).click();
@@ -1319,12 +1545,20 @@ async function stageSaveDraft(): Promise<void> {
 
 async function stageSubmitPublish(): Promise<void> {
   currentStage = 'submitPublish';
-  await report({ status: 'running', stage: 'submitPublish', userMessage: getMessage('v2MsgPublishing') });
+  await report({
+    status: 'running',
+    stage: 'submitPublish',
+    userMessage: getMessage('v2MsgPublishing')
+  });
 
   await dismissWelcomeWriteDialog().catch(() => false);
   await dismissEditorAlreadyOpenDialog().catch(() => false);
 
-  await report({ status: 'running', stage: 'submitPublish', userMessage: getMessage('v2MsgSettingTags') });
+  await report({
+    status: 'running',
+    stage: 'submitPublish',
+    userMessage: getMessage('v2MsgSettingTags')
+  });
   await retryUntil(
     async () => {
       const input = getTagInput();
@@ -1344,12 +1578,20 @@ async function stageSubmitPublish(): Promise<void> {
     const tags = lastMetaSnapshot?.selectedTags || [];
     const ok = await tryPublishViaApi(articleId, tags);
     if (ok) {
-      await report({ status: 'running', stage: 'submitPublish', userMessage: getMessage('v2MsgPublishing') });
+      await report({
+        status: 'running',
+        stage: 'submitPublish',
+        userMessage: getMessage('v2MsgPublishing')
+      });
       return;
     }
   }
 
-  await report({ status: 'running', stage: 'submitPublish', userMessage: getMessage('v2MsgPublishing') });
+  await report({
+    status: 'running',
+    stage: 'submitPublish',
+    userMessage: getMessage('v2MsgPublishing')
+  });
 
   // `findButtonExact('发布')` 在少数派页面上可能命中“列表/导航”区域的发布按钮，导致跳转到草稿页并触发 3006；
   // 因此优先使用更精准的写作页发布按钮定位逻辑。
@@ -1370,7 +1612,8 @@ async function stageSubmitPublish(): Promise<void> {
   ).catch(() => {});
 
   // Some flows use a final confirm button.
-  const confirm = findButtonExact('确定') || findButtonExact('确认') || findAnyElementContainingText('确定');
+  const confirm =
+    findButtonExact('确定') || findButtonExact('确认') || findAnyElementContainingText('确定');
   if (confirm) {
     try {
       (confirm as HTMLElement).click();
@@ -1382,7 +1625,11 @@ async function stageSubmitPublish(): Promise<void> {
 
 async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<'ok' | 'waiting_user'> {
   currentStage = 'confirmSuccess';
-  await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgConfirmingResult') });
+  await report({
+    status: 'running',
+    stage: 'confirmSuccess',
+    userMessage: getMessage('v2MsgConfirmingResult')
+  });
 
   const text = document.body?.innerText || '';
   if (action === 'publish') {
@@ -1391,7 +1638,7 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<'ok' | 
         status: 'waiting_user',
         stage: 'waitingUser',
         userMessage: getMessage('v2MsgIdentityVerificationRequiredToPublish'),
-        userSuggestion: getMessage('v2SugCompleteIdentityVerificationThenContinue'),
+        userSuggestion: getMessage('v2SugCompleteIdentityVerificationThenContinue')
       });
       return 'waiting_user';
     }
@@ -1407,7 +1654,7 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<'ok' | 
         status: 'waiting_user',
         stage: 'waitingUser',
         userMessage: getMessage('v2MsgIdentityVerificationRequiredToPublish'),
-        userSuggestion: getMessage('v2SugCompleteIdentityVerificationThenContinue'),
+        userSuggestion: getMessage('v2SugCompleteIdentityVerificationThenContinue')
       });
       return 'waiting_user';
     }
@@ -1418,7 +1665,11 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<'ok' | 
 
 async function stageVerifyPublished(articleId: string): Promise<void> {
   currentStage = 'confirmSuccess';
-  await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgVerifyConfirmPublishedVisibleOnDetail') });
+  await report({
+    status: 'running',
+    stage: 'confirmSuccess',
+    userMessage: getMessage('v2MsgVerifyConfirmPublishedVisibleOnDetail')
+  });
 
   const deadline = Date.now() + 120_000;
   let lastReleasedAt = 0;
@@ -1451,10 +1702,9 @@ async function stageVerifyPublished(articleId: string): Promise<void> {
     const blockers = collectPublishBlockersSnapshot();
     const data = lastInfo?.data || {};
     await report({
-      status: 'waiting_user',
-      stage: 'waitingUser',
+      status: 'pending_review',
+      stage: 'done',
       userMessage: getMessage('v2MsgVerifyBlockedNotPublishedYet'),
-      userSuggestion: getMessage('v2SugCompleteVerificationOrRequiredThenContinueToRetry'),
       devDetails: {
         articleId,
         releasedAt: lastReleasedAt,
@@ -1462,11 +1712,15 @@ async function stageVerifyPublished(articleId: string): Promise<void> {
         type: (data as { type?: unknown }).type,
         createdAt: (data as { created_at?: unknown }).created_at,
         bodyUpdatedAt: (data as { body_updated_at?: unknown }).body_updated_at,
-        wordsCount: (data as { words_count_last?: unknown; words_count?: unknown }).words_count_last ?? (data as { words_count?: unknown }).words_count,
+        wordsCount:
+          (data as { words_count_last?: unknown; words_count?: unknown }).words_count_last ??
+          (data as { words_count?: unknown }).words_count,
         bannerId: (data as { banner_id?: unknown }).banner_id,
         allowComment: (data as { allow_comment?: unknown }).allow_comment,
         blockers,
-      },
+        managementUrl: getChannelConfig(CHANNEL_ID).managementUrl,
+        reviewStatus: 'submitted_not_released'
+      }
     });
     return;
   }
@@ -1476,12 +1730,16 @@ async function stageVerifyPublished(articleId: string): Promise<void> {
 }
 
 async function runWriteFlow(job: AnyJob): Promise<void> {
-  await report({ status: 'running', stage: 'openEntry', userMessage: getMessage('v2MsgEnteredSspaiWritePage') });
+  await report({
+    status: 'running',
+    stage: 'openEntry',
+    userMessage: getMessage('v2MsgEnteredSspaiWritePage')
+  });
 
   await stageDetectLogin();
   await stageFillTitle(job.article.title);
   const articleId = await waitForArticleId();
-  await stageFillContent(job.article.contentHtml, job.article.sourceUrl, articleId);
+  await stageFillContent(job.article.contentHtml, job.article.sourceUrl || '', articleId);
 
   if (job.action === 'draft') {
     await stageSaveDraft();
@@ -1490,7 +1748,7 @@ async function runWriteFlow(job: AnyJob): Promise<void> {
       status: 'success',
       stage: 'done',
       userMessage: getMessage('v2MsgDraftSavedVerifyDone'),
-      devDetails: summarizeVerifyDetails({ listUrl: WRITE_URL, listVisible: true }),
+      devDetails: summarizeVerifyDetails({ listUrl: WRITE_URL, listVisible: true })
     });
     return;
   }
@@ -1504,28 +1762,45 @@ async function runWriteFlow(job: AnyJob): Promise<void> {
 }
 
 async function runApiFlow(job: AnyJob): Promise<void> {
-  await report({ status: 'running', stage: 'openEntry', userMessage: getMessage('v2MsgEnteredSspaiWritePage') });
+  await report({
+    status: 'running',
+    stage: 'openEntry',
+    userMessage: getMessage('v2MsgEnteredSspaiWritePage')
+  });
   await stageDetectLogin();
 
   currentStage = 'fillTitle';
-  await report({ status: 'running', stage: 'fillTitle', userMessage: getMessage('v2MsgFillingTitle') });
-  const created = await createDraftArticleViaApi(job.article.title);
+  await report({
+    status: 'running',
+    stage: 'fillTitle',
+    userMessage: getMessage('v2MsgFillingTitle')
+  });
+  const reusableArticleId = await findReusableDraftArticleByTitle(job.article.title).catch(
+    () => ''
+  );
+  const created = reusableArticleId
+    ? { articleId: reusableArticleId, token: '' }
+    : await createDraftArticleViaApi(job.article.title);
   const articleId = created.articleId;
 
-  await stageFillContent(job.article.contentHtml, job.article.sourceUrl, articleId);
+  await stageFillContent(job.article.contentHtml, job.article.sourceUrl || '', articleId);
 
   if (job.action === 'draft') {
     await report({
       status: 'success',
       stage: 'done',
       userMessage: getMessage('v2MsgDraftSavedVerifyDone'),
-      devDetails: summarizeVerifyDetails({ listUrl: ENTRY_URL, listVisible: true }),
+      devDetails: summarizeVerifyDetails({ listUrl: ENTRY_URL, listVisible: true })
     });
     return;
   }
 
   currentStage = 'submitPublish';
-  await report({ status: 'running', stage: 'submitPublish', userMessage: getMessage('v2MsgPublishing') });
+  await report({
+    status: 'running',
+    stage: 'submitPublish',
+    userMessage: getMessage('v2MsgPublishing')
+  });
   const ok = await tryPublishViaApi(articleId, ['AI']);
   if (!ok) {
     await report({
@@ -1533,7 +1808,7 @@ async function runApiFlow(job: AnyJob): Promise<void> {
       stage: 'submitPublish',
       userMessage: getMessage('v2MsgFailed'),
       userSuggestion: getMessage('v2SugCheckLoginOrDomThenRetry'),
-      devDetails: { message: 'SSPAI: API 发布失败（article/update 未成功）' },
+      devDetails: { message: 'SSPAI: API 发布失败（article/update 未成功）' }
     });
     throw new Error('__BAWEI_V2_STOPPED__');
   }
@@ -1557,28 +1832,37 @@ async function verifyFromDetail(job: AnyJob): Promise<void> {
     async () => {
       const info = articleId ? await fetchArticleInfo(articleId).catch(() => null) : null;
       const bodyHtml = String(info?.data?.body || info?.data?.body_last || '');
-      const domContainer = (document.querySelector('article,main') as HTMLElement | null) || document.body;
+      const domContainer =
+        (document.querySelector('article,main') as HTMLElement | null) || document.body;
       const domHtml = String(domContainer?.innerHTML || '');
       const htmlForCheck = bodyHtml || domHtml;
 
+      const sourceUrl = job.article.sourceUrl || '';
       const sourceOk =
-        pageContainsSourceUrl(job.article.sourceUrl) ||
+        !sourceUrl ||
+        pageContainsSourceUrl(sourceUrl) ||
         pageContainsText('原文链接') ||
-        containsSourceUrlInHtml(htmlForCheck, job.article.sourceUrl);
+        containsSourceUrlInHtml(htmlForCheck, sourceUrl);
       if (!sourceOk) throw new Error('waiting source url');
 
       if (expectedImages) {
         if (bodyHtml) {
           const imgAnalysis = analyzeImagesInHtml(bodyHtml);
           if (imgAnalysis.withSrc < expectedImages) {
-            throw new Error(`waiting images (${imgAnalysis.withSrc}/${expectedImages}, empty=${imgAnalysis.emptySrc})`);
+            throw new Error(
+              `waiting images (${imgAnalysis.withSrc}/${expectedImages}, empty=${imgAnalysis.emptySrc})`
+            );
           }
-          if (imgAnalysis.emptySrc) throw new Error(`waiting images upload complete (empty=${imgAnalysis.emptySrc})`);
+          if (imgAnalysis.emptySrc)
+            throw new Error(`waiting images upload complete (empty=${imgAnalysis.emptySrc})`);
         } else {
           const imgs = Array.from(domContainer.querySelectorAll<HTMLImageElement>('img'));
-          const withSrc = imgs.filter((img) => Boolean(String(img.getAttribute('src') || '').trim())).length;
+          const withSrc = imgs.filter((img) =>
+            Boolean(String(img.getAttribute('src') || '').trim())
+          ).length;
           const empty = Math.max(0, imgs.length - withSrc);
-          if (withSrc < expectedImages) throw new Error(`waiting images (${withSrc}/${expectedImages}, empty=${empty})`);
+          if (withSrc < expectedImages)
+            throw new Error(`waiting images (${withSrc}/${expectedImages}, empty=${empty})`);
           if (empty) throw new Error(`waiting images upload complete (empty=${empty})`);
         }
       }
@@ -1591,11 +1875,20 @@ async function verifyFromDetail(job: AnyJob): Promise<void> {
     .then(() => true)
     .catch(() => false);
   await report({
-    status: ok ? 'success' : 'waiting_user',
+    status: ok ? (job.action === 'draft' ? 'success' : 'pending_review') : 'waiting_user',
     stage: ok ? 'done' : 'waitingUser',
-    userMessage: ok ? getMessage('v2MsgVerifyPassedDetailHasSourceLink') : getMessage('v2MsgVerifyFailedDetailNoSourceLink'),
+    userMessage: ok
+      ? getMessage('v2MsgVerifyPassedDetailHasSourceLink')
+      : getMessage('v2MsgVerifyFailedDetailNoSourceLink'),
     userSuggestion: ok ? undefined : getMessage('v2SugCheckSourceLinkAtEndThenContinue'),
-    devDetails: summarizeVerifyDetails({ publishedUrl: location.href, sourceUrlPresent: ok }),
+    devDetails: summarizeVerifyDetails({
+      publishedUrl: location.href,
+      candidatePublicUrl: location.href,
+      managementUrl: getChannelConfig(CHANNEL_ID).managementUrl,
+      reviewStatus: 'candidate_public_url',
+      expectedImageCount: expectedImages,
+      sourceUrlPresent: job.article.sourceUrl ? ok : false
+    })
   });
 }
 
@@ -1615,9 +1908,9 @@ async function bootstrap(): Promise<void> {
         } else {
           expectedImagesForJob = buildRichContentTokens({
             contentHtml: currentJob.article.contentHtml,
-            baseUrl: currentJob.article.sourceUrl,
-            sourceUrl: currentJob.article.sourceUrl,
-            htmlMode: 'raw',
+            baseUrl: currentJob.article.sourceUrl || '',
+            sourceUrl: currentJob.article.sourceUrl || '',
+            htmlMode: 'raw'
           }).filter((t) => t?.kind === 'image').length;
         }
       } catch {
@@ -1648,7 +1941,11 @@ async function bootstrap(): Promise<void> {
       return;
     }
 
-    await report({ status: 'running', stage: 'openEntry', userMessage: getMessage('v2MsgSspaiOpeningWritePage') });
+    await report({
+      status: 'running',
+      stage: 'openEntry',
+      userMessage: getMessage('v2MsgSspaiOpeningWritePage')
+    });
     location.href = ENTRY_URL;
   } catch (error) {
     if (error instanceof Error && error.message === '__BAWEI_V2_STOPPED__') return;
@@ -1657,7 +1954,7 @@ async function bootstrap(): Promise<void> {
       stage: currentStage,
       userMessage: getMessage('v2MsgFailed'),
       userSuggestion: getMessage('v2SugCheckLoginOrDomThenRetry'),
-      devDetails: { message: error instanceof Error ? error.message : String(error) },
+      devDetails: { message: error instanceof Error ? error.message : String(error) }
     });
   }
 }
@@ -1672,10 +1969,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     stopRequested = true;
     return;
   }
-  if (message?.type === V2_REQUEST_RETRY && message.jobId === currentJob.jobId && message.channelId === CHANNEL_ID) {
+  if (
+    message?.type === V2_REQUEST_RETRY &&
+    message.jobId === currentJob.jobId &&
+    message.channelId === CHANNEL_ID
+  ) {
     bootstrap();
   }
-  if (message?.type === V2_REQUEST_CONTINUE && message.jobId === currentJob.jobId && message.channelId === CHANNEL_ID) {
+  if (
+    message?.type === V2_REQUEST_CONTINUE &&
+    message.jobId === currentJob.jobId &&
+    message.channelId === CHANNEL_ID
+  ) {
     bootstrap();
   }
 });

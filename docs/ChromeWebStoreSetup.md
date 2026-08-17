@@ -1,110 +1,77 @@
-# Chrome Web Store Setup Guide
+# Chrome Web Store 发布配置
 
-https://developer.chrome.com/docs/webstore/using-api
+本项目使用 Chrome Web Store API v2 上传扩展包并提交审核。上传、审核中、审核通过和公开上线是四个不同状态；脚本只有在版本化状态回读后才报告对应终态。
 
+当前发布目标：
 
-refresh token经常过期（7天有效期），原因是Google auth App是Testing状态，需要点一下变成production状态，refresh token变成6个月有效期
+- Publisher ID：`301e74b1-6567-4278-a30a-74b31afa142c`
+- 扩展 ID：由 `CWS_EXTENSION_ID` 提供
+- 正常发布方式：审核通过后自动公开
+- API v2 请求固定为 `publishType: DEFAULT_PUBLISH`、`skipReview: false`、`blockOnWarnings: true`
 
-https://console.cloud.google.com/auth/audience?project=chromestore-465702
+## 凭据
 
-点击左侧Audience - Publishing status
-
-**直接看官方文档，不要看底下这些**
-
-
-> 本文档将指导你完成获取并配置 Chrome Web Store Publishing API 所需的四个变量：
->
-> * `CWS_EXTENSION_ID`
-> * `CWS_CLIENT_ID`
-> * `CWS_CLIENT_SECRET`
-> * `CWS_REFRESH_TOKEN`
->
-> 完成后，请将它们填入项目根目录的 `.env` 文件（可复制 `.env.example` 作为起点）。
-
----
-
-## 1. 注册开发者账号
-
-1. 使用 **个人或公司 Google 账号** 登录 Chrome Web Store 开发者控制台：<https://chrome.google.com/webstore/devconsole>  
-2. 按提示 **支付 5 美元一次性注册费** 并接受开发者协议。
-
-## 2. 创建扩展并获取 `CWS_EXTENSION_ID`
-
-1. 在开发者控制台点击 **「Add New Item」**。  
-2. 上传任意占位 ZIP（可以使用项目 `dist` 目录打包的文件）。稍后可替换。  
-3. 上传完成后进入该扩展详情页，浏览器地址栏 URL 形如：
-
-```
-https://chrome.google.com/webstore/devconsole/<publisherId>/edit/<extensionId>
-```
-
-4. `extensionId` 即为需要的 **`CWS_EXTENSION_ID`**，复制并写入 `.env`。
-
-## 3. 在 Google Cloud Console 创建项目并启用 API
-
-1. 访问 <https://console.cloud.google.com>，点击顶部项目下拉，选择 **「新建项目」**。  
-2. 命名如 `bawei-CWS`，创建后进入该项目。
-3. 在左侧导航 **「API 与服务 → 库」** 搜索 **Chrome Web Store API** 并 **启用**。
-
-## 4. 配置 OAuth 同意屏幕
-
-1. 转到 **「API 与服务 → OAuth 同意屏幕」**。  
-2. 选择 **External**（外部），填写应用名称、邮箱等信息。  
-3. 在 **Scopes** 步骤保持默认或添加 `.../auth/chromewebstore`（后续也可由 Playground 指定）。
-4. 在 **Test users** 步骤将自己的 Google 账号加入测试用户列表。
-
-## 5. 创建 OAuth 客户端并获取 `CLIENT_ID`/`CLIENT_SECRET`
-
-1. 打开 **「API 与服务 → 凭据」**。  
-2. 点击 **「创建凭据」 → 「OAuth 客户端 ID」**。  
-3. 选择 **Desktop app** 类型，命名如 `CWS Upload`.  
-4. 创建后弹窗中显示 **Client ID** 与 **Client Secret**，复制分别写入 `.env`：
-   * `CWS_CLIENT_ID`
-   * `CWS_CLIENT_SECRET`
-
-## 6. 获取 `REFRESH_TOKEN`
-
-> 需使用 Google OAuth Playground 执行「一次」三步授权，后续脚本会自动刷新 token。
-
-1. 打开 <https://developers.google.com/oauthplayground/>。
-2. 右侧 **⚙️ 设置 (OAuth 2.0 Configuration)**：
-   * 勾选 **Use your own OAuth credentials**。
-   * 填入刚创建的 `CWS_CLIENT_ID` 与 `CWS_CLIENT_SECRET`。
-3. **Step 1** 输入框搜索并勾选 **Chrome Web Store API v1 – `https://www.googleapis.com/auth/chromewebstore`** 范围，点击 **Authorize APIs**。
-4. Google 会弹出登录授权页面，选择与你的开发者账号对应的 Google 账号并同意。
-5. 重定向回 Playground 后点击 **Exchange authorization code for tokens**，下方将显示 **Access token** 与 **Refresh token**。
-6. 复制 **Refresh token** 并写入 `.env` 的 `CWS_REFRESH_TOKEN`。
-
-## 7. 验证 `.env` 文件
-
-确认 `.env` 含有如下内容（示例）：
+在根目录 `.env` 中配置以下变量，禁止提交该文件或在日志中打印变量值：
 
 ```bash
 CWS_EXTENSION_ID=abcdefghijklmnopabcdefghijklmnop
-CWS_CLIENT_ID=1234567890-abc123def456.apps.googleusercontent.com
-CWS_CLIENT_SECRET=GOCSPX-xyz_ABC123def456
-CWS_REFRESH_TOKEN=1//04xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+CWS_CLIENT_ID=1234567890-example.apps.googleusercontent.com
+CWS_CLIENT_SECRET=GOCSPX-example
+CWS_REFRESH_TOKEN=1//example
+# 可选；默认使用脚本内绑定的 Publisher ID
+CWS_PUBLISHER_ID=301e74b1-6567-4278-a30a-74b31afa142c
 ```
 
-> 保管好 `CLIENT_SECRET` 与 `REFRESH_TOKEN`，请勿公开提交到 Git 仓库。
+OAuth 客户端必须启用 Chrome Web Store API，并授权 `https://www.googleapis.com/auth/chromewebstore`。如 OAuth 应用仍处于 Testing，refresh token 可能按 Google 当前策略较快失效；以 Google Cloud Console 的实时状态和官方说明为准。
 
-## 8. 打包并上传测试
+官方文档：
+
+- <https://developer.chrome.com/docs/webstore/using-api>
+- <https://developer.chrome.com/docs/webstore/api/reference/rest/v2/publishers.items/upload>
+- <https://developer.chrome.com/docs/webstore/api/reference/rest/v2/publishers.items/publish>
+- <https://developer.chrome.com/docs/webstore/publish/>
+
+## 只读状态
 
 ```bash
-npm run build           # 生成 dist/
-npm run publish:cws     # 打包 zip 并上传 & 发布至公开通道
+npm run publish:cws -- --status --evidence-dir release/cws/<version>/evidence/status
 ```
 
-脚本输出 **发布成功** 后，可在开发者控制台查看状态。Chrome Web Store 可能需要数小时到数天完成审核。
+状态命令不会构建、上传或提交。输出同时区分 submitted revision 与 published revision，并要求目标版本出现在对应 distribution channel 中。
 
----
+## 本地预检
 
-### 常见问题
+```bash
+npm run publish:cws -- --dry-run --evidence-dir release/cws/<version>/evidence/dry-run
+```
 
-| 问题 | 解决方案 |
-|------|----------|
-| "invalid_grant" 错误 | 检查 `refresh_token` 是否正确，确保 OAuth 同意屏幕将当前账号列入测试用户，并且 Refresh token 未过期/未撤销 |
-| "403 Forbidden" on upload | 确保启用了 Chrome Web Store API，且 OAuth 凭据对应的项目与 API 项目相同 |
-| 上传成功但发布失败 | 若扩展信息不完整（隐私政策、图标、描述等），需先在商店后台补充后再发布 |
+Dry run 会：
 
-如果仍有问题，请参考官方文档：<https://developer.chrome.com/docs/webstore> 
+1. 校验 `manifest.json`、`package.json` 与 `dist/manifest.json` 版本一致。
+2. 重新执行生产构建。
+3. 从新的 `dist/` 生成 `plugin-<version>.zip`。
+4. 记录 ZIP SHA-256、凭据是否齐全以及固定的 API v2 提交参数。
+5. 不执行任何远端变更。
+
+## 正式提交审核
+
+正式提交只能在代码已测试、commit、push，且本地 HEAD 等于远端默认分支并保持干净之后执行。项目发布清单通过预检后，由发布阶段注入精确身份：
+
+```bash
+PUB_RELEASE_PHASE=submit \
+PUB_RELEASE_IDENTITY=bawei:<version> \
+npm run publish:cws -- --evidence-dir release/cws/<version>/evidence/submit
+```
+
+脚本会重新构建 ZIP，先读取当前版本化状态，再上传并调用 API v2 `publish`。如果同一版本已经在审核中或已公开，则只写幂等证据，不重复上传。若另一个版本正在审核，脚本会拒绝覆盖。
+
+提交成功仅表示目标版本进入 `PENDING_REVIEW`/`SUBMITTED`，不表示已经公开。审核通过后仍需持续用 `--status` 回读，直到 `publishedItemRevisionStatus` 明确包含目标版本，再从公开商店下载实际 CRX 做版本和运行验收。
+
+## 常见问题
+
+| 现象 | 处理 |
+| --- | --- |
+| `invalid_grant` | 检查 refresh token 是否被撤销、OAuth 应用状态和授权账号，不要在日志中输出 token。 |
+| 上传成功但提交失败 | 保留上传证据；只读检查商店后台的 Store Listing、Privacy、Test instructions 和 Distribution，不要盲目重复上传。 |
+| 线上仍是旧版本 | 分别核对 submitted 与 published 的版本号；审核中不能宣称上线。 |
+| 提示其他版本正在审核 | 保留当前状态，不自动取消或覆盖；先确认目标版本和操作范围。 |

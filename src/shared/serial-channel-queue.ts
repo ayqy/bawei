@@ -2,6 +2,8 @@ import type { ChannelId, ChannelResultStatus, ChannelRuntimeState } from './v2-t
 
 const SERIAL_TERMINAL_STATUSES: ReadonlySet<ChannelResultStatus> = new Set([
   'success',
+  'pending_review',
+  'rejected',
   'failed',
   'waiting_user',
   'not_logged_in'

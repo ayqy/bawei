@@ -2,12 +2,18 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { prepareLocalMarkdown } from './local-markdown.mjs';
+import {
+  buildChannelContentHash,
+  extractChannelVariants,
+  prepareLocalMarkdown,
+  validateWoshipmVariant,
+} from './local-markdown.mjs';
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bawei-markdown-test-'));
 const pngPath = path.join(tempDir, 'pixel.png');
 const markdownPath = path.join(tempDir, 'article.md');
 const fallbackPath = path.join(tempDir, 'fallback.md');
+const variantPath = path.join(tempDir, 'variant.md');
 
 try {
   fs.writeFileSync(
@@ -32,6 +38,33 @@ try {
     ].join('\n')
   );
   fs.writeFileSync(fallbackPath, '# 文件标题\n\n没有公开原文链接的正文。\n');
+  fs.writeFileSync(
+    variantPath,
+    [
+      '# 默认标题',
+      '',
+      '默认正文。',
+      '',
+      '<!-- bawei:variant woshipm -->',
+      '# 产品决策复盘',
+      '',
+      '## 用户问题',
+      '真实问题场景。',
+      '',
+      '## 产品决策',
+      '为什么这样设计。',
+      '',
+      '## 取舍',
+      '说明权衡。',
+      '',
+      '## 适用边界',
+      '不适合的情况。',
+      '',
+      '## 可复用洞察',
+      '可复用的方法论。',
+      '<!-- /bawei:variant -->',
+    ].join('\n')
+  );
 
   const prepared = await prepareLocalMarkdown(markdownPath);
   try {
@@ -61,10 +94,39 @@ try {
   try {
     assert.equal(fallback.article.title, '文件标题');
     assert.equal(fallback.hasDurableSourceUrl, false);
-    assert.match(fallback.article.sourceUrl, /^http:\/\/127\.0\.0\.1:\d+\/source\/fallback\.md$/);
+    assert.equal(fallback.article.sourceUrl, '');
+    assert.doesNotMatch(fallback.article.contentHtml, /127\.0\.0\.1/);
   } finally {
     await fallback.close();
   }
+
+  const variant = await prepareLocalMarkdown(variantPath);
+  try {
+    assert.equal(variant.channelArticles.csdn.article.title, '默认标题');
+    assert.equal(variant.channelArticles.woshipm.article.title, '产品决策复盘');
+    assert.notEqual(variant.channelArticles.csdn.contentHash, variant.channelArticles.woshipm.contentHash);
+    assert.equal(validateWoshipmVariant(variant.variants.woshipm), true);
+    const parsed = extractChannelVariants(fs.readFileSync(variantPath, 'utf8'));
+    assert.ok(parsed.variants.woshipm);
+  } finally {
+    await variant.close();
+  }
+
+  const stableA = buildChannelContentHash({
+    channelId: 'csdn',
+    title: '标题',
+    markdown: '正文\r\n',
+    imageDigests: ['a'],
+    sourceUrl: '',
+  });
+  const stableB = buildChannelContentHash({
+    channelId: 'csdn',
+    title: '标题',
+    markdown: '正文\n',
+    imageDigests: ['a'],
+    sourceUrl: '',
+  });
+  assert.equal(stableA, stableB, '换行符和尾部空白不应改变渠道内容哈希');
 
   console.log('✅ local markdown unit tests passed');
 } finally {

@@ -259,6 +259,14 @@
     "message": "Success",
     "description": "Status success"
   },
+  "statusPendingReview": {
+    "message": "Pending review",
+    "description": "Submitted and awaiting review or anonymous verification"
+  },
+  "statusRejected": {
+    "message": "Rejected",
+    "description": "Publication rejected"
+  },
   "statusFailed": {
     "message": "Failed",
     "description": "Status failed"

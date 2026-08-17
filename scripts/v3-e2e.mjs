@@ -27,6 +27,12 @@ async function gotoWithRetry(page, url) {
   throw lastErr || new Error(`goto failed: ${url}`);
 }
 
+function e2eFixtureUrl(url) {
+  const target = new URL(url);
+  target.searchParams.set('__bawei_e2e', `${Date.now()}_${Math.random().toString(36).slice(2)}`);
+  return target.toString();
+}
+
 function assert(condition, message) {
   if (!condition) throw new Error(message || 'assert failed');
 }
@@ -41,20 +47,20 @@ const ALL_CHANNELS = [
   'sspai',
   'baijiahao',
   'toutiao',
-  'feishu-docs',
+  'feishu-docs'
 ];
 
 const CHANNEL_ENTRY_URLS = {
   csdn: 'https://mp.csdn.net/mp_blog/creation/editor',
   'tencent-cloud-dev': 'https://cloud.tencent.com/developer/article/write',
   cnblogs: 'https://i.cnblogs.com/posts/edit',
-  oschina: 'https://www.oschina.net/blog/write',
+  oschina: 'https://my.oschina.net/blog/ai-write',
   woshipm: 'https://www.woshipm.com/writing',
   mowen: 'https://note.mowen.cn/editor',
   sspai: 'https://sspai.com/write',
   baijiahao: 'https://baijiahao.baidu.com/builder/rc/edit?type=news&is_from_cms=1',
   toutiao: 'https://mp.toutiao.com/profile_v4/graphic/publish',
-  'feishu-docs': 'https://wuxinxuexi.feishu.cn/drive/folder/PyWAfSFwrlMgiydvlHectMn2nSd',
+  'feishu-docs': 'https://wuxinxuexi.feishu.cn/drive/folder/PyWAfSFwrlMgiydvlHectMn2nSd'
 };
 
 const PNG_1x1_BASE64 =
@@ -88,7 +94,10 @@ function pageTemplate({ title, body, head = '', script = '' }) {
 </html>`;
 }
 
-function imageHandlersScript(selector, uploadedImagePrefix = 'https://img-blog.csdnimg.cn/bawei-e2e-upload-') {
+function imageHandlersScript(
+  selector,
+  uploadedImagePrefix = 'https://img-blog.csdnimg.cn/bawei-e2e-upload-'
+) {
   const sel = JSON.stringify(selector);
   const imagePrefix = JSON.stringify(uploadedImagePrefix);
   return `
@@ -195,8 +204,13 @@ function buildCsdnEditorHtml({ action, title, sourceUrl, detailUrl }) {
     </div>
     <div id="csdn-cover" class="box">
       <div>封面</div>
-      <input id="csdn-cover-upload" type="file" accept="image/png,image/jpeg,.png,.jpg" />
-      <img class="preview" alt="封面预览" style="display:none;max-width:180px;" />
+      <div class="container-coverimage-box">
+        <div class="img-selection-item">
+          <img class="select-cover" src="https://img-blog.csdnimg.cn/bawei-e2e-suggested-cover.png" alt="正文候选封面" />
+        </div>
+        <label>从本地上传<input id="csdn-cover-upload" type="file" accept="image/png,image/jpeg,.png,.jpg" /></label>
+        <img class="preview" alt="封面预览" style="display:none;max-width:180px;" />
+      </div>
     </div>
     <div class="bar">
       <button id="csdn-save" class="btn">保存草稿</button>
@@ -211,6 +225,15 @@ function buildCsdnEditorHtml({ action, title, sourceUrl, detailUrl }) {
     const MANAGE_URL = 'https://mp.csdn.net/mp_blog/manage/article';
 
     ${imageHandlersScript('#csdn-editor')}
+
+    document.querySelector('#csdn-cover .img-selection-item')?.addEventListener('click', (event) => {
+      const item = event.currentTarget;
+      item.classList.add('selected');
+      const preview = document.querySelector('#csdn-cover img.preview');
+      if (!preview) return;
+      preview.src = 'https://img-blog.csdnimg.cn/bawei-e2e-suggested-cover.png';
+      preview.style.display = 'block';
+    });
 
     document.querySelector('#csdn-cover-upload')?.addEventListener('change', () => {
       const preview = document.querySelector('#csdn-cover img.preview');
@@ -388,7 +411,7 @@ function buildOschinaWriteHtml({ action, title, detailUrl }) {
     <div class="bar">
       <input name="title" placeholder="文章标题" style="flex:1; padding:8px; border:1px solid #ddd; border-radius:8px;" />
     </div>
-    <iframe style="width:100%; height:220px; border:1px solid #ddd; border-radius:8px;" srcdoc="${iframeEditorSrcdoc().replaceAll('"', '&quot;')}"></iframe>
+    <div class="tiptap ProseMirror aie-content editor" role="textbox" contenteditable="true" style="min-height:220px; border:1px solid #ddd; border-radius:8px;"></div>
     <div class="bar">
       <button id="oschina-draft" class="btn">保存草稿</button>
       <button id="oschina-publish" class="btn primary">发布文章</button>
@@ -399,7 +422,112 @@ function buildOschinaWriteHtml({ action, title, detailUrl }) {
   const script = `
     const ACTION = ${JSON.stringify(action)};
     const DETAIL_URL = ${JSON.stringify(detailUrl)};
+    const editorRoot = document.querySelector('.tiptap.ProseMirror.aie-content');
+    editorRoot.__baweiCommandVersion = 0;
+    editorRoot.editor = {
+      get state() {
+        return {
+          doc: {
+            descendants(callback) {
+              const walker = document.createTreeWalker(editorRoot, NodeFilter.SHOW_TEXT);
+              const positions = [];
+              let position = 1;
+              let node = walker.nextNode();
+              while (node) {
+                const text = String(node.textContent || '');
+                positions.push({ from: position, to: position + text.length, node, text });
+                callback({ text }, position);
+                position += text.length + 2;
+                node = walker.nextNode();
+              }
+              editorRoot.__baweiTextPositions = positions;
+            }
+          }
+        };
+      },
+      get commands() {
+        const snapshotVersion = Number(editorRoot.__baweiCommandVersion || 0);
+        const assertFresh = () => {
+          if (snapshotVersion !== Number(editorRoot.__baweiCommandVersion || 0)) {
+            throw new Error('Applying a mismatched transaction');
+          }
+        };
+        const advance = () => {
+          editorRoot.__baweiCommandVersion = Number(editorRoot.__baweiCommandVersion || 0) + 1;
+        };
+        return {
+          clearContent() {
+          assertFresh();
+          editorRoot.innerHTML = '<p></p>';
+          editorRoot.__baweiTextPositions = [];
+          editorRoot.__baweiSelectedText = null;
+          advance();
+          return true;
+        },
+        focus() {
+          assertFresh();
+          editorRoot.focus();
+          advance();
+          return true;
+        },
+        insertContent(html) {
+          assertFresh();
+          if (editorRoot.dataset.insertMismatchCovered !== '1') {
+            editorRoot.dataset.insertMismatchCovered = '1';
+            throw new Error('Applying a mismatched transaction');
+          }
+          editorRoot.insertAdjacentHTML('beforeend', String(html || ''));
+          advance();
+          return true;
+        },
+        setContent(html) {
+          assertFresh();
+          editorRoot.innerHTML = String(html || '');
+          editorRoot.__baweiTextPositions = [];
+          editorRoot.__baweiSelectedText = null;
+          advance();
+          return true;
+        },
+        setTextSelection(range) {
+          assertFresh();
+          const row = (editorRoot.__baweiTextPositions || []).find(
+            (item) => range.from >= item.from && range.to <= item.to
+          );
+          editorRoot.__baweiSelectedText = row
+            ? {
+                node: row.node,
+                text: row.text.slice(range.from - row.from, range.to - row.from)
+              }
+            : null;
+          advance();
+          return !!row;
+        },
+        uploadImage(file) {
+          assertFresh();
+          if (!(file instanceof File)) throw new Error('uploadImage requires File');
+          editorRoot.__baweiImageSequence = Number(editorRoot.__baweiImageSequence || 0) + 1;
+          const image = document.createElement('img');
+          image.alt = file.name || 'e2e';
+          image.src =
+            'https://oscimg.oschina.net/bawei-e2e-upload-' +
+            editorRoot.__baweiImageSequence +
+            '.png';
+          // 贴近真实 OSCHINA：上传是异步完成的，不能假设完成时仍保留调用前选区。
+          editorRoot.__baweiSelectedText = null;
+          advance();
+          setTimeout(() => {
+            editorRoot.appendChild(image);
+          }, 250);
+          return true;
+        }
+        };
+      },
+      getHTML() {
+        return editorRoot.innerHTML;
+      }
+    };
     document.querySelector('#oschina-draft')?.addEventListener('click', () => {
+      try { sessionStorage.setItem('__bawei_e2e_oschina_final_html', editorRoot.innerHTML); } catch {}
       try { document.querySelector('#oschina-status').textContent = '保存成功'; } catch {}
       location.href = DETAIL_URL;
     });
@@ -407,6 +535,7 @@ function buildOschinaWriteHtml({ action, title, detailUrl }) {
       try { document.querySelector('#oschina-status').textContent = '发布中'; } catch {}
     });
     document.querySelector('#oschina-confirm')?.addEventListener('click', () => {
+      try { sessionStorage.setItem('__bawei_e2e_oschina_final_html', editorRoot.innerHTML); } catch {}
       try { document.querySelector('#oschina-status').textContent = '发布成功'; } catch {}
       location.href = DETAIL_URL;
     });
@@ -501,12 +630,32 @@ function buildSspaiWriteHtml({ title }) {
 function buildBaijiahaoEditorHtml({ title }) {
   const body = `
     <h1>百家号编辑器（E2E）</h1>
-    <div contenteditable="true" style="min-height:28px;border:1px solid #ddd;border-radius:8px;padding:8px;margin:12px 0;">标题区</div>
+    <div data-testid="news-title-input" style="margin:12px 0;">
+      <div contenteditable="true" style="min-height:28px;border:1px solid #ddd;border-radius:8px;padding:8px;">标题区</div>
+    </div>
+    <button type="button" class="edui-for-insertimage btn"><span class="edui-button-body" onclick="window.__baweiOpenImageModal?.(this)">插图</span></button>
+    <input id="bjh-video-upload" type="file" accept="video/*" style="display:none;" />
+    <div id="bjh-image-modal" class="cheetah-ui-pro-image-modal" style="display:none;width:200px;height:80px;">
+      <input id="bjh-inline-upload" type="file" accept="image/png,image/jpeg" style="display:none;" />
+      <span>本地上传</span>
+    </div>
     <iframe id="ueditor_0" style="width:100%; height:240px; border:1px solid #ddd; border-radius:8px;" srcdoc="${iframeEditorSrcdoc().replaceAll(
       '"',
       '&quot;'
     )}"></iframe>
     <textarea id="abstract" placeholder="摘要" style="width:100%;height:40px;margin-top:10px;"></textarea>
+    <div class="form-item-cover box">
+      <span>设置封面</span><span>单图</span><span>三图</span>
+      <button id="bjh-cover-select" type="button">选择封面</button>
+      <span id="bjh-cover-applied" style="display:none;">编辑 更换</span>
+    </div>
+    <div class="cheetah-modal" role="dialog" style="display:none;width:200px;height:80px;">其他隐藏弹窗</div>
+    <div id="bjh-cover-modal" class="cheetah-modal" role="dialog" style="display:none;width:600px;height:400px;">
+      <div role="tab">正文/本地上传(1)</div><div role="tab">AI封图</div>
+      <div>封面预览 (3:2)</div>
+      <button id="bjh-cover-cancel" type="button">取消</button>
+      <button id="bjh-cover-confirm" type="button">确定 (1)</button>
+    </div>
     <div class="bar" style="justify-content:space-between;">
       <button id="bjh-draft" class="btn">存草稿</button>
       <button id="bjh-publish" class="btn primary" style="margin-top:60px;">发布</button>
@@ -514,11 +663,119 @@ function buildBaijiahaoEditorHtml({ title }) {
     <div id="bjh-status" class="hint"></div>
   `;
   const script = `
+    try { sessionStorage.setItem('__bawei_e2e_baijiahao_publish_click_count', '0'); } catch {}
+    window.__baweiOpenImageModal = (target) => {
+      if (!target?.isConnected) return;
+      setTimeout(() => {
+        const modal = document.querySelector('#bjh-image-modal');
+        const input = document.querySelector('#bjh-inline-upload');
+        const editorBody = document.querySelector('#ueditor_0')?.contentDocument?.body;
+        if (editorBody && !editorBody.querySelector('img')) {
+          for (let index = 0; index < 3; index += 1) {
+            const restored = document.createElement('img');
+            restored.src = 'https://pic.rmb.bdstatic.com/bawei-e2e-restored-' + index + '.png';
+            editorBody.appendChild(restored);
+          }
+        }
+        if (modal) modal.style.display = 'block';
+        if (input) input.dataset.active = '1';
+      }, 120);
+    };
+    window.editor = {
+      focus: () => {
+        const current = document.querySelector('.edui-for-insertimage .edui-button-body');
+        if (current) current.replaceWith(current.cloneNode(true));
+      },
+      setContent: (html) => {
+        const editorBody = document.querySelector('#ueditor_0')?.contentDocument?.body;
+        if (editorBody) editorBody.innerHTML = html;
+      },
+      sync: () => {}
+    };
+    const bjhTitle = document.querySelector('[data-testid="news-title-input"] [contenteditable="true"]');
+    if (bjhTitle) {
+      let lexicalState = {
+        root: {
+          children: [{
+            children: [{
+              detail: 0,
+              format: 0,
+              mode: 'normal',
+              style: '',
+              text: bjhTitle.textContent || '',
+              type: 'text',
+              version: 1
+            }],
+            direction: null,
+            format: '',
+            indent: 0,
+            type: 'paragraph',
+            version: 1
+          }],
+          direction: null,
+          format: '',
+          indent: 0,
+          type: 'root',
+          version: 1
+        }
+      };
+      bjhTitle.__lexicalEditor = {
+        getEditorState: () => ({ toJSON: () => structuredClone(lexicalState) }),
+        parseEditorState: (serialized) => JSON.parse(serialized),
+        setEditorState: (nextState) => {
+          lexicalState = nextState;
+          bjhTitle.textContent = lexicalState?.root?.children?.[0]?.children?.[0]?.text || '';
+        }
+      };
+    }
+    document.querySelector('#bjh-inline-upload')?.addEventListener('change', (event) => {
+      const input = event.currentTarget;
+      if (input?.dataset?.active !== '1') return;
+      let editorBody = document.querySelector('#ueditor_0')?.contentDocument?.body;
+      if (!editorBody) return;
+      editorBody.querySelectorAll('img').forEach((image) => image.remove());
+      const replacementBody = document.createElement('body');
+      editorBody.replaceWith(replacementBody);
+      editorBody = replacementBody;
+      const fileCount = Math.max(1, Number(input.files?.length || 0));
+      for (let index = 0; index < fileCount; index += 1) {
+        editorBody.__baweiImageSequence = Number(editorBody.__baweiImageSequence || 0) + 1;
+        const image = document.createElement('img');
+        image.src = 'https://pic.rmb.bdstatic.com/bawei-e2e-upload-' + editorBody.__baweiImageSequence + '.png';
+        image.alt = 'e2e';
+        editorBody.appendChild(image);
+      }
+      input.dataset.active = '0';
+      const modal = document.querySelector('#bjh-image-modal');
+      if (modal) modal.style.display = 'none';
+    });
+    document.querySelector('#bjh-cover-select')?.addEventListener('click', () => {
+      const modal = document.querySelector('#bjh-cover-modal');
+      if (modal) modal.style.display = 'block';
+    });
+    document.querySelector('#bjh-cover-confirm')?.addEventListener('click', () => {
+      const modal = document.querySelector('#bjh-cover-modal');
+      const select = document.querySelector('#bjh-cover-select');
+      const applied = document.querySelector('#bjh-cover-applied');
+      if (modal) modal.style.display = 'none';
+      if (select) select.style.display = 'none';
+      if (applied) applied.style.display = 'inline';
+    });
     document.querySelector('#bjh-draft')?.addEventListener('click', () => {
       try { document.querySelector('#bjh-status').textContent = '已保存'; } catch {}
       document.body.append(' 已保存');
     });
     document.querySelector('#bjh-publish')?.addEventListener('click', () => {
+      const publishClickCount = Number(
+        sessionStorage.getItem('__bawei_e2e_baijiahao_publish_click_count') || 0
+      ) + 1;
+      try {
+        sessionStorage.setItem(
+          '__bawei_e2e_baijiahao_publish_click_count',
+          String(publishClickCount)
+        );
+      } catch {}
+      window.__baweiPublishClickCount = publishClickCount;
       try { document.querySelector('#bjh-status').textContent = '发布成功'; } catch {}
       document.body.append(' 发布成功');
     });
@@ -567,7 +824,23 @@ function buildToutiaoEditorHtml({ title }) {
 
   const script = `
     ${imageHandlersScript('.ProseMirror')}
+    document.querySelector('.ProseMirror')?.addEventListener('click', (event) => {
+      const root = event.currentTarget;
+      const selection = window.getSelection();
+      if (!selection || !root) return;
+      const range = document.createRange();
+      range.selectNodeContents(root);
+      range.collapse(true);
+      selection.removeAllRanges();
+      selection.addRange(range);
+    });
     document.querySelector('button')?.addEventListener('click', () => {
+      try {
+        sessionStorage.setItem(
+          '__bawei_e2e_toutiao_final_html',
+          document.querySelector('.ProseMirror')?.innerHTML || ''
+        );
+      } catch {}
       document.body.append(' 发布成功');
     });
   `;
@@ -598,22 +871,41 @@ function buildFeishuFolderHtml({ title, docxUrl }) {
 
 function buildFeishuDocxHtml({ title, runId }) {
   const body = `
-    <h1 class="page-block-title-empty" contenteditable="true">${title}</h1>
+    <h1 class="page-block-content page-block-title-empty" contenteditable="true">${title}</h1>
     <div class="note-title__time">已经保存到云端</div>
-    <div class="zone-container text-editor editor" contenteditable="true" style="min-height:220px;"></div>
+    <button id="feishu-share" class="btn">分享</button>
+    <div id="feishu-share-panel" class="box" style="display:none;">
+      <label><input type="checkbox" role="switch" aria-checked="true" checked />互联网上获得链接的任何人可阅读</label>
+    </div>
+    <div class="bear-web-x-container" style="max-height:360px;overflow:auto;">
+      <div class="page-block-children">
+        <div class="block docx-text-block" data-block-id="e2e-body-${runId}">
+          <div class="zone-container text-editor editor" contenteditable="true" style="min-height:220px;"></div>
+        </div>
+      </div>
+    </div>
   `;
   const script = `
-    ${imageHandlersScript('.zone-container.text-editor')}
+    ${imageHandlersScript(
+      '.page-block-children .block.docx-text-block .zone-container.text-editor',
+      'https://sf3-scmcdn2-cn.feishucdn.com/bawei-e2e-upload-'
+    )}
+    document.querySelector('#feishu-share')?.addEventListener('click', () => {
+      const panel = document.querySelector('#feishu-share-panel');
+      if (panel) panel.style.display = 'block';
+    });
     (function(){
       const key = ${JSON.stringify(`__bawei_e2e_feishu_doc_${runId || 'unknown'}`)};
-      const editor = document.querySelector('.zone-container.text-editor');
+      const editor = document.querySelector(
+        '.page-block-children .block.docx-text-block .zone-container.text-editor'
+      );
       if (!editor) return;
       try {
         const saved = sessionStorage.getItem(key) || '';
-        if (saved) editor.textContent = saved;
+        if (saved) editor.innerHTML = saved;
       } catch {}
       const save = () => {
-        try { sessionStorage.setItem(key, String(editor.textContent || '')); } catch {}
+        try { sessionStorage.setItem(key, String(editor.innerHTML || '')); } catch {}
       };
       try { editor.addEventListener('input', save); } catch {}
       try {
@@ -662,7 +954,9 @@ async function startJobAndWaitChannelTab(context, wechatPage, { channelId, actio
     sel.value = value;
     sel.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
   }, openFocus);
-  await wechatPage.check(`input[name="bawei_v2_action"][value="${action === 'not_logged_in' ? 'publish' : action}"]`);
+  await wechatPage.check(
+    `input[name="bawei_v2_action"][value="${action === 'not_logged_in' ? 'publish' : action}"]`
+  );
   await setChannelCheckboxes(wechatPage, channelId);
 
   const pagePromise = context.waitForEvent('page', { timeout: 15_000 });
@@ -670,7 +964,9 @@ async function startJobAndWaitChannelTab(context, wechatPage, { channelId, actio
   const channelPage = await pagePromise;
   // chrome.tabs.create 打开的页面可能在 Playwright attach 之前就已开始导航，导致 context.route 未能接管首个 document 请求；
   // 这里用 Playwright 主动再跳转一次，确保进入我们的离线 mock 页面。
-  await gotoWithRetry(channelPage, CHANNEL_ENTRY_URLS[channelId]);
+  // 使用唯一查询参数强制产生一次新 document 导航；对刚由 chrome.tabs.create 打开的相同 URL
+  // 再次 page.goto 可能被 Chromium 当作无须重新取文档，导致首个未被接管的真实页面残留。
+  await gotoWithRetry(channelPage, e2eFixtureUrl(CHANNEL_ENTRY_URLS[channelId]));
 
   // 切换诊断聚焦到当前渠道（不影响后台打开 tab 的 active）
   await wechatPage.evaluate((value) => {
@@ -697,6 +993,43 @@ async function readChannelBadge(wechatPage, channelId) {
   }, channelId);
 }
 
+async function readChannelRuntimeState(wechatPage, channelId) {
+  return await wechatPage.evaluate((id) => {
+    const node = document.querySelector('#bawei-v2-runtime-state');
+    if (!node?.textContent) return null;
+    try {
+      const mirror = JSON.parse(node.textContent);
+      return mirror?.state?.[id] || null;
+    } catch {
+      return null;
+    }
+  }, channelId);
+}
+
+async function readStoredChannelRuntimeState(context, wechatPage, channelId) {
+  const jobId = await wechatPage.evaluate(() => {
+    const node = document.querySelector('#bawei-v2-runtime-state');
+    if (!node?.textContent) return '';
+    try {
+      return String(JSON.parse(node.textContent)?.currentJobId || '');
+    } catch {
+      return '';
+    }
+  });
+  if (!jobId) return null;
+
+  const worker =
+    context.serviceWorkers()[0] ||
+    (await context.waitForEvent('serviceworker', { timeout: 15_000 }));
+  return await worker.evaluate(
+    async ({ key, id }) => {
+      const result = await chrome.storage.local.get(key);
+      return result?.[key]?.[id] || null;
+    },
+    { key: `bawei_v2_state_${jobId}`, id: channelId }
+  );
+}
+
 async function clickChannelBadge(wechatPage, channelId) {
   await wechatPage.evaluate((id) => {
     const cb = document.querySelector(`#bawei-v2-run-${id}`);
@@ -716,7 +1049,9 @@ async function waitForBadgeText(wechatPage, channelId, wantText, timeoutMs) {
     await wechatPage.waitForTimeout(350);
   }
   const last = await readChannelBadge(wechatPage, channelId);
-  throw new Error(`等待渠道状态超时：channel=${channelId} want=${wantText} last=${JSON.stringify(last)}`);
+  throw new Error(
+    `等待渠道状态超时：channel=${channelId} want=${wantText} last=${JSON.stringify(last)}`
+  );
 }
 
 async function waitForDiagnosisContains(wechatPage, text, timeoutMs) {
@@ -733,7 +1068,11 @@ async function waitForDiagnosisContains(wechatPage, text, timeoutMs) {
 
 async function main() {
   const distDir = abs('dist');
-  const profileDir = abs('tmp/pw-profile-v3-e2e');
+  const profileRoot = abs('tmp');
+  fs.mkdirSync(profileRoot, { recursive: true });
+  // 每次使用全新 profile，避免上一次真实站点导航遗留的 Service Worker/HTTP 缓存
+  // 在 Playwright 接管新标签页之前抢先响应，破坏离线夹具的确定性。
+  const profileDir = fs.mkdtempSync(path.join(profileRoot, 'pw-profile-v3-e2e-'));
 
   if (!fs.existsSync(path.join(distDir, 'manifest.json'))) {
     throw new Error(`未找到扩展产物：${path.join(distDir, 'manifest.json')}（请先 npm run build）`);
@@ -746,732 +1085,1109 @@ async function main() {
   const context = await chromium.launchPersistentContext(profileDir, {
     headless: false,
     locale: 'zh-CN',
+    // 站点 Service Worker 可能直接返回缓存页面，绕过 context.route 的离线夹具。
+    // 阻止其接管，确保每个渠道场景都只由下面的显式 mock 路由提供。
+    serviceWorkers: 'block',
     args: [
       `--disable-extensions-except=${distDir}`,
       `--load-extension=${distDir}`,
       '--no-first-run',
-      '--no-default-browser-check',
-    ],
+      '--no-default-browser-check'
+    ]
   });
 
-  await context.route(/https?:\/\/.*$/i, async (route) => {
-    const req = route.request();
-    const url = req.url();
-    const method = req.method();
+  try {
+    await context.route(/https?:\/\/.*$/i, async (route) => {
+      const req = route.request();
+      const url = req.url();
+      const method = req.method();
 
-    // Ignore non-GET/POST requests in our mock world.
-    if (method !== 'GET' && method !== 'POST') {
-      await route.fulfill({ status: 204, body: '' });
-      return;
-    }
-
-    let u;
-    try {
-      u = new URL(url);
-    } catch {
-      await route.fulfill({ status: 404, body: 'bad url' });
-      return;
-    }
-
-    // 1) Mock local Markdown assets and remote image CDNs.
-    if (u.hostname === '127.0.0.1' && u.pathname.startsWith('/bawei-e2e-assets/')) {
-      if (currentRun && url.includes(currentRun.runId) && req.resourceType() === 'fetch') {
-        serviceWorkerImageFetchCount += 1;
-      }
-      await route.fulfill({
-        status: 200,
-        headers: { 'content-type': 'image/png' },
-        body: PNG_1x1,
-      });
-      return;
-    }
-
-    if (u.hostname.endsWith('.qpic.cn') || u.hostname.endsWith('.qlogo.cn')) {
-      if (currentRun && url.includes(currentRun.runId) && req.resourceType() === 'fetch') {
-        serviceWorkerImageFetchCount += 1;
-      }
-      await route.fulfill({
-        status: 200,
-        headers: { 'content-type': 'image/png' },
-        body: PNG_1x1,
-      });
-      return;
-    }
-
-    // Mock the remote URL produced after an editor finishes uploading a local image.
-    if (u.hostname === 'img-blog.csdnimg.cn' || u.hostname === 'cdnfile.sspai.com') {
-      await route.fulfill({
-        status: 200,
-        headers: { 'content-type': 'image/png' },
-        body: PNG_1x1,
-      });
-      return;
-    }
-
-    // 1.5) Track proxy usage for image fetch fallback.
-    if (u.hostname === 'read.useai.online' && u.pathname.startsWith('/api/image-proxy')) {
-      if (currentRun && url.includes(currentRun.runId) && req.resourceType() === 'fetch') {
-        proxyFetchCount += 1;
-      }
-      await route.fulfill({
-        status: 502,
-        headers: { 'content-type': 'application/json; charset=utf-8' },
-        body: JSON.stringify({ error: 'proxy disabled in v3 e2e mock' }),
-      });
-      return;
-    }
-
-    // 2) Mock WeChat article.
-    if (u.hostname === 'mp.weixin.qq.com' && u.pathname.startsWith('/s/')) {
-      const html = currentRun
-        ? buildWechatHtml({ title: currentRun.title, imgA: currentRun.imgA, imgB: currentRun.imgB })
-        : buildWechatHtml({
-            title: 'E2E 文章',
-            imgA: 'https://mmbiz.qpic.cn/mmbiz_png/bawei_e2e_dummy_a/0',
-            imgB: 'https://mmbiz.qpic.cn/mmbiz_png/bawei_e2e_dummy_b/0',
-          });
-      await route.fulfill({ status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: html });
-      return;
-    }
-
-    // 3) Per-channel mock pages & APIs.
-    if (!currentRun) {
-      await route.fulfill({ status: 404, headers: { 'content-type': 'text/plain; charset=utf-8' }, body: 'no run' });
-      return;
-    }
-
-    const { channelId, action, title, sourceUrl, runId } = currentRun;
-    const token12 = title.replace(/\s+/g, ' ').trim().slice(0, 12);
-
-    // CSDN
-    if (u.hostname === 'mp.csdn.net') {
-      if (u.pathname.startsWith('/mp_blog/creation/editor')) {
-        if (action === 'not_logged_in') {
-          await route.fulfill({ status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: buildLoginHtml() });
-          return;
-        }
-        const detailUrl = `https://blog.csdn.net/e2e/article/details/${runId}`;
-        await route.fulfill({
-          status: 200,
-          headers: { 'content-type': 'text/html; charset=utf-8' },
-          body: buildCsdnEditorHtml({ action, title, sourceUrl, detailUrl }),
-        });
-        return;
-      }
-      if (u.pathname.startsWith('/mp_blog/manage/article')) {
-        const detailUrl = `https://blog.csdn.net/e2e/article/details/${runId}`;
-        await route.fulfill({
-          status: 200,
-          headers: { 'content-type': 'text/html; charset=utf-8' },
-          body: buildCsdnManageHtml({ title, token: token12, detailUrl }),
-        });
-        return;
-      }
-    }
-    if (u.hostname === 'blog.csdn.net') {
-      const html = buildDetailHtml({ title, sourceUrl });
-      await route.fulfill({ status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: html });
-      return;
-    }
-
-    // Tencent Cloud Dev
-    if (u.hostname === 'cloud.tencent.com') {
-      if (u.pathname.startsWith('/developer/article/write')) {
-        if (action === 'not_logged_in') {
-          await route.fulfill({ status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: buildLoginHtml() });
-          return;
-        }
-        const detailUrl = `https://cloud.tencent.com/developer/article/${runId}`;
-        await route.fulfill({
-          status: 200,
-          headers: { 'content-type': 'text/html; charset=utf-8' },
-          body: buildTencentEditorHtml({ action, title, sourceUrl, detailUrl }),
-        });
-        return;
-      }
-
-      if (u.pathname.startsWith('/developer/creator/article')) {
-        const detailUrl = `https://cloud.tencent.com/developer/article/${runId}`;
-        await route.fulfill({
-          status: 200,
-          headers: { 'content-type': 'text/html; charset=utf-8' },
-          body: buildTencentListHtml({ title, token: token12, detailUrl }),
-        });
-        return;
-      }
-
-      if (u.pathname.startsWith('/developer/article/') && !u.pathname.startsWith('/developer/article/write')) {
-        await route.fulfill({
-          status: 200,
-          headers: { 'content-type': 'text/html; charset=utf-8' },
-          body: buildDetailHtml({ title, sourceUrl }),
-        });
-        return;
-      }
-
-      if (u.pathname === '/' && u.searchParams.get('action') === 'CreateArticle') {
+      // Ignore non-GET/POST requests in our mock world.
+      if (method !== 'GET' && method !== 'POST') {
         await route.fulfill({ status: 204, body: '' });
         return;
       }
-      if (u.pathname === '/article' && u.searchParams.get('action') === 'CreateArticle') {
-        await route.fulfill({ status: 204, body: '' });
+
+      let u;
+      try {
+        u = new URL(url);
+      } catch {
+        await route.fulfill({ status: 404, body: 'bad url' });
         return;
       }
-    }
 
-    // CNBlogs
-    if (u.hostname === 'i.cnblogs.com') {
-      if (u.pathname.startsWith('/posts/edit')) {
-        if (action === 'not_logged_in') {
-          await route.fulfill({ status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: buildLoginHtml() });
-          return;
+      // 1) Mock local Markdown assets and remote image CDNs.
+      if (u.hostname === '127.0.0.1' && u.pathname.startsWith('/bawei-e2e-assets/')) {
+        if (currentRun && url.includes(currentRun.runId) && req.resourceType() === 'fetch') {
+          serviceWorkerImageFetchCount += 1;
         }
-        const detailUrl = `https://www.cnblogs.com/e2e/p/${runId}.html`;
         await route.fulfill({
           status: 200,
-          headers: { 'content-type': 'text/html; charset=utf-8' },
-          body: buildCnblogsEditorHtml({ action, title, detailUrl }),
+          headers: { 'content-type': 'image/png' },
+          body: PNG_1x1
         });
         return;
       }
-      if (u.pathname.startsWith('/posts')) {
-        const detailUrl = `https://www.cnblogs.com/e2e/p/${runId}.html`;
-        await route.fulfill({
-          status: 200,
-          headers: { 'content-type': 'text/html; charset=utf-8' },
-          body: buildCnblogsListHtml({ title, detailUrl }),
-        });
-        return;
-      }
-    }
-    if (u.hostname === 'www.cnblogs.com') {
-      await route.fulfill({
-        status: 200,
-        headers: { 'content-type': 'text/html; charset=utf-8' },
-        body: buildDetailHtml({ title, sourceUrl }),
-      });
-      return;
-    }
 
-    // OSCHINA
-    if (u.hostname === 'www.oschina.net' && u.pathname.startsWith('/blog/write')) {
-      if (action === 'not_logged_in') {
-        await route.fulfill({ status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: buildLoginHtml() });
-        return;
-      }
-      await route.fulfill({ status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: buildOschinaLandingHtml() });
-      return;
-    }
-    if (u.hostname === 'my.oschina.net') {
-      if (u.pathname.includes('/blog/write')) {
-        if (action === 'not_logged_in') {
-          await route.fulfill({ status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: buildLoginHtml() });
-          return;
+      if (u.hostname.endsWith('.qpic.cn') || u.hostname.endsWith('.qlogo.cn')) {
+        if (currentRun && url.includes(currentRun.runId) && req.resourceType() === 'fetch') {
+          serviceWorkerImageFetchCount += 1;
         }
-        const detailUrl = `https://my.oschina.net/u/e2e/blog/${runId}`;
         await route.fulfill({
           status: 200,
-          headers: { 'content-type': 'text/html; charset=utf-8' },
-          body: buildOschinaWriteHtml({ action, title, sourceUrl, detailUrl }),
+          headers: { 'content-type': 'image/png' },
+          body: PNG_1x1
         });
         return;
       }
-      await route.fulfill({
-        status: 200,
-        headers: { 'content-type': 'text/html; charset=utf-8' },
-        body: buildDetailHtml({ title, sourceUrl }),
-      });
-      return;
-    }
 
-    // WoShiPM
-    if (u.hostname === 'www.woshipm.com') {
-      if (u.pathname.startsWith('/writing')) {
-        if (action === 'not_logged_in') {
-          await route.fulfill({ status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: buildLoginHtml() });
-          return;
-        }
-        const detailUrl = `https://www.woshipm.com/post/${runId}`;
+      // Mock the remote URL produced after an editor finishes uploading a local image.
+      if (u.hostname === 'img-blog.csdnimg.cn' || u.hostname === 'cdnfile.sspai.com') {
         await route.fulfill({
           status: 200,
-          headers: { 'content-type': 'text/html; charset=utf-8' },
-          body: buildWoshipmWriteHtml({ action, title, detailUrl }),
+          headers: { 'content-type': 'image/png' },
+          body: PNG_1x1
         });
         return;
       }
-      await route.fulfill({
-        status: 200,
-        headers: { 'content-type': 'text/html; charset=utf-8' },
-        body: buildDetailHtml({ title, sourceUrl }),
-      });
-      return;
-    }
 
-    // MoWen
-    if (u.hostname === 'note.mowen.cn') {
-      if (u.pathname === '/api/note/wxa/v1/note/show') {
+      if (u.hostname === 'upload.qiniup.com') {
+        currentRun.sspaiDirectUploadCount = Number(currentRun.sspaiDirectUploadCount || 0) + 1;
         await route.fulfill({
           status: 200,
           headers: { 'content-type': 'application/json; charset=utf-8' },
           body: JSON.stringify({
-            detail: {
-              noteBase: {
-                title,
-                content: `<p>${title}</p><p>原文链接：<a href="${sourceUrl}">${sourceUrl}</a></p><img uuid="e2e-image-1"><img uuid="e2e-image-2">`,
-              },
-            },
-          }),
+            hash: `e2e-hash-${currentRun.sspaiDirectUploadCount}`,
+            key: `e2e-key-${currentRun.sspaiDirectUploadCount}.png`
+          })
         });
         return;
       }
-      if (u.pathname === '/api/note/wxa/v1/note/draft') {
-        const imageCount = await req
-          .frame()
-          .evaluate(() => document.querySelectorAll('.ProseMirror img').length)
-          .catch(() => 0);
-        const content = JSON.stringify({
-          type: 'doc',
-          content: Array.from({ length: imageCount }, (_item, index) => ({
-            type: 'image',
-            attrs: { uuid: `e2e-image-${index + 1}` },
-          })),
-        });
-        await route.fulfill({
-          status: 200,
-          headers: { 'content-type': 'application/json; charset=utf-8' },
-          body: JSON.stringify({ content }),
-        });
-        return;
-      }
-      if (u.pathname.startsWith('/editor')) {
-        if (action === 'not_logged_in') {
-          await route.fulfill({ status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: buildLoginHtml() });
-          return;
+
+      // 1.5) Track proxy usage for image fetch fallback.
+      if (u.hostname === 'read.useai.online' && u.pathname.startsWith('/api/image-proxy')) {
+        if (currentRun && url.includes(currentRun.runId) && req.resourceType() === 'fetch') {
+          proxyFetchCount += 1;
         }
-        const detailUrl = `https://note.mowen.cn/detail/${runId}`;
+        await route.fulfill({
+          status: 502,
+          headers: { 'content-type': 'application/json; charset=utf-8' },
+          body: JSON.stringify({ error: 'proxy disabled in v3 e2e mock' })
+        });
+        return;
+      }
+
+      // 2) Mock WeChat article.
+      if (u.hostname === 'mp.weixin.qq.com' && u.pathname.startsWith('/s/')) {
+        const html = currentRun
+          ? buildWechatHtml({
+              title: currentRun.title,
+              imgA: currentRun.imgA,
+              imgB: currentRun.imgB
+            })
+          : buildWechatHtml({
+              title: 'E2E 文章',
+              imgA: 'https://mmbiz.qpic.cn/mmbiz_png/bawei_e2e_dummy_a/0',
+              imgB: 'https://mmbiz.qpic.cn/mmbiz_png/bawei_e2e_dummy_b/0'
+            });
         await route.fulfill({
           status: 200,
           headers: { 'content-type': 'text/html; charset=utf-8' },
-          body: buildMowenEditorHtml({ action, title, detailUrl }),
+          body: html
         });
         return;
       }
-      await route.fulfill({
-        status: 200,
-        headers: { 'content-type': 'text/html; charset=utf-8' },
-        body: buildDetailHtml({ title, sourceUrl }),
-      });
-      return;
-    }
 
-    // SSPAI (API + pages)
-    if (u.hostname === 'sspai.com') {
-      if (u.pathname.startsWith('/api/v1/matrix/editor/attachment/batch/upload')) {
-        const payload = (() => {
-          try {
-            return req.postDataJSON();
-          } catch {
-            return {};
+      // 3) Per-channel mock pages & APIs.
+      if (!currentRun) {
+        await route.fulfill({
+          status: 404,
+          headers: { 'content-type': 'text/plain; charset=utf-8' },
+          body: 'no run'
+        });
+        return;
+      }
+
+      const { channelId, action, title, sourceUrl, runId } = currentRun;
+      const token12 = title.replace(/\s+/g, ' ').trim().slice(0, 12);
+      const articleId = String(runId).match(/(\d+)$/)?.[1] || String(Date.now());
+
+      // CSDN
+      if (u.hostname === 'mp.csdn.net') {
+        if (u.pathname.startsWith('/mp_blog/creation/editor')) {
+          if (action === 'not_logged_in') {
+            await route.fulfill({
+              status: 200,
+              headers: { 'content-type': 'text/html; charset=utf-8' },
+              body: buildLoginHtml()
+            });
+            return;
           }
-        })();
-        const sourcePicture = String(payload?.pictures?.[0] || '');
-        currentRun.sspaiUploadCount = Number(currentRun.sspaiUploadCount || 0) + 1;
+          const detailUrl = `https://blog.csdn.net/e2e/article/details/${runId}`;
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'text/html; charset=utf-8' },
+            body: buildCsdnEditorHtml({ action, title, sourceUrl, detailUrl })
+          });
+          return;
+        }
+        if (u.pathname.startsWith('/mp_blog/manage/article')) {
+          const detailUrl = `https://blog.csdn.net/e2e/article/details/${runId}`;
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'text/html; charset=utf-8' },
+            body: buildCsdnManageHtml({ title, token: token12, detailUrl })
+          });
+          return;
+        }
+      }
+      if (u.hostname === 'blog.csdn.net') {
+        const html = buildDetailHtml({ title, sourceUrl });
         await route.fulfill({
           status: 200,
-          headers: { 'content-type': 'application/json; charset=utf-8' },
-          body: JSON.stringify({
+          headers: { 'content-type': 'text/html; charset=utf-8' },
+          body: html
+        });
+        return;
+      }
+
+      // Tencent Cloud Dev
+      if (u.hostname === 'cloud.tencent.com') {
+        if (u.pathname.startsWith('/developer/article/write')) {
+          if (action === 'not_logged_in') {
+            await route.fulfill({
+              status: 200,
+              headers: { 'content-type': 'text/html; charset=utf-8' },
+              body: buildLoginHtml()
+            });
+            return;
+          }
+          const detailUrl = `https://cloud.tencent.com/developer/article/${runId}`;
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'text/html; charset=utf-8' },
+            body: buildTencentEditorHtml({ action, title, sourceUrl, detailUrl })
+          });
+          return;
+        }
+
+        if (u.pathname.startsWith('/developer/creator/article')) {
+          const detailUrl = `https://cloud.tencent.com/developer/article/${runId}`;
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'text/html; charset=utf-8' },
+            body: buildTencentListHtml({ title, token: token12, detailUrl })
+          });
+          return;
+        }
+
+        if (
+          u.pathname.startsWith('/developer/article/') &&
+          !u.pathname.startsWith('/developer/article/write')
+        ) {
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'text/html; charset=utf-8' },
+            body: buildDetailHtml({ title, sourceUrl })
+          });
+          return;
+        }
+
+        if (u.pathname === '/' && u.searchParams.get('action') === 'CreateArticle') {
+          await route.fulfill({ status: 204, body: '' });
+          return;
+        }
+        if (u.pathname === '/article' && u.searchParams.get('action') === 'CreateArticle') {
+          await route.fulfill({ status: 204, body: '' });
+          return;
+        }
+      }
+
+      // CNBlogs
+      if (u.hostname === 'i.cnblogs.com') {
+        if (u.pathname.startsWith('/posts/edit')) {
+          if (action === 'not_logged_in') {
+            await route.fulfill({
+              status: 200,
+              headers: { 'content-type': 'text/html; charset=utf-8' },
+              body: buildLoginHtml()
+            });
+            return;
+          }
+          const detailUrl = `https://www.cnblogs.com/e2e/p/${runId}.html`;
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'text/html; charset=utf-8' },
+            body: buildCnblogsEditorHtml({ action, title, detailUrl })
+          });
+          return;
+        }
+        if (u.pathname.startsWith('/posts')) {
+          const detailUrl = `https://www.cnblogs.com/e2e/p/${runId}.html`;
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'text/html; charset=utf-8' },
+            body: buildCnblogsListHtml({ title, detailUrl })
+          });
+          return;
+        }
+      }
+      if (u.hostname === 'www.cnblogs.com') {
+        await route.fulfill({
+          status: 200,
+          headers: { 'content-type': 'text/html; charset=utf-8' },
+          body: buildDetailHtml({ title, sourceUrl })
+        });
+        return;
+      }
+
+      // OSCHINA
+      if (u.hostname === 'www.oschina.net' && u.pathname.startsWith('/blog/write')) {
+        if (action === 'not_logged_in') {
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'text/html; charset=utf-8' },
+            body: buildLoginHtml()
+          });
+          return;
+        }
+        await route.fulfill({
+          status: 200,
+          headers: { 'content-type': 'text/html; charset=utf-8' },
+          body: buildOschinaLandingHtml()
+        });
+        return;
+      }
+      if (u.hostname === 'my.oschina.net') {
+        if (u.pathname.includes('/blog/write') || u.pathname.includes('/blog/ai-write')) {
+          if (action === 'not_logged_in') {
+            await route.fulfill({
+              status: 200,
+              headers: { 'content-type': 'text/html; charset=utf-8' },
+              body: buildLoginHtml()
+            });
+            return;
+          }
+          const detailUrl = `https://my.oschina.net/u/e2e/blog/${runId}`;
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'text/html; charset=utf-8' },
+            body: buildOschinaWriteHtml({ action, title, sourceUrl, detailUrl })
+          });
+          return;
+        }
+        await route.fulfill({
+          status: 200,
+          headers: { 'content-type': 'text/html; charset=utf-8' },
+          body: buildDetailHtml({ title, sourceUrl })
+        });
+        return;
+      }
+
+      // WoShiPM
+      if (u.hostname === 'www.woshipm.com') {
+        if (u.pathname.startsWith('/writing')) {
+          if (action === 'not_logged_in') {
+            await route.fulfill({
+              status: 200,
+              headers: { 'content-type': 'text/html; charset=utf-8' },
+              body: buildLoginHtml()
+            });
+            return;
+          }
+          const detailUrl = `https://www.woshipm.com/it/${articleId}.html`;
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'text/html; charset=utf-8' },
+            body: buildWoshipmWriteHtml({ action, title, detailUrl })
+          });
+          return;
+        }
+        await route.fulfill({
+          status: 200,
+          headers: { 'content-type': 'text/html; charset=utf-8' },
+          body: buildDetailHtml({ title, sourceUrl })
+        });
+        return;
+      }
+
+      // MoWen
+      if (u.hostname === 'note.mowen.cn') {
+        if (u.pathname === '/api/note/wxa/v1/note/show') {
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'application/json; charset=utf-8' },
+            body: JSON.stringify({
+              detail: {
+                noteBase: {
+                  title,
+                  content: `<p>${title}</p><p>原文链接：<a href="${sourceUrl}">${sourceUrl}</a></p><img uuid="e2e-image-1"><img uuid="e2e-image-2">`
+                }
+              }
+            })
+          });
+          return;
+        }
+        if (u.pathname === '/api/note/wxa/v1/note/draft') {
+          const imageCount = await req
+            .frame()
+            .evaluate(() => document.querySelectorAll('.ProseMirror img').length)
+            .catch(() => 0);
+          const content = JSON.stringify({
+            type: 'doc',
+            content: Array.from({ length: imageCount }, (_item, index) => ({
+              type: 'image',
+              attrs: { uuid: `e2e-image-${index + 1}` }
+            }))
+          });
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'application/json; charset=utf-8' },
+            body: JSON.stringify({ content })
+          });
+          return;
+        }
+        if (u.pathname.startsWith('/editor')) {
+          if (action === 'not_logged_in') {
+            await route.fulfill({
+              status: 200,
+              headers: { 'content-type': 'text/html; charset=utf-8' },
+              body: buildLoginHtml()
+            });
+            return;
+          }
+          const detailUrl = `https://note.mowen.cn/detail/${runId}`;
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'text/html; charset=utf-8' },
+            body: buildMowenEditorHtml({ action, title, detailUrl })
+          });
+          return;
+        }
+        await route.fulfill({
+          status: 200,
+          headers: { 'content-type': 'text/html; charset=utf-8' },
+          body: buildDetailHtml({ title, sourceUrl })
+        });
+        return;
+      }
+
+      // SSPAI (API + pages)
+      if (u.hostname === 'sspai.com') {
+        if (u.pathname.startsWith('/api/v1/matrix/editor/attachment/upload/token/get')) {
+          currentRun.sspaiDirectUploadTokenCount =
+            Number(currentRun.sspaiDirectUploadTokenCount || 0) + 1;
+          const sequence = currentRun.sspaiDirectUploadTokenCount;
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'application/json; charset=utf-8' },
+            body: JSON.stringify({
+              error: 0,
+              msg: 'ok',
+              data: {
+                file_path: `https://cdnfile.sspai.com/e2e-direct-${runId}-${sequence}.png`,
+                id: sequence,
+                key: `e2e-direct-${runId}-${sequence}.png`,
+                token: `e2e-upload-token-${sequence}`
+              }
+            })
+          });
+          return;
+        }
+        if (u.pathname.startsWith('/api/v1/matrix/editor/attachment/batch/upload')) {
+          const payload = (() => {
+            try {
+              return req.postDataJSON();
+            } catch {
+              return {};
+            }
+          })();
+          const sourcePicture = String(payload?.pictures?.[0] || '');
+          currentRun.sspaiUploadCount = Number(currentRun.sspaiUploadCount || 0) + 1;
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'application/json; charset=utf-8' },
+            body: JSON.stringify({
+              error: 0,
+              msg: 'ok',
+              data: [
+                {
+                  source_url: sourcePicture,
+                  download_url: `https://cdnfile.sspai.com/e2e-${runId}-${currentRun.sspaiUploadCount}.png`,
+                  status: 2
+                }
+              ]
+            })
+          });
+          return;
+        }
+        if (u.pathname.startsWith('/api/v1/matrix/editor/article/update')) {
+          const payload = (() => {
+            try {
+              return req.postDataJSON();
+            } catch {
+              return {};
+            }
+          })();
+          currentRun.sspaiBodyLast = String(
+            payload?.body_last || payload?.body || currentRun.sspaiBodyLast || ''
+          );
+          currentRun.sspaiType = Number(payload?.type || currentRun.sspaiType || 4);
+          if (currentRun.sspaiType === 5) currentRun.sspaiReleasedAt = Date.now();
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'application/json; charset=utf-8' },
+            body: JSON.stringify({ error: 0, msg: 'ok', data: { id: 123, token: 'e2e-token' } })
+          });
+          return;
+        }
+        if (u.pathname.startsWith('/api/v1/matrix/editor/article/add')) {
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'application/json; charset=utf-8' },
+            body: JSON.stringify({ error: 0, msg: 'ok', data: { id: 123, token: 'e2e-token' } })
+          });
+          return;
+        }
+        if (u.pathname.startsWith('/api/v1/matrix/editor/article/single/info/get')) {
+          const payload = {
             error: 0,
             msg: 'ok',
-            data: [
-              {
-                source_url: sourcePicture,
-                download_url: `https://cdnfile.sspai.com/e2e-${runId}-${currentRun.sspaiUploadCount}.png`,
-                status: 2,
-              },
-            ],
-          }),
-        });
-        return;
-      }
-      if (u.pathname.startsWith('/api/v1/matrix/editor/article/update')) {
-        const payload = (() => {
-          try {
-            return req.postDataJSON();
-          } catch {
-            return {};
+            data: {
+              id: 123,
+              token: 'e2e-token',
+              type: Number(currentRun.sspaiType || 4),
+              released_at: Number(currentRun.sspaiReleasedAt || 0),
+              body: String(currentRun.sspaiBodyLast || ''),
+              body_last: String(currentRun.sspaiBodyLast || ''),
+              title,
+              title_last: title
+            }
+          };
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'application/json; charset=utf-8' },
+            body: JSON.stringify(payload)
+          });
+          return;
+        }
+        if (u.pathname.startsWith('/write')) {
+          if (action === 'not_logged_in') {
+            await route.fulfill({
+              status: 200,
+              headers: { 'content-type': 'text/html; charset=utf-8' },
+              body: buildLoginHtml()
+            });
+            return;
           }
-        })();
-        currentRun.sspaiBodyLast = String(payload?.body_last || payload?.body || currentRun.sspaiBodyLast || '');
-        currentRun.sspaiType = Number(payload?.type || currentRun.sspaiType || 4);
-        if (currentRun.sspaiType === 5) currentRun.sspaiReleasedAt = Date.now();
-        await route.fulfill({
-          status: 200,
-          headers: { 'content-type': 'application/json; charset=utf-8' },
-          body: JSON.stringify({ error: 0, msg: 'ok', data: { id: 123, token: 'e2e-token' } }),
-        });
-        return;
-      }
-      if (u.pathname.startsWith('/api/v1/matrix/editor/article/add')) {
-        await route.fulfill({
-          status: 200,
-          headers: { 'content-type': 'application/json; charset=utf-8' },
-          body: JSON.stringify({ error: 0, msg: 'ok', data: { id: 123, token: 'e2e-token' } }),
-        });
-        return;
-      }
-      if (u.pathname.startsWith('/api/v1/matrix/editor/article/single/info/get')) {
-        const payload = {
-          error: 0,
-          msg: 'ok',
-          data: {
-            id: 123,
-            token: 'e2e-token',
-            type: Number(currentRun.sspaiType || 4),
-            released_at: Number(currentRun.sspaiReleasedAt || 0),
-            body: String(currentRun.sspaiBodyLast || ''),
-            body_last: String(currentRun.sspaiBodyLast || ''),
-            title,
-            title_last: title,
-          },
-        };
-        await route.fulfill({
-          status: 200,
-          headers: { 'content-type': 'application/json; charset=utf-8' },
-          body: JSON.stringify(payload),
-        });
-        return;
-      }
-      if (u.pathname.startsWith('/write')) {
-        if (action === 'not_logged_in') {
-          await route.fulfill({ status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: buildLoginHtml() });
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'text/html; charset=utf-8' },
+            body: buildSspaiWriteHtml({ title })
+          });
           return;
         }
-        await route.fulfill({
-          status: 200,
-          headers: { 'content-type': 'text/html; charset=utf-8' },
-          body: buildSspaiWriteHtml({ title }),
-        });
-        return;
+        if (u.pathname.startsWith('/post/')) {
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'text/html; charset=utf-8' },
+            body: buildDetailHtml({ title, sourceUrl })
+          });
+          return;
+        }
       }
-      if (u.pathname.startsWith('/post/')) {
-        await route.fulfill({
-          status: 200,
-          headers: { 'content-type': 'text/html; charset=utf-8' },
-          body: buildDetailHtml({ title, sourceUrl }),
-        });
-        return;
-      }
-    }
 
-    // Baijiahao
-    if (u.hostname === 'baijiahao.baidu.com') {
-      if (u.pathname.startsWith('/builder/rc/edit')) {
-        if (action === 'not_logged_in') {
-          await route.fulfill({ status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: buildLoginHtml() });
+      // Baijiahao
+      if (u.hostname === 'baijiahao.baidu.com') {
+        if (u.pathname.startsWith('/builder/rc/edit')) {
+          if (action === 'not_logged_in') {
+            await route.fulfill({
+              status: 200,
+              headers: { 'content-type': 'text/html; charset=utf-8' },
+              body: buildLoginHtml()
+            });
+            return;
+          }
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'text/html; charset=utf-8' },
+            body: buildBaijiahaoEditorHtml({ title })
+          });
           return;
         }
+        if (u.pathname.startsWith('/builder/rc/content')) {
+          const previewUrl = `https://baijiahao.baidu.com/builder/preview/${runId}`;
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'text/html; charset=utf-8' },
+            body: buildBaijiahaoListHtml({ title, previewUrl })
+          });
+          return;
+        }
+        if (u.pathname.startsWith('/builder/preview/')) {
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'text/html; charset=utf-8' },
+            body: buildDetailHtml({
+              title,
+              sourceUrl,
+              extra: `<a href="https://baijiahao.baidu.com/s?id=${articleId}">公开文章</a>`
+            })
+          });
+          return;
+        }
+        // Any other page is treated as detail.
         await route.fulfill({
           status: 200,
           headers: { 'content-type': 'text/html; charset=utf-8' },
-          body: buildBaijiahaoEditorHtml({ title }),
+          body: buildDetailHtml({ title, sourceUrl })
         });
         return;
       }
-      if (u.pathname.startsWith('/builder/rc/content')) {
-        const previewUrl = `https://baijiahao.baidu.com/builder/preview/${runId}`;
+
+      // Toutiao
+      if (u.hostname === 'mp.toutiao.com') {
+        if (u.pathname.startsWith('/profile_v4/graphic/publish')) {
+          if (action === 'not_logged_in') {
+            await route.fulfill({
+              status: 200,
+              headers: { 'content-type': 'text/html; charset=utf-8' },
+              body: buildLoginHtml()
+            });
+            return;
+          }
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'text/html; charset=utf-8' },
+            body: buildToutiaoEditorHtml({ title })
+          });
+          return;
+        }
+        if (u.pathname.startsWith('/profile_v4/manage/content/all')) {
+          const detailUrl = `https://www.toutiao.com/item/${runId}/`;
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'text/html; charset=utf-8' },
+            body: buildToutiaoListHtml({ title, detailUrl })
+          });
+          return;
+        }
+      }
+      if (u.hostname === 'www.toutiao.com' && u.pathname.startsWith('/item/')) {
         await route.fulfill({
           status: 200,
           headers: { 'content-type': 'text/html; charset=utf-8' },
-          body: buildBaijiahaoListHtml({ title, previewUrl }),
+          body: buildDetailHtml({ title, sourceUrl })
         });
         return;
       }
-      if (u.pathname.startsWith('/builder/preview/')) {
-        await route.fulfill({
-          status: 200,
-          headers: { 'content-type': 'text/html; charset=utf-8' },
-          body: buildDetailHtml({ title, sourceUrl }),
-        });
-        return;
+
+      // Feishu docs
+      if (u.hostname === 'wuxinxuexi.feishu.cn') {
+        if (u.pathname.startsWith('/space/api/explorer/v2/create/object/')) {
+          const payload = {
+            code: 0,
+            msg: 'ok',
+            data: {
+              obj_token: `e2e_doc_${runId}`
+            }
+          };
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'application/json; charset=utf-8' },
+            body: JSON.stringify(payload)
+          });
+          return;
+        }
+        if (u.pathname.startsWith('/drive/folder/')) {
+          if (action === 'not_logged_in') {
+            await route.fulfill({
+              status: 200,
+              headers: { 'content-type': 'text/html; charset=utf-8' },
+              body: buildLoginHtml()
+            });
+            return;
+          }
+          const docxUrl = `https://wuxinxuexi.feishu.cn/docx/e2e_doc_${runId}`;
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'text/html; charset=utf-8' },
+            body: buildFeishuFolderHtml({ title, docxUrl })
+          });
+          return;
+        }
+        if (u.pathname.startsWith('/docx/')) {
+          if (action === 'not_logged_in') {
+            await route.fulfill({
+              status: 200,
+              headers: { 'content-type': 'text/html; charset=utf-8' },
+              body: buildLoginHtml()
+            });
+            return;
+          }
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'text/html; charset=utf-8' },
+            body: buildFeishuDocxHtml({ title, runId })
+          });
+          return;
+        }
       }
-      // Any other page is treated as detail.
+
+      // Fallback: empty page (avoid external traffic).
       await route.fulfill({
         status: 200,
         headers: { 'content-type': 'text/html; charset=utf-8' },
-        body: buildDetailHtml({ title, sourceUrl }),
+        body: pageTemplate({ title: 'E2E', body: '<div />' })
       });
-      return;
-    }
-
-    // Toutiao
-    if (u.hostname === 'mp.toutiao.com') {
-      if (u.pathname.startsWith('/profile_v4/graphic/publish')) {
-        if (action === 'not_logged_in') {
-          await route.fulfill({ status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: buildLoginHtml() });
-          return;
-        }
-        await route.fulfill({
-          status: 200,
-          headers: { 'content-type': 'text/html; charset=utf-8' },
-          body: buildToutiaoEditorHtml({ title }),
-        });
-        return;
-      }
-      if (u.pathname.startsWith('/profile_v4/manage/content/all')) {
-        const detailUrl = `https://www.toutiao.com/item/${runId}/`;
-        await route.fulfill({
-          status: 200,
-          headers: { 'content-type': 'text/html; charset=utf-8' },
-          body: buildToutiaoListHtml({ title, detailUrl }),
-        });
-        return;
-      }
-    }
-    if (u.hostname === 'www.toutiao.com' && u.pathname.startsWith('/item/')) {
-      await route.fulfill({
-        status: 200,
-        headers: { 'content-type': 'text/html; charset=utf-8' },
-        body: buildDetailHtml({ title, sourceUrl }),
-      });
-      return;
-    }
-
-    // Feishu docs
-    if (u.hostname === 'wuxinxuexi.feishu.cn') {
-      if (u.pathname.startsWith('/space/api/explorer/v2/create/object/')) {
-        const payload = {
-          code: 0,
-          msg: 'ok',
-          data: {
-            obj_token: `e2e_doc_${runId}`,
-          },
-        };
-        await route.fulfill({
-          status: 200,
-          headers: { 'content-type': 'application/json; charset=utf-8' },
-          body: JSON.stringify(payload),
-        });
-        return;
-      }
-      if (u.pathname.startsWith('/drive/folder/')) {
-        if (action === 'not_logged_in') {
-          await route.fulfill({ status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: buildLoginHtml() });
-          return;
-        }
-        const docxUrl = `https://wuxinxuexi.feishu.cn/docx/e2e_doc_${runId}`;
-        await route.fulfill({
-          status: 200,
-          headers: { 'content-type': 'text/html; charset=utf-8' },
-          body: buildFeishuFolderHtml({ title, docxUrl }),
-        });
-        return;
-      }
-      if (u.pathname.startsWith('/docx/')) {
-        if (action === 'not_logged_in') {
-          await route.fulfill({ status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: buildLoginHtml() });
-          return;
-        }
-        await route.fulfill({
-          status: 200,
-          headers: { 'content-type': 'text/html; charset=utf-8' },
-          body: buildFeishuDocxHtml({ title, runId }),
-        });
-        return;
-      }
-    }
-
-    // Fallback: empty page (avoid external traffic).
-    await route.fulfill({ status: 200, headers: { 'content-type': 'text/html; charset=utf-8' }, body: pageTemplate({ title: 'E2E', body: '<div />' }) });
-  });
-
-  async function runOne(channelId, action) {
-    currentRun = null;
-    serviceWorkerImageFetchCount = 0;
-    proxyFetchCount = 0;
-
-    const runId = `${channelId}_${action}_${Date.now()}`;
-    const title = `E2E ${channelId} ${action} ${runId}`;
-    const wechatUrl = `https://mp.weixin.qq.com/s/${runId}`;
-    const useLocalSspaiImages = channelId === 'sspai' && action === 'draft';
-    currentRun = {
-      runId,
-      channelId,
-      action,
-      title,
-      sourceUrl: wechatUrl,
-      useLocalSspaiImages,
-      imgA: useLocalSspaiImages
-        ? `http://127.0.0.1:43119/bawei-e2e-assets/${runId}-a.png`
-        : `https://mmbiz.qpic.cn/mmbiz_png/bawei_e2e_${runId}_a/0?wx_fmt=png`,
-      imgB: useLocalSspaiImages
-        ? `http://127.0.0.1:43119/bawei-e2e-assets/${runId}-b.png`
-        : `https://mmbiz.qpic.cn/mmbiz_png/bawei_e2e_${runId}_b/0?wx_fmt=png`,
-    };
-
-    console.log(`\n=== [V3 E2E] channel=${channelId} action=${action} ===`);
-
-    // Start from a fresh WeChat page each run to reduce cross-run noise.
-    const wechatPage = await context.newPage();
-
-    // Keep console logs readable (only print key ones).
-    wechatPage.on('console', (msg) => {
-      const text = msg.text();
-      if (text.includes('[V2]') || text.includes('[V3]') || text.includes('Failed') || text.includes('失败')) {
-        console.log('[wechat][console]', text);
-      }
     });
 
-    await gotoWithRetry(wechatPage, wechatUrl);
-    await openPanel(wechatPage);
+    async function runOne(channelId, action) {
+      currentRun = null;
+      serviceWorkerImageFetchCount = 0;
+      proxyFetchCount = 0;
 
-    const channelPage = await startJobAndWaitChannelTab(context, wechatPage, { channelId, action });
+      const runId = `${channelId}_${action}_${Date.now()}`;
+      const title = `E2E ${channelId} ${action} ${runId}`;
+      const wechatUrl = `https://mp.weixin.qq.com/s/${runId}`;
+      const useLocalSspaiImages = channelId === 'sspai' && action === 'draft';
+      // OSCHINA 的生产入口来自本地 Markdown 图片服务，使用 loopback 夹具既贴近
+      // 实际链路，也避免扩展 service worker 的远程 CDN 请求污染 Tiptap 回归。
+      const useLocalImages = useLocalSspaiImages || channelId === 'oschina';
+      currentRun = {
+        runId,
+        channelId,
+        action,
+        title,
+        sourceUrl: wechatUrl,
+        useLocalSspaiImages,
+        imgA: useLocalImages
+          ? `http://127.0.0.1:43119/bawei-e2e-assets/${runId}-a.png`
+          : `https://mmbiz.qpic.cn/mmbiz_png/bawei_e2e_${runId}_a/0?wx_fmt=png`,
+        imgB: useLocalImages
+          ? `http://127.0.0.1:43119/bawei-e2e-assets/${runId}-b.png`
+          : `https://mmbiz.qpic.cn/mmbiz_png/bawei_e2e_${runId}_b/0?wx_fmt=png`
+      };
 
-    if (action === 'not_logged_in') {
-      await waitForBadgeText(wechatPage, channelId, '未登录', 30_000);
-      // 验证：关闭 tab 后点击 badge 可重开
-      await channelPage.close().catch(() => {});
-      const reopenPromise = context.waitForEvent('page', { timeout: 15_000 });
+      console.log(`\n=== [V3 E2E] channel=${channelId} action=${action} ===`);
+
+      // Start from a fresh WeChat page each run to reduce cross-run noise.
+      const wechatPage = await context.newPage();
+
+      // Keep console logs readable (only print key ones).
+      wechatPage.on('console', (msg) => {
+        const text = msg.text();
+        if (
+          text.includes('[V2]') ||
+          text.includes('[V3]') ||
+          text.includes('Failed') ||
+          text.includes('失败')
+        ) {
+          console.log('[wechat][console]', text);
+        }
+      });
+
+      await gotoWithRetry(wechatPage, wechatUrl);
+      await openPanel(wechatPage);
+
+      const channelPage = await startJobAndWaitChannelTab(context, wechatPage, {
+        channelId,
+        action
+      });
+
+      if (action === 'not_logged_in') {
+        try {
+          await waitForBadgeText(wechatPage, channelId, '未登录', 30_000);
+        } catch (error) {
+          const pageState = await channelPage
+            .evaluate(() => {
+              const visible = (element) => {
+                if (!(element instanceof HTMLElement)) return false;
+                const style = window.getComputedStyle(element);
+                const rect = element.getBoundingClientRect();
+                return (
+                  style.display !== 'none' &&
+                  style.visibility !== 'hidden' &&
+                  Number(style.opacity || '1') !== 0 &&
+                  rect.width > 0 &&
+                  rect.height > 0
+                );
+              };
+              const passwords = Array.from(document.querySelectorAll('input[type="password"]'));
+              const loginControls = Array.from(
+                document.querySelectorAll('button,a,span,div')
+              ).filter((element) =>
+                /登录|登入|sign in|log in/i.test(String(element.textContent || '').trim())
+              );
+              return {
+                url: location.href,
+                title: document.title,
+                hasStrictLoginText:
+                  /请登录|请先登录|登录后继续|未登录|扫码登录|账号登录|手机号登录/i.test(
+                    String(document.body?.innerText || '')
+                  ),
+                passwordCount: passwords.length,
+                visiblePasswordCount: passwords.filter(visible).length,
+                loginControlCount: loginControls.length,
+                visibleLoginControlCount: loginControls.filter(visible).length
+              };
+            })
+            .catch(() => null);
+          const runtimeState = await readChannelRuntimeState(wechatPage, channelId).catch(
+            () => null
+          );
+          const storedState = await readStoredChannelRuntimeState(
+            context,
+            wechatPage,
+            channelId
+          ).catch(() => null);
+          throw new Error(
+            `${error instanceof Error ? error.message : String(error)} pageState=${JSON.stringify(pageState)} runtimeState=${JSON.stringify(runtimeState)} storedState=${JSON.stringify(storedState)}`
+          );
+        }
+        // 验证：关闭 tab 后点击 badge 可重开
+        await channelPage.close().catch(() => {});
+        const reopenPromise = context.waitForEvent('page', { timeout: 15_000 });
+        await clickChannelBadge(wechatPage, channelId);
+        const reopened = await reopenPromise;
+        // 同 startJob 的处理：确保新 tab 真正进入我们的 mock 入口页（避免 attach 竞态导致首个 document 未被 route 接管）。
+        await gotoWithRetry(reopened, e2eFixtureUrl(CHANNEL_ENTRY_URLS[channelId]));
+        assert(
+          String(reopened.url() || '').startsWith(CHANNEL_ENTRY_URLS[channelId]),
+          '点击 badge 未重开入口页'
+        );
+        await reopened.close().catch(() => {});
+        await wechatPage.close().catch(() => {});
+        return;
+      }
+
+      // 百家号通过主世界 UEditor 整段写入；飞书当前只写文本；两者都不产生逐图上传提示。
+      if (channelId !== 'baijiahao' && channelId !== 'feishu-docs') {
+        await waitForDiagnosisContains(wechatPage, '正在上传图片（', 60_000);
+      }
+
+      // 草稿落盘是成功终态；发布只代表平台已接收，必须保持待审，不能误报公开成功。
+      const expectedBadge = action === 'publish' ? '待审' : '成功';
+      try {
+        await waitForBadgeText(wechatPage, channelId, expectedBadge, 60_000);
+      } catch (error) {
+        const channelPageState = await channelPage
+          .evaluate(() => {
+            const editor = document.querySelector('.tiptap.ProseMirror.aie-content');
+            const images = Array.from(editor?.querySelectorAll('img') || []).map((image) =>
+              String(image.getAttribute('src') || '')
+            );
+            const bridges = Array.from(
+              document.querySelectorAll('script[data-bawei-oschina-bridge]')
+            ).map((script) => ({
+              hasResult: script.hasAttribute('data-bawei-result'),
+              result: script.getAttribute('data-bawei-result') || ''
+            }));
+            return {
+              url: location.href,
+              editorConnected: !!editor?.isConnected,
+              editorTextLength: String(editor?.textContent || '').length,
+              imageCount: images.length,
+              imageSources: images,
+              bridges
+            };
+          })
+          .catch(() => null);
+        const runtimeState = await readChannelRuntimeState(wechatPage, channelId).catch(() => null);
+        const storedState = await readStoredChannelRuntimeState(
+          context,
+          wechatPage,
+          channelId
+        ).catch(() => null);
+        throw new Error(
+          `${error instanceof Error ? error.message : String(error)} channelPageState=${JSON.stringify(channelPageState)} runtimeState=${JSON.stringify(runtimeState)} storedState=${JSON.stringify(storedState)}`
+        );
+      }
+      const runtimeState = await readChannelRuntimeState(wechatPage, channelId);
+      const expectedStatus = action === 'publish' ? 'pending_review' : 'success';
+      assert(
+        runtimeState?.status === expectedStatus,
+        `渠道运行态不符合动作语义：channel=${channelId} action=${action} state=${JSON.stringify(runtimeState)}`
+      );
+      if (action === 'publish') {
+        const storedState = await readStoredChannelRuntimeState(context, wechatPage, channelId);
+        assert(
+          storedState?.status === 'pending_review' && !!storedState?.devDetails?.candidatePublicUrl,
+          `投稿结果缺少待审状态或候选公开地址：channel=${channelId} state=${JSON.stringify(storedState)}`
+        );
+      }
+      if (channelId === 'oschina') {
+        const oschinaSnapshot = await channelPage.evaluate(() => {
+          const html = sessionStorage.getItem('__bawei_e2e_oschina_final_html') || '';
+          const root = document.createElement('div');
+          root.innerHTML = html;
+          const imageSources = Array.from(root.querySelectorAll('img')).map((image) =>
+            String(image.getAttribute('src') || '')
+          );
+          return {
+            html,
+            text: String(root.textContent || '').replace(/\s+/g, ''),
+            imageSources
+          };
+        });
+        const first = oschinaSnapshot.html.indexOf('第一段：用于 E2E 测试。');
+        const firstImage = oschinaSnapshot.html.indexOf(oschinaSnapshot.imageSources[0] || 'missing');
+        const second = oschinaSnapshot.html.indexOf('第二段：图片后继续内容。');
+        const secondImage = oschinaSnapshot.html.indexOf(oschinaSnapshot.imageSources[1] || 'missing');
+        const third = oschinaSnapshot.html.indexOf('第三段：结尾。');
+        assert(
+          oschinaSnapshot.imageSources.length === 2 &&
+            first >= 0 &&
+            first < firstImage &&
+            firstImage < second &&
+            second < secondImage &&
+            secondImage < third,
+          `OSCHINA 图文顺序损坏：${JSON.stringify(oschinaSnapshot)}`
+        );
+        for (const paragraph of [
+          '第一段：用于E2E测试。',
+          '第二段：图片后继续内容。',
+          '第三段：结尾。'
+        ]) {
+          assert(
+            oschinaSnapshot.text.split(paragraph).length - 1 === 1,
+            `OSCHINA 段落丢失或重复：${paragraph} ${JSON.stringify(oschinaSnapshot)}`
+          );
+        }
+      }
+      if (channelId === 'baijiahao' && action === 'publish') {
+        const publishClickCount = await channelPage.evaluate(
+          () =>
+            Number(
+              sessionStorage.getItem('__bawei_e2e_baijiahao_publish_click_count') ||
+                window.__baweiPublishClickCount ||
+                0
+            )
+        );
+        assert(
+          publishClickCount === 1,
+          `百家号发布按钮必须且只能触发一次：${publishClickCount}`
+        );
+      }
+      if (channelId === 'toutiao') {
+        const toutiaoSnapshot = await channelPage.evaluate(() => {
+          const html =
+            document.querySelector('.ProseMirror')?.innerHTML ||
+            sessionStorage.getItem('__bawei_e2e_toutiao_final_html') ||
+            '';
+          const root = document.createElement('div');
+          root.innerHTML = html;
+          return {
+            html,
+            text: String(root.textContent || '').replace(/\s+/g, ''),
+            imageSources: Array.from(root.querySelectorAll('img')).map((image) =>
+              String(image.getAttribute('src') || '')
+            )
+          };
+        });
+        const first = toutiaoSnapshot.html.indexOf('第一段：用于 E2E 测试。');
+        const firstImage = toutiaoSnapshot.html.indexOf(
+          toutiaoSnapshot.imageSources[0] || 'missing'
+        );
+        const second = toutiaoSnapshot.html.indexOf('第二段：图片后继续内容。');
+        const secondImage = toutiaoSnapshot.html.indexOf(
+          toutiaoSnapshot.imageSources[1] || 'missing'
+        );
+        const third = toutiaoSnapshot.html.indexOf('第三段：结尾。');
+        assert(
+          toutiaoSnapshot.imageSources.length === 2 &&
+            first >= 0 &&
+            first < firstImage &&
+            firstImage < second &&
+            second < secondImage &&
+            secondImage < third,
+          `今日头条图文顺序损坏：${JSON.stringify(toutiaoSnapshot)}`
+        );
+        for (const paragraph of [
+          '第一段：用于E2E测试。',
+          '第二段：图片后继续内容。',
+          '第三段：结尾。'
+        ]) {
+          assert(
+            toutiaoSnapshot.text.split(paragraph).length - 1 === 1,
+            `今日头条段落丢失或重复：${paragraph} ${JSON.stringify(toutiaoSnapshot)}`
+          );
+        }
+      }
+
+      // SSPAI 的远程图片走官方 URL 批量转存；百家号由 UEditor 验收；飞书当前只写文本；其余渠道走 V3_FETCH_IMAGE。
+      if (channelId === 'sspai') {
+        if (currentRun?.useLocalSspaiImages) {
+          assert(serviceWorkerImageFetchCount >= 2, 'SSPAI 本地图片未通过扩展读取');
+          assert(
+            Number(currentRun?.sspaiUploadCount || 0) === 0,
+            'SSPAI loopback 图片不应发送给公网 URL 转存接口'
+          );
+          assert(
+            Number(currentRun?.sspaiDirectUploadCount || 0) >= 2 &&
+              Number(currentRun?.sspaiDirectUploadTokenCount || 0) >= 2,
+            'SSPAI 本地图片未通过官方令牌与七牛直传链路'
+          );
+        } else {
+          assert(
+            Number(currentRun?.sspaiUploadCount || 0) >= 2,
+            `未触发 SSPAI 图片转存：action=${action}`
+          );
+        }
+      } else if (channelId !== 'baijiahao' && channelId !== 'feishu-docs') {
+        assert(
+          serviceWorkerImageFetchCount > 0,
+          `未触发 service-worker 图片下载：channel=${channelId} action=${action}`
+        );
+      }
+      assert(
+        proxyFetchCount === 0,
+        `检测到代理回退请求：channel=${channelId} action=${action} proxyFetchCount=${proxyFetchCount}`
+      );
+
+      // 验证：点击 badge 可跳转聚焦到渠道 tab
       await clickChannelBadge(wechatPage, channelId);
-      const reopened = await reopenPromise;
-      // 同 startJob 的处理：确保新 tab 真正进入我们的 mock 入口页（避免 attach 竞态导致首个 document 未被 route 接管）。
-      await gotoWithRetry(reopened, CHANNEL_ENTRY_URLS[channelId]);
-      assert(String(reopened.url() || '').startsWith(CHANNEL_ENTRY_URLS[channelId]), '点击 badge 未重开入口页');
-      await reopened.close().catch(() => {});
+      await channelPage
+        .waitForFunction(() => document.visibilityState === 'visible', null, { timeout: 15_000 })
+        .catch(() => {});
+
+      await channelPage.close().catch(() => {});
       await wechatPage.close().catch(() => {});
+    }
+
+    async function runSerialAllChannels() {
+      serviceWorkerImageFetchCount = 0;
+      proxyFetchCount = 0;
+
+      const action = 'draft';
+      const runId = `serial_all_${Date.now()}`;
+      const title = `E2E serial all ${runId}`;
+      const wechatUrl = `https://mp.weixin.qq.com/s/${runId}`;
+      currentRun = {
+        runId,
+        channelId: 'serial-all',
+        action,
+        title,
+        sourceUrl: wechatUrl,
+        imgA: `https://mmbiz.qpic.cn/mmbiz_png/bawei_e2e_${runId}_a/0?wx_fmt=png`,
+        imgB: `https://mmbiz.qpic.cn/mmbiz_png/bawei_e2e_${runId}_b/0?wx_fmt=png`
+      };
+
+      console.log('\n=== [V3 E2E] serial all 10 channels action=draft ===');
+
+      const baselinePages = new Set(context.pages());
+      const wechatPage = await context.newPage();
+      await gotoWithRetry(wechatPage, wechatUrl);
+      await openPanel(wechatPage);
+      await wechatPage.check('input[name="bawei_v2_action"][value="draft"]');
+      await setSelectedChannelCheckboxes(wechatPage, ALL_CHANNELS);
+      await wechatPage.evaluate((channelId) => {
+        const select = document.querySelector('#bawei-v2-focus-channel');
+        if (!select) return;
+        select.value = channelId;
+        select.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
+      }, ALL_CHANNELS[0]);
+
+      const firstPagePromise = context.waitForEvent('page', { timeout: 15_000 });
+      await wechatPage.click('#bawei-v2-start');
+      let channelPage = await firstPagePromise;
+      const openedChannelPages = [];
+
+      for (let index = 0; index < ALL_CHANNELS.length; index += 1) {
+        const channelId = ALL_CHANNELS[index];
+        const createdPages = context
+          .pages()
+          .filter((page) => page !== wechatPage && !baselinePages.has(page));
+        assert(createdPages.length === index + 1, `串行第 ${index + 1} 步不应预开后续渠道 Tab`);
+
+        const nextPagePromise =
+          index + 1 < ALL_CHANNELS.length
+            ? context.waitForEvent('page', { timeout: 120_000 })
+            : null;
+        await channelPage.waitForLoadState('domcontentloaded', { timeout: 10_000 }).catch(() => {});
+        const fixtureAlreadyRunning = await channelPage
+          .evaluate(() => (document.title || '').includes('E2E'))
+          .catch(() => false);
+        if (!fixtureAlreadyRunning)
+          await gotoWithRetry(channelPage, e2eFixtureUrl(CHANNEL_ENTRY_URLS[channelId]));
+        await channelPage.waitForFunction(() => document.visibilityState === 'visible', null, {
+          timeout: 15_000
+        });
+        assert(
+          (await channelPage.evaluate(() => document.visibilityState)) === 'visible',
+          `串行第 ${index + 1} 步未聚焦 ${channelId}`
+        );
+
+        try {
+          await waitForBadgeText(wechatPage, channelId, '成功', 120_000);
+        } catch (error) {
+          const storedState = await readStoredChannelRuntimeState(
+            context,
+            wechatPage,
+            channelId
+          ).catch(() => null);
+          throw new Error(
+            `${error instanceof Error ? error.message : String(error)} storedState=${JSON.stringify(storedState)}`
+          );
+        }
+        openedChannelPages.push(channelPage);
+        if (nextPagePromise) channelPage = await nextPagePromise;
+      }
+
+      for (const channelId of ALL_CHANNELS) {
+        const badge = await readChannelBadge(wechatPage, channelId);
+        assert(
+          badge?.ok && badge.badge.includes('成功'),
+          `串行十渠道最终状态异常：${channelId} ${JSON.stringify(badge)}`
+        );
+      }
+      assert(proxyFetchCount === 0, `串行十渠道检测到代理回退请求：${proxyFetchCount}`);
+
+      for (const page of openedChannelPages) await page.close().catch(() => {});
+      await wechatPage.close().catch(() => {});
+    }
+
+    const onlyChannelArg = String(process.argv[2] || '').trim();
+    const onlyActionArg = String(process.argv[3] || '').trim();
+    const serialOnly = onlyChannelArg === 'serial-all';
+    const onlyChannel =
+      onlyChannelArg && ALL_CHANNELS.includes(onlyChannelArg) ? onlyChannelArg : '';
+    const onlyAction =
+      onlyActionArg && ['not_logged_in', 'draft', 'publish'].includes(onlyActionArg)
+        ? onlyActionArg
+        : '';
+
+    if (onlyChannelArg && !onlyChannel && !serialOnly) {
+      throw new Error(`未知渠道参数：${onlyChannelArg}（可选：${ALL_CHANNELS.join(', ')}）`);
+    }
+    if (onlyActionArg && !onlyAction) {
+      throw new Error(`未知 action 参数：${onlyActionArg}（可选：not_logged_in, draft, publish）`);
+    }
+
+    if (serialOnly) {
+      await runSerialAllChannels();
+      console.log('\n✅ v3 serial-all e2e test passed');
       return;
     }
 
-    // 百家号通过主世界 UEditor 整段写入；飞书当前只写文本；两者都不产生逐图上传提示。
-    if (channelId !== 'baijiahao' && channelId !== 'feishu-docs') {
-      await waitForDiagnosisContains(wechatPage, '正在上传图片（', 60_000);
-    }
+    const channelsToRun = onlyChannel ? [onlyChannel] : ALL_CHANNELS;
+    const actionsToRun = onlyAction ? [onlyAction] : ['not_logged_in', 'draft', 'publish'];
 
-    // 等待成功
-    await waitForBadgeText(wechatPage, channelId, '成功', 60_000);
-
-    // SSPAI 的远程图片走官方 URL 批量转存；百家号由 UEditor 验收；飞书当前只写文本；其余渠道走 V3_FETCH_IMAGE。
-    if (channelId === 'sspai') {
-      if (currentRun?.useLocalSspaiImages) {
-        assert(serviceWorkerImageFetchCount >= 2, 'SSPAI 本地图片未通过扩展读取');
-        assert(Number(currentRun?.sspaiUploadCount || 0) === 0, 'SSPAI loopback 图片不应发送给公网 URL 转存接口');
-      } else {
-        assert(Number(currentRun?.sspaiUploadCount || 0) >= 2, `未触发 SSPAI 图片转存：action=${action}`);
+    for (const channelId of channelsToRun) {
+      for (const action of actionsToRun) {
+        await runOne(channelId, action);
       }
-    } else if (channelId !== 'baijiahao' && channelId !== 'feishu-docs') {
-      assert(serviceWorkerImageFetchCount > 0, `未触发 service-worker 图片下载：channel=${channelId} action=${action}`);
-    }
-    assert(proxyFetchCount === 0, `检测到代理回退请求：channel=${channelId} action=${action} proxyFetchCount=${proxyFetchCount}`);
-
-    // 验证：点击 badge 可跳转聚焦到渠道 tab
-    await clickChannelBadge(wechatPage, channelId);
-    await channelPage
-      .waitForFunction(() => document.visibilityState === 'visible', null, { timeout: 15_000 })
-      .catch(() => {});
-
-    await channelPage.close().catch(() => {});
-    await wechatPage.close().catch(() => {});
-  }
-
-  async function runSerialAllChannels() {
-    serviceWorkerImageFetchCount = 0;
-    proxyFetchCount = 0;
-
-    const action = 'draft';
-    const runId = `serial_all_${Date.now()}`;
-    const title = `E2E serial all ${runId}`;
-    const wechatUrl = `https://mp.weixin.qq.com/s/${runId}`;
-    currentRun = {
-      runId,
-      channelId: 'serial-all',
-      action,
-      title,
-      sourceUrl: wechatUrl,
-      imgA: `https://mmbiz.qpic.cn/mmbiz_png/bawei_e2e_${runId}_a/0?wx_fmt=png`,
-      imgB: `https://mmbiz.qpic.cn/mmbiz_png/bawei_e2e_${runId}_b/0?wx_fmt=png`,
-    };
-
-    console.log('\n=== [V3 E2E] serial all 10 channels action=draft ===');
-
-    const baselinePages = new Set(context.pages());
-    const wechatPage = await context.newPage();
-    await gotoWithRetry(wechatPage, wechatUrl);
-    await openPanel(wechatPage);
-    await wechatPage.check('input[name="bawei_v2_action"][value="draft"]');
-    await setSelectedChannelCheckboxes(wechatPage, ALL_CHANNELS);
-    await wechatPage.evaluate((channelId) => {
-      const select = document.querySelector('#bawei-v2-focus-channel');
-      if (!select) return;
-      select.value = channelId;
-      select.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
-    }, ALL_CHANNELS[0]);
-
-    const firstPagePromise = context.waitForEvent('page', { timeout: 15_000 });
-    await wechatPage.click('#bawei-v2-start');
-    let channelPage = await firstPagePromise;
-    const openedChannelPages = [];
-
-    for (let index = 0; index < ALL_CHANNELS.length; index += 1) {
-      const channelId = ALL_CHANNELS[index];
-      const createdPages = context.pages().filter((page) => page !== wechatPage && !baselinePages.has(page));
-      assert(createdPages.length === index + 1, `串行第 ${index + 1} 步不应预开后续渠道 Tab`);
-
-      const nextPagePromise =
-        index + 1 < ALL_CHANNELS.length ? context.waitForEvent('page', { timeout: 120_000 }) : null;
-      await gotoWithRetry(channelPage, CHANNEL_ENTRY_URLS[channelId]);
-      await channelPage.waitForFunction(() => document.visibilityState === 'visible', null, { timeout: 15_000 });
-      assert((await channelPage.evaluate(() => document.visibilityState)) === 'visible', `串行第 ${index + 1} 步未聚焦 ${channelId}`);
-
-      await waitForBadgeText(wechatPage, channelId, '成功', 120_000);
-      openedChannelPages.push(channelPage);
-      if (nextPagePromise) channelPage = await nextPagePromise;
     }
 
-    for (const channelId of ALL_CHANNELS) {
-      const badge = await readChannelBadge(wechatPage, channelId);
-      assert(badge?.ok && badge.badge.includes('成功'), `串行十渠道最终状态异常：${channelId} ${JSON.stringify(badge)}`);
+    if (!onlyChannel && !onlyAction) {
+      await runSerialAllChannels();
     }
-    assert(proxyFetchCount === 0, `串行十渠道检测到代理回退请求：${proxyFetchCount}`);
 
-    for (const page of openedChannelPages) await page.close().catch(() => {});
-    await wechatPage.close().catch(() => {});
+    console.log('\n✅ v3 e2e tests passed (all channels)');
+  } finally {
+    await context.close().catch(() => {});
+    fs.rmSync(profileDir, { recursive: true, force: true });
   }
-
-  const onlyChannelArg = String(process.argv[2] || '').trim();
-  const onlyActionArg = String(process.argv[3] || '').trim();
-  const serialOnly = onlyChannelArg === 'serial-all';
-  const onlyChannel = onlyChannelArg && ALL_CHANNELS.includes(onlyChannelArg) ? onlyChannelArg : '';
-  const onlyAction =
-    onlyActionArg && ['not_logged_in', 'draft', 'publish'].includes(onlyActionArg) ? onlyActionArg : '';
-
-  if (onlyChannelArg && !onlyChannel && !serialOnly) {
-    throw new Error(`未知渠道参数：${onlyChannelArg}（可选：${ALL_CHANNELS.join(', ')}）`);
-  }
-  if (onlyActionArg && !onlyAction) {
-    throw new Error(`未知 action 参数：${onlyActionArg}（可选：not_logged_in, draft, publish）`);
-  }
-
-  if (serialOnly) {
-    await runSerialAllChannels();
-    await context.close();
-    console.log('\n✅ v3 serial-all e2e test passed');
-    return;
-  }
-
-  const channelsToRun = onlyChannel ? [onlyChannel] : ALL_CHANNELS;
-  const actionsToRun = onlyAction ? [onlyAction] : ['not_logged_in', 'draft', 'publish'];
-
-  for (const channelId of channelsToRun) {
-    for (const action of actionsToRun) {
-      await runOne(channelId, action);
-    }
-  }
-
-  if (!onlyChannel && !onlyAction) {
-    await runSerialAllChannels();
-  }
-
-  await context.close();
-  console.log('\n✅ v3 e2e tests passed (all channels)');
 }
 
 main().catch((e) => {

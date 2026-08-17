@@ -7,6 +7,7 @@ import type { ChannelId, ChannelRuntimeState, PublishJob } from '../shared/v2-ty
 /* INLINE:dom */
 /* INLINE:events */
 /* INLINE:v2-protocol */
+/* INLINE:channel-config */
 /* INLINE:publish-verify */
 /* INLINE:rich-content */
 /* INLINE:image-bridge */
@@ -19,7 +20,9 @@ let currentJob: AnyJob | null = null;
 let currentStage: ChannelRuntimeState['stage'] = 'init';
 let stopRequested = false;
 
-(globalThis as unknown as { __BAWEI_V2_IS_STOP_REQUESTED?: () => boolean }).__BAWEI_V2_IS_STOP_REQUESTED = () => stopRequested;
+(
+  globalThis as unknown as { __BAWEI_V2_IS_STOP_REQUESTED?: () => boolean }
+).__BAWEI_V2_IS_STOP_REQUESTED = () => stopRequested;
 
 function getMessage(key: string, substitutions?: string[]): string {
   try {
@@ -42,11 +45,16 @@ function isEditorPage(): boolean {
 function isDraftDonePage(): boolean {
   if (location.hostname !== 'i.cnblogs.com') return false;
   if (!location.pathname.startsWith('/posts/edit-done')) return false;
-  return /(?:^|[;?&#])isPublished=false(?:[;?&#]|$)/i.test(`${location.pathname}${location.search}${location.hash}`);
+  return /(?:^|[;?&#])isPublished=false(?:[;?&#]|$)/i.test(
+    `${location.pathname}${location.search}${location.hash}`
+  );
 }
 
 function isListPage(): boolean {
-  return location.hostname === 'i.cnblogs.com' && (location.pathname === '/posts' || location.pathname === '/posts/');
+  return (
+    location.hostname === 'i.cnblogs.com' &&
+    (location.pathname === '/posts' || location.pathname === '/posts/')
+  );
 }
 
 function isDetailPage(): boolean {
@@ -59,7 +67,7 @@ async function report(patch: Partial<ChannelRuntimeState>): Promise<void> {
     type: V2_CHANNEL_UPDATE,
     jobId: currentJob.jobId,
     channelId: CHANNEL_ID,
-    patch,
+    patch
   });
 }
 
@@ -72,13 +80,17 @@ async function getContextFromBackground(): Promise<{ job: AnyJob; channelId: str
 function getCurrentLoginState() {
   return detectPageLoginState({
     loginUrlPattern: /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i,
-    loggedInPattern: /新随笔|博客园|我的博客|文章管理|退出登录|个人中心|设置/i,
+    loggedInPattern: /新随笔|博客园|我的博客|文章管理|退出登录|个人中心|设置/i
   });
 }
 
 async function stageDetectLogin(): Promise<void> {
   currentStage = 'detectLogin';
-  await report({ status: 'running', stage: 'detectLogin', userMessage: getMessage('v3MsgDetectingLogin') });
+  await report({
+    status: 'running',
+    stage: 'detectLogin',
+    userMessage: getMessage('v3MsgDetectingLogin')
+  });
 
   const loginState = getCurrentLoginState();
   if (loginState.status === 'not_logged_in') {
@@ -86,7 +98,7 @@ async function stageDetectLogin(): Promise<void> {
       status: 'not_logged_in',
       stage: 'detectLogin',
       userMessage: getMessage('v3MsgNotLoggedIn'),
-      userSuggestion: getMessage('v3SugLoginThenRetry'),
+      userSuggestion: getMessage('v3SugLoginThenRetry')
     });
     throw new Error('__BAWEI_V2_STOPPED__');
   }
@@ -118,7 +130,8 @@ function syncCnblogsEditorContent(sourceUrl: string): string {
   const iframeBody = iframe?.contentDocument?.body || null;
   const textarea = document.querySelector<HTMLTextAreaElement>('#Editor_Edit_EditorBody');
   const tinymceGlobal = (window as Window & { tinymce?: TinyMceGlobal }).tinymce;
-  const editor = (tinymceGlobal?.get?.('Editor_Edit_EditorBody') as TinyMceEditor | undefined) || undefined;
+  const editor =
+    (tinymceGlobal?.get?.('Editor_Edit_EditorBody') as TinyMceEditor | undefined) || undefined;
 
   let finalHtml = '';
   try {
@@ -198,10 +211,13 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
     status: 'running',
     stage: 'fillContent',
     userMessage: getMessage('v2MsgFillingContent'),
-    userSuggestion: getMessage('v2SugCnblogsNoSourceFieldAppend'),
+    userSuggestion: getMessage('v2SugCnblogsNoSourceFieldAppend')
   });
 
-  const iframe = (await waitForElement<HTMLIFrameElement>('#Editor_Edit_EditorBody_ifr', 15000)) as HTMLIFrameElement;
+  const iframe = (await waitForElement<HTMLIFrameElement>(
+    '#Editor_Edit_EditorBody_ifr',
+    15000
+  )) as HTMLIFrameElement;
 
   // 等待 iframe body 可写（避免 document_end 时机过早）
   const deadline = Date.now() + 15000;
@@ -213,7 +229,9 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
   if (!iframe?.contentDocument?.body) throw new Error('未找到正文编辑器（iframe 未就绪）');
 
   const jobTokens = currentJob?.article?.contentTokens;
-  const tokens = Array.isArray(jobTokens) ? jobTokens : buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
+  const tokens = Array.isArray(jobTokens)
+    ? jobTokens
+    : buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
 
   const editorRoot = iframe.contentDocument.body as HTMLElement;
   const expectedImages = tokens.filter((t) => t?.kind === 'image').length;
@@ -246,9 +264,9 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
           await report({
             status: 'running',
             stage: 'fillContent',
-            userMessage: getMessage('v3MsgUploadingImageProgress', [String(current), String(total)]),
+            userMessage: getMessage('v3MsgUploadingImageProgress', [String(current), String(total)])
           });
-        },
+        }
       });
     } catch (e) {
       await report({
@@ -256,7 +274,7 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
         stage: 'waitingUser',
         userMessage: getMessage('v3MsgImageUploadFailed'),
         userSuggestion: getMessage('v3SugManualUploadImagesThenContinue'),
-        devDetails: { message: e instanceof Error ? e.message : String(e) },
+        devDetails: { message: e instanceof Error ? e.message : String(e) }
       });
       throw new Error('__BAWEI_V2_STOPPED__');
     }
@@ -275,28 +293,44 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
 
 async function stageSaveDraft(): Promise<void> {
   currentStage = 'saveDraft';
-  await report({ status: 'running', stage: 'saveDraft', userMessage: getMessage('v2MsgSavingAsDraft') });
-  const btn = Array.from(document.querySelectorAll('button')).find((b) => (b.textContent || '').includes('存为草稿'));
+  await report({
+    status: 'running',
+    stage: 'saveDraft',
+    userMessage: getMessage('v2MsgSavingAsDraft')
+  });
+  const btn = Array.from(document.querySelectorAll('button')).find((b) =>
+    (b.textContent || '').includes('存为草稿')
+  );
   if (!btn) throw new Error('未找到存为草稿按钮');
   (btn as HTMLButtonElement).click();
 }
 
 async function stageSubmitPublish(): Promise<void> {
   currentStage = 'submitPublish';
-  await report({ status: 'running', stage: 'submitPublish', userMessage: getMessage('v2MsgPublishing') });
+  await report({
+    status: 'running',
+    stage: 'submitPublish',
+    userMessage: getMessage('v2MsgPublishing')
+  });
   try {
     syncCnblogsEditorContent(currentJob?.article?.sourceUrl || '');
   } catch {
     // ignore
   }
-  const btn = Array.from(document.querySelectorAll('button')).find((b) => (b.textContent || '').trim() === '发布');
+  const btn = Array.from(document.querySelectorAll('button')).find(
+    (b) => (b.textContent || '').trim() === '发布'
+  );
   if (!btn) throw new Error('未找到发布按钮');
   (btn as HTMLButtonElement).click();
 }
 
 async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<boolean> {
   currentStage = 'confirmSuccess';
-  await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgConfirmingResult') });
+  await report({
+    status: 'running',
+    stage: 'confirmSuccess',
+    userMessage: getMessage('v2MsgConfirmingResult')
+  });
 
   const okTexts =
     action === 'draft'
@@ -307,7 +341,11 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<boolean
   while (Date.now() < deadline) {
     const text = document.body?.innerText || '';
     if (okTexts.some((t) => text.includes(t))) {
-      await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgSuccessDetectedStartVerify') });
+      await report({
+        status: 'running',
+        stage: 'confirmSuccess',
+        userMessage: getMessage('v2MsgSuccessDetectedStartVerify')
+      });
       return true;
     }
     await new Promise((r) => setTimeout(r, 300));
@@ -317,17 +355,23 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<boolean
     status: 'waiting_user',
     stage: 'waitingUser',
     userMessage:
-      action === 'draft' ? getMessage('v2MsgPleaseConfirmDraftSaved') : getMessage('v2MsgPleaseConfirmPublishCompleted'),
-    userSuggestion: getMessage('v2SugHandleModalRequiredThenContinueOrRetry'),
+      action === 'draft'
+        ? getMessage('v2MsgPleaseConfirmDraftSaved')
+        : getMessage('v2MsgPleaseConfirmPublishCompleted'),
+    userSuggestion: getMessage('v2SugHandleModalRequiredThenContinueOrRetry')
   });
   return false;
 }
 
 async function runFlow(job: AnyJob): Promise<void> {
-  await report({ status: 'running', stage: 'openEntry', userMessage: getMessage('v2MsgEnteredEditorPage') });
+  await report({
+    status: 'running',
+    stage: 'openEntry',
+    userMessage: getMessage('v2MsgEnteredEditorPage')
+  });
   await stageDetectLogin();
   await stageFillTitle(job.article.title);
-  await stageFillContent(job.article.contentHtml, job.article.sourceUrl);
+  await stageFillContent(job.article.contentHtml, job.article.sourceUrl || '');
   if (job.action === 'draft') {
     await stageSaveDraft();
     const confirmed = await stageConfirmSuccess('draft');
@@ -336,7 +380,7 @@ async function runFlow(job: AnyJob): Promise<void> {
       status: 'success',
       stage: 'done',
       userMessage: getMessage('v2MsgDraftSavedVerifyDone'),
-      devDetails: summarizeVerifyDetails({ draftUrl: location.href, mode: 'same-page-confirm' }),
+      devDetails: summarizeVerifyDetails({ draftUrl: location.href, mode: 'same-page-confirm' })
     });
   } else {
     await stageSubmitPublish();
@@ -346,7 +390,7 @@ async function runFlow(job: AnyJob): Promise<void> {
       status: 'running',
       stage: 'confirmSuccess',
       userMessage: getMessage('v2MsgPublishTriggeredGoPostsListVerify'),
-      devDetails: summarizeVerifyDetails({ listUrl: 'https://i.cnblogs.com/posts' }),
+      devDetails: summarizeVerifyDetails({ listUrl: 'https://i.cnblogs.com/posts' })
     });
     location.href = 'https://i.cnblogs.com/posts';
     return;
@@ -372,37 +416,46 @@ async function bootstrap(): Promise<void> {
         status: 'success',
         stage: 'done',
         userMessage: getMessage('v2MsgDraftSavedVerifyDone'),
-        devDetails: summarizeVerifyDetails({ draftUrl: location.href, isPublished: false }),
+        devDetails: summarizeVerifyDetails({ draftUrl: location.href, isPublished: false })
       });
       return;
     }
 
     if (isListPage()) {
       currentStage = 'confirmSuccess';
-      await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgVerifyFindNewPostInList') });
+      await report({
+        status: 'running',
+        stage: 'confirmSuccess',
+        userMessage: getMessage('v2MsgVerifyFindNewPostInList')
+      });
 
       if (!pageContainsTitle(currentJob.article.title)) {
         const key = 'bawei_v2_cnblogs_list_retry';
         const n = Number(sessionStorage.getItem(key) || '0') + 1;
         sessionStorage.setItem(key, String(n));
-        if (n <= 6) {
+        if (n <= 20) {
           await report({
             status: 'running',
             stage: 'confirmSuccess',
-            userMessage: getMessage('v2MsgVerifyListNoTitleRefresh5s6', [String(n)]),
-            devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: false }),
+            userMessage: getMessage('v2MsgVerifyListNoTitleRefresh6s20', [String(n)]),
+            devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: false })
           });
-          setTimeout(() => location.reload(), 5000);
+          setTimeout(() => location.reload(), 6000);
           return;
         }
 
         sessionStorage.removeItem(key);
         await report({
-          status: 'waiting_user',
-          stage: 'waitingUser',
-          userMessage: getMessage('v2MsgVerifyFailedListStillNoTitle'),
+          status: 'pending_review',
+          stage: 'done',
+          userMessage: getMessage('v2MsgVerifyFailedListStillNoTitleMaybeReviewOrFailed'),
           userSuggestion: getMessage('v2SugConfirmPublishOrWaitIndexRefreshThenContinue'),
-          devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: false }),
+          devDetails: summarizeVerifyDetails({
+            listUrl: location.href,
+            managementUrl: getChannelConfig(CHANNEL_ID).managementUrl,
+            listVisible: false,
+            reviewStatus: 'list_propagation_timeout'
+          })
         });
         return;
       }
@@ -410,13 +463,15 @@ async function bootstrap(): Promise<void> {
       sessionStorage.removeItem('bawei_v2_cnblogs_list_retry');
 
       const node = findAnyElementContainingText(titleToken(currentJob.article.title));
-      const link = (node?.closest('a') as HTMLAnchorElement | null) || findAnchorContainingText(titleToken(currentJob.article.title));
+      const link =
+        (node?.closest('a') as HTMLAnchorElement | null) ||
+        findAnchorContainingText(titleToken(currentJob.article.title));
       if (link?.href) {
         await report({
           status: 'running',
           stage: 'confirmSuccess',
           userMessage: getMessage('v2MsgVerifyFoundTitleOpeningDetail'),
-          devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: true }),
+          devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: true })
         });
         location.href = link.href;
         return;
@@ -427,19 +482,32 @@ async function bootstrap(): Promise<void> {
         stage: 'waitingUser',
         userMessage: getMessage('v2MsgVerifyBlockedNoDetailLink'),
         userSuggestion: getMessage('v2SugOpenDetailManuallyThenWaitVerify'),
-        devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: true }),
+        devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: true })
       });
       return;
     }
 
     if (isDetailPage()) {
-      const ok = pageContainsSourceUrl(currentJob.article.sourceUrl);
+      const sourceUrl = currentJob.article.sourceUrl || '';
+      const ok = !sourceUrl || pageContainsSourceUrl(sourceUrl);
       await report({
-        status: ok ? 'success' : 'waiting_user',
+        status: ok
+          ? currentJob.action === 'draft'
+            ? 'success'
+            : 'pending_review'
+          : 'waiting_user',
         stage: ok ? 'done' : 'waitingUser',
-        userMessage: ok ? getMessage('v2MsgVerifyPassedDetailHasSourceLink') : getMessage('v2MsgVerifyFailedDetailNoSourceLink'),
+        userMessage: ok
+          ? getMessage('v2MsgVerifyPassedDetailHasSourceLink')
+          : getMessage('v2MsgVerifyFailedDetailNoSourceLink'),
         userSuggestion: ok ? undefined : getMessage('v2SugCheckSourceLinkAtEndThenContinue'),
-        devDetails: summarizeVerifyDetails({ publishedUrl: location.href, sourceUrlPresent: ok }),
+        devDetails: summarizeVerifyDetails({
+          publishedUrl: location.href,
+          candidatePublicUrl: location.href,
+          managementUrl: getChannelConfig(CHANNEL_ID).managementUrl,
+          reviewStatus: 'candidate_public_url',
+          sourceUrlPresent: sourceUrl ? ok : false
+        })
       });
       return;
     }
@@ -450,7 +518,7 @@ async function bootstrap(): Promise<void> {
       stage: currentStage,
       userMessage: getMessage('v2MsgFailed'),
       userSuggestion: getMessage('v2SugCheckLoginOrDomThenRetry'),
-      devDetails: { message: error instanceof Error ? error.message : String(error) },
+      devDetails: { message: error instanceof Error ? error.message : String(error) }
     });
   }
 }
@@ -465,10 +533,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     stopRequested = true;
     return;
   }
-  if (message?.type === V2_REQUEST_RETRY && message.jobId === currentJob.jobId && message.channelId === CHANNEL_ID) {
+  if (
+    message?.type === V2_REQUEST_RETRY &&
+    message.jobId === currentJob.jobId &&
+    message.channelId === CHANNEL_ID
+  ) {
     bootstrap();
   }
-  if (message?.type === V2_REQUEST_CONTINUE && message.jobId === currentJob.jobId && message.channelId === CHANNEL_ID) {
+  if (
+    message?.type === V2_REQUEST_CONTINUE &&
+    message.jobId === currentJob.jobId &&
+    message.channelId === CHANNEL_ID
+  ) {
     bootstrap();
   }
 });

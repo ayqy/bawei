@@ -150,10 +150,15 @@ export type FetchImageResponse =
     };
 
 export type ExecuteMainWorldAction =
+  | 'baijiahao-set-title'
+  | 'baijiahao-open-image-dialog'
   | 'baijiahao-set-content'
   | 'tencent-set-title'
   | 'tencent-set-tag-input'
   | 'tencent-click-tag-suggestion'
+  | 'oschina-editor-command'
+  | 'toutiao-set-html'
+  | 'toutiao-select-image-marker'
   | 'weixin-probe-ui'
   | 'weixin-open-panel'
   | 'weixin-set-action'

@@ -1,11 +1,13 @@
 import assert from 'node:assert/strict';
 import { pathToFileURL } from 'node:url';
 import path from 'node:path';
+import { getChannelConfig, getChannelIds } from './channel-config.mjs';
 
 const storageData = new Map();
 const tabs = new Map();
 const operations = [];
 const runtimeMessageListeners = [];
+const tabRemovedListeners = [];
 let nextTabId = 1;
 
 function eventSink(target) {
@@ -95,7 +97,7 @@ globalThis.chrome = {
       return { success: true };
     },
     onUpdated: eventSink([]),
-    onRemoved: eventSink([])
+    onRemoved: eventSink(tabRemovedListeners)
   },
   windows: {
     async update(windowId, updateInfo) {
@@ -209,31 +211,13 @@ assert.equal(
   '队列完成后不得额外导航'
 );
 
-const allChannels = [
-  'csdn',
-  'tencent-cloud-dev',
-  'cnblogs',
-  'oschina',
-  'woshipm',
-  'mowen',
-  'sspai',
-  'baijiahao',
-  'toutiao',
-  'feishu-docs'
-];
-const allEntryUrls = [
-  'https://mp.csdn.net/mp_blog/creation/editor',
-  'https://cloud.tencent.com/developer/article/write',
-  'https://i.cnblogs.com/posts/edit',
-  'https://www.oschina.net/blog/write',
-  'https://www.woshipm.com/writing',
-  'https://note.mowen.cn/editor',
-  'https://sspai.com/write',
-  'https://baijiahao.baidu.com/builder/rc/edit?type=news&is_from_cms=1',
-  'https://mp.toutiao.com/profile_v4/graphic/publish',
-  'https://wuxinxuexi.feishu.cn/drive/folder/PyWAfSFwrlMgiydvlHectMn2nSd'
-];
+const allChannels = getChannelIds();
+const allEntryUrls = allChannels.map((channelId) => getChannelConfig(channelId).entryUrl);
+const terminalStatuses = allChannels.map((_channelId, index) =>
+  index === 0 ? 'pending_review' : index === 1 ? 'rejected' : 'success'
+);
 const allOperationsStart = operations.length;
+const allNavigationTabIds = [];
 const allStart = await dispatch({
   type: 'V2_START_JOB',
   action: 'publish',
@@ -258,6 +242,7 @@ for (let index = 0; index < allChannels.length; index += 1) {
     `第 ${index + 1} 步只能导航当前渠道`
   );
   const navigationIndex = runOperations.indexOf(navigations[index]);
+  allNavigationTabIds[index] = navigations[index].tabId;
   assert.equal(
     runOperations[navigationIndex - 1]?.kind,
     'window',
@@ -282,7 +267,7 @@ for (let index = 0; index < allChannels.length; index += 1) {
       type: 'V2_CHANNEL_UPDATE',
       jobId: allStart.jobId,
       channelId: allChannels[index],
-      patch: { status: 'success', stage: 'done' }
+      patch: { status: terminalStatuses[index], stage: 'done' }
     },
     { tab: { id: navigations[index].tabId } }
   );
@@ -290,7 +275,16 @@ for (let index = 0; index < allChannels.length; index += 1) {
 }
 
 const allFinalState = storageData.get(`bawei_v2_state_${allStart.jobId}`);
-assert.ok(allChannels.every((channelId) => allFinalState[channelId].status === 'success'));
+assert.ok(
+  allChannels.every((channelId, index) => allFinalState[channelId].status === terminalStatuses[index]),
+  '成功、待审、退回都必须作为串行终态保存并推进队列'
+);
+assert.equal(tabRemovedListeners.length, 1, '应注册一个 tab 关闭监听器');
+tabRemovedListeners[0](allNavigationTabIds[0]);
+tabRemovedListeners[0](allNavigationTabIds[1]);
+await new Promise((resolve) => setTimeout(resolve, 0));
+assert.equal(allFinalState[allChannels[0]].status, 'pending_review', '关闭待审渠道 Tab 不得覆写终态');
+assert.equal(allFinalState[allChannels[1]].status, 'rejected', '关闭退回渠道 Tab 不得覆写终态');
 assert.equal(
   operations
     .slice(allOperationsStart)
@@ -298,5 +292,17 @@ assert.equal(
   10,
   '十渠道完成后不得额外导航'
 );
+
+const noSourceStart = await dispatch({
+  type: 'V2_START_JOB',
+  action: 'draft',
+  focusChannel: 'csdn',
+  channels: ['csdn'],
+  article: {
+    title: '无原文链接集成测试',
+    contentHtml: '<p>正文</p>'
+  }
+});
+assert.equal(noSourceStart.success, true, '本地 Markdown 未声明 source_url 时仍必须能启动渠道任务');
 
 console.log('✅ background serial integration test passed');

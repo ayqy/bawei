@@ -47,21 +47,60 @@ declare function findLinkByText(text: string): HTMLAnchorElement | null;
 declare function findAnyElementContainingText(text: string): HTMLElement | null;
 declare function findAnchorContainingText(text: string): HTMLAnchorElement | null;
 declare function isElementVisible(element: HTMLElement): boolean;
-declare function summarizeVerifyDetails<T extends Record<string, unknown> = Record<string, never>>(details: {
+declare function summarizeVerifyDetails<T extends Record<string, unknown> = Record<string, never>>(
+  details: {
+    publishedUrl?: string;
+    draftUrl?: string;
+    editorUrl?: string;
+    listUrl?: string;
+    listVisible?: boolean;
+    sourceUrlPresent?: boolean;
+    savedToCloud?: boolean;
+    managementUrl?: string;
+    candidatePublicUrl?: string;
+    reviewStatus?: string;
+    rejectionReason?: string;
+    expectedImageCount?: number;
+    observedImageCount?: number;
+    contentHash?: string;
+    anonymousEvidence?: unknown;
+  } & T
+): {
   publishedUrl?: string;
   draftUrl?: string;
   editorUrl?: string;
   listUrl?: string;
-  listVisible?: boolean;
-  sourceUrlPresent?: boolean;
-  savedToCloud?: boolean;
-} & T): {
-  publishedUrl?: string;
-  draftUrl?: string;
-  editorUrl?: string;
-  listUrl?: string;
-  verified?: { listVisible?: boolean; sourceUrlPresent?: boolean; savedToCloud?: boolean };
+  managementUrl?: string;
+  candidatePublicUrl?: string;
+  reviewStatus?: string;
+  rejectionReason?: string;
+  expectedImageCount?: number;
+  observedImageCount?: number;
+  contentHash?: string;
+  anonymousEvidence?: unknown;
+  verified?: {
+    listVisible?: boolean;
+    sourceUrlPresent?: boolean;
+    savedToCloud?: boolean;
+    anonymousPublic?: boolean;
+  };
 } & T;
+
+declare interface ChannelConfig {
+  label: string;
+  entryUrl: string;
+  loginAuditUrl: string;
+  managementUrl: string;
+  loginUrlPatterns: string[];
+  publicUrlPatterns: string[];
+  publicArticleSelectors: string[];
+  publicTitleSelectors: string[];
+  publicImageSelectors: string[];
+  pendingPatterns: string[];
+  rejectedPatterns: string[];
+}
+declare function getChannelConfig(channelId: import('./shared/v2-types').ChannelId): ChannelConfig;
+declare function matchesChannelUrl(rawUrl: string, patterns: string[]): boolean;
 
 declare function htmlToPlainTextSafe(html: string): string;
 declare function toProxyImageUrl(raw: string, baseUrl: string): string;
@@ -69,7 +108,7 @@ declare function rewriteHtmlImageUrlsToProxy(contentHtml: string, baseUrl: strin
 declare function buildRichContentTokens(params: {
   contentHtml: string;
   baseUrl: string;
-  sourceUrl: string;
+  sourceUrl?: string;
   htmlMode?: 'plain' | 'raw';
   splitBlocks?: boolean;
 }): Array<
@@ -85,20 +124,32 @@ declare function buildRichContentTokens(params: {
 >;
 
 declare function fetchImageAsFile(jobId: string, url: string): Promise<File>;
-declare function insertImageAtCursor(params: { jobId: string; imageUrl: string; editorRoot: HTMLElement }): Promise<void>;
+declare function isTransientImageUrl(rawUrl: string): boolean;
+declare function isPlatformHostedImageUrl(candidateUrl: string, sourceUrl?: string): boolean;
+declare function waitForPlatformHostedImageUrl(
+  readUrl: () => string,
+  sourceUrl?: string,
+  timeoutMs?: number
+): Promise<string>;
+declare function insertImageAtCursor(params: {
+  jobId: string;
+  imageUrl: string;
+  editorRoot: HTMLElement;
+}): Promise<void>;
 declare function fillEditorByTokens(params: {
   jobId: string;
-  tokens: Array<
-    | { kind: 'html'; html: string }
-    | { kind: 'image'; src: string; alt?: string }
-  >;
+  tokens: Array<{ kind: 'html'; html: string } | { kind: 'image'; src: string; alt?: string }>;
   editorRoot: HTMLElement;
   writeMode: 'html' | 'text';
   ensureCaretAtEnd?: boolean;
   directHtmlAppend?: boolean;
   skipHtmlPasteEvent?: boolean;
   onImageProgress?: (current: number, total: number, imageUrl: string) => Promise<void> | void;
-  insertImageAtCursorOverride?: (args: { jobId: string; imageUrl: string; editorRoot: HTMLElement }) => Promise<void>;
+  insertImageAtCursorOverride?: (args: {
+    jobId: string;
+    imageUrl: string;
+    editorRoot: HTMLElement;
+  }) => Promise<void>;
 }): Promise<void>;
 
 declare const V2_START_JOB: string;

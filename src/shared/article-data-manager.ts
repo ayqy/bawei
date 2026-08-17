@@ -37,7 +37,9 @@ export async function storeJobData(job: PublishJob): Promise<void> {
     await limitStoredJobs();
   } catch (error) {
     console.error('[V2 Job Data Manager] ❌ Failed to store job data:', error);
-    throw new Error(`Failed to store job data: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(
+      `Failed to store job data: ${error instanceof Error ? error.message : 'Unknown error'}`
+    );
   }
 }
 
@@ -50,7 +52,9 @@ export async function getJobData(jobId: string): Promise<PublishJob | null> {
     return (result[jobKey(jobId)] as PublishJob) || null;
   } catch (error) {
     console.error('[V2 Job Data Manager] ❌ Failed to get job data:', error);
-    throw new Error(`Failed to get job data: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    throw new Error(
+      `Failed to get job data: ${error instanceof Error ? error.message : 'Unknown error'}`
+    );
   }
 }
 

@@ -46,7 +46,8 @@ function startBouncingAnimation(iconElement: SVGElement): void {
   injectBounceKeyframes();
 
   // 【macOS风格】应用跳动动画类，使用弹性缓动曲线
-  iconElement.style.animation = 'copylot-bounce 1.2s cubic-bezier(0.68, -0.55, 0.265, 1.55) infinite';
+  iconElement.style.animation =
+    'copylot-bounce 1.2s cubic-bezier(0.68, -0.55, 0.265, 1.55) infinite';
 
   // 使用定时器控制跳动节奏，与CSS动画形成复合效果
   let bounceCount = 0;
@@ -91,12 +92,7 @@ function stopBouncingAnimation(): void {
  * @param options Notification options
  */
 export function showNotification(message: string, options: NotificationOptions = {}): void {
-  const {
-    type = 'info',
-    duration = 4000,
-    position = 'top-right',
-    exclusive = false
-  } = options;
+  const { type = 'info', duration = 4000, position = 'top-right', exclusive = false } = options;
 
   const actualType = exclusive ? 'bounce' : type;
 
@@ -105,8 +101,8 @@ export function showNotification(message: string, options: NotificationOptions =
   const existingNotifications = document.querySelectorAll('[data-notification-type]');
   if (existingNotifications.length > 0) {
     // 检查是否有正在显示的独占通知
-    const hasActiveExclusive = Array.from(existingNotifications).some(notification =>
-      notification.getAttribute('data-exclusive') === 'true'
+    const hasActiveExclusive = Array.from(existingNotifications).some(
+      (notification) => notification.getAttribute('data-exclusive') === 'true'
     );
 
     if (hasActiveExclusive && type !== 'error') {
@@ -116,7 +112,7 @@ export function showNotification(message: string, options: NotificationOptions =
   }
 
   // 移除所有现有通知
-  existingNotifications.forEach(notification => {
+  existingNotifications.forEach((notification) => {
     const element = notification as HTMLElement;
     // 如果是独占通知，停止跳动动画
     if (element.getAttribute('data-exclusive') === 'true') {
@@ -214,7 +210,8 @@ export function showWarning(message: string, duration: number = 5000): void {
  */
 function dismissNotification(notification: HTMLElement, position: string): void {
   // 如果是粘贴提示，停止跳动动画
-  const isPasteHint = notification.textContent?.includes('已复制') && notification.textContent?.includes('粘贴');
+  const isPasteHint =
+    notification.textContent?.includes('已复制') && notification.textContent?.includes('粘贴');
   if (isPasteHint) {
     stopBouncingAnimation();
   }

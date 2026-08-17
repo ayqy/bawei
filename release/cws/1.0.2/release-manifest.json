@@ -1,0 +1,131 @@
+{
+  "schema_version": 2,
+  "product": {
+    "name": "bawei",
+    "platform": "cws",
+    "version": "1.0.2",
+    "root": "."
+  },
+  "source": {
+    "commit": "",
+    "commit_policy": "resolve_at_preflight",
+    "require_clean": true
+  },
+  "metadata": {
+    "name": "",
+    "summary": "",
+    "description": "",
+    "language": "",
+    "privacy_policy_url": "",
+    "support_url": "",
+    "single_purpose": "",
+    "permission_justification": "",
+    "data_use_summary": ""
+  },
+  "rules_researched": [
+    {
+      "url": "https://developer.chrome.com/docs/webstore/publish/",
+      "checked_at": "",
+      "claim": "",
+      "topic": "lifecycle",
+      "evidence_kind": "direct"
+    },
+    {
+      "url": "https://developer.chrome.com/docs/webstore/api/reference/rest/v2/publishers.items/publish",
+      "checked_at": "",
+      "claim": "",
+      "topic": "lifecycle",
+      "evidence_kind": "direct"
+    },
+    {
+      "url": "https://developer.chrome.com/docs/webstore/program-policies/",
+      "checked_at": "",
+      "claim": "",
+      "topic": "policy",
+      "evidence_kind": "direct"
+    },
+    {
+      "url": "https://developer.chrome.com/docs/webstore/images/",
+      "checked_at": "",
+      "claim": "",
+      "topic": "assets",
+      "evidence_kind": "direct"
+    }
+  ],
+  "growth": {
+    "keyword_candidates": [],
+    "claim_evidence": []
+  },
+  "category_assessment": {
+    "selected": "",
+    "alternatives": [],
+    "rationale": "",
+    "evidence_kind": "inference"
+  },
+  "qualification_assessment": [],
+  "assets": [],
+  "artifacts": [],
+  "rejection_plan": {
+    "official_rule_map": "",
+    "code_evidence_paths": "",
+    "communication_position": "",
+    "code_change_strategy": ""
+  },
+  "automation": {
+    "preflight": {
+      "commands": [
+        {
+          "label": "CWS dry-run",
+          "argv": [
+            "npm",
+            "run",
+            "publish:cws",
+            "--",
+            "--dry-run",
+            "--evidence-dir",
+            "{evidence_dir}/cws"
+          ],
+          "cwd": ".",
+          "required_env": [],
+          "timeout_seconds": 1800,
+          "read_only": true
+        }
+      ],
+      "covers": []
+    },
+    "configure": {
+      "commands": [],
+      "covers": []
+    },
+    "probe": {
+      "commands": [],
+      "covers": []
+    },
+    "submit": {
+      "commands": [],
+      "covers": [],
+      "notes": [
+        "Detected publish:cws only for dry-run. Do not seed its live command until code inspection proves that upload, review submission, and the approval auto-publish selection match the current phase boundary and CWS contract. Require API v2 publishType=DEFAULT_PUBLISH with skipReview=false, or the equivalent checked dashboard checkbox."
+      ]
+    },
+    "release": {
+      "commands": [],
+      "covers": []
+    },
+    "respond": {
+      "commands": [],
+      "covers": []
+    },
+    "status": {
+      "commands": [],
+      "covers": []
+    }
+  },
+  "platform_config": {
+    "cws": {
+      "release_method": "automatic_after_review",
+      "publish_type": "DEFAULT_PUBLISH",
+      "skip_review": false
+    }
+  }
+}

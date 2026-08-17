@@ -8,6 +8,7 @@ import type { ChannelId, ChannelRuntimeState, PublishJob } from '../shared/v2-ty
 /* INLINE:dom */
 /* INLINE:events */
 /* INLINE:v2-protocol */
+/* INLINE:channel-config */
 /* INLINE:publish-verify */
 /* INLINE:rich-content */
 /* INLINE:image-bridge */
@@ -21,7 +22,9 @@ let currentStage: ChannelRuntimeState['stage'] = 'init';
 let stopRequested = false;
 let expectedImagesForJob = 0;
 
-(globalThis as unknown as { __BAWEI_V2_IS_STOP_REQUESTED?: () => boolean }).__BAWEI_V2_IS_STOP_REQUESTED = () => stopRequested;
+(
+  globalThis as unknown as { __BAWEI_V2_IS_STOP_REQUESTED?: () => boolean }
+).__BAWEI_V2_IS_STOP_REQUESTED = () => stopRequested;
 
 function getMessage(key: string, substitutions?: string[]): string {
   try {
@@ -36,8 +39,10 @@ function escapeAttr(value: string): string {
 }
 
 function withTitleAndSourceUrl(contentHtml: string, title: string, sourceUrl: string): string {
-  const safe = escapeAttr(sourceUrl);
   const titleHtml = `<p>${title.replace(/</g, '&lt;')}</p><p><br/></p>`;
+  const normalizedSourceUrl = String(sourceUrl || '').trim();
+  if (!normalizedSourceUrl) return `${titleHtml}\n${contentHtml}`;
+  const safe = escapeAttr(normalizedSourceUrl);
   return `${titleHtml}\n${contentHtml}\n<p><br/></p><p>原文链接：<a href="${safe}" target="_blank" rel="noreferrer noopener">${safe}</a></p>`;
 }
 
@@ -147,7 +152,7 @@ async function report(patch: Partial<ChannelRuntimeState>): Promise<void> {
     type: V2_CHANNEL_UPDATE,
     jobId: currentJob.jobId,
     channelId: CHANNEL_ID,
-    patch,
+    patch
   });
 }
 
@@ -161,13 +166,17 @@ function getCurrentLoginState() {
   return detectPageLoginState({
     loginUrlPattern: /(^|[/?#&])(login|signin|passport|oauth|auth)([/?#&]|$)/i,
     strictLoginPattern: /请登录|请先登录|登录后继续|未登录|手机号登录|验证码登录|sign in|log in/i,
-    loggedInPattern: /新建|编辑器|我的笔记|工作台|账号设置|退出登录|发布/i,
+    loggedInPattern: /新建|编辑器|我的笔记|工作台|账号设置|退出登录|发布/i
   });
 }
 
 async function stageDetectLogin(): Promise<void> {
   currentStage = 'detectLogin';
-  await report({ status: 'running', stage: 'detectLogin', userMessage: getMessage('v3MsgDetectingLogin') });
+  await report({
+    status: 'running',
+    stage: 'detectLogin',
+    userMessage: getMessage('v3MsgDetectingLogin')
+  });
 
   const loginState = getCurrentLoginState();
   if (loginState.status === 'not_logged_in') {
@@ -175,19 +184,23 @@ async function stageDetectLogin(): Promise<void> {
       status: 'not_logged_in',
       stage: 'detectLogin',
       userMessage: getMessage('v3MsgNotLoggedIn'),
-      userSuggestion: getMessage('v3SugLoginThenRetry'),
+      userSuggestion: getMessage('v3SugLoginThenRetry')
     });
     throw new Error('__BAWEI_V2_STOPPED__');
   }
 }
 
-async function stageFillContent(title: string, contentHtml: string, sourceUrl: string): Promise<void> {
+async function stageFillContent(
+  title: string,
+  contentHtml: string,
+  sourceUrl: string
+): Promise<void> {
   currentStage = 'fillContent';
   await report({
     status: 'running',
     stage: 'fillContent',
     userMessage: getMessage('v2MsgMowenFillingContentTitleFirstLine'),
-    userSuggestion: getMessage('v2SugMowenTitleInFirstLine'),
+    userSuggestion: getMessage('v2SugMowenTitleInFirstLine')
   });
 
   await ensureEditorSurfaceReady();
@@ -220,7 +233,12 @@ async function stageFillContent(title: string, contentHtml: string, sourceUrl: s
   }
 
   const html = withTitleAndSourceUrl(contentHtml, title, sourceUrl);
-  const tokens = buildRichContentTokens({ contentHtml: html, baseUrl: sourceUrl, sourceUrl: '', htmlMode: 'raw' });
+  const tokens = buildRichContentTokens({
+    contentHtml: html,
+    baseUrl: sourceUrl,
+    sourceUrl: '',
+    htmlMode: 'raw'
+  });
 
   const countDraftImages = (node: unknown): number => {
     if (!node) return 0;
@@ -258,7 +276,7 @@ async function stageFillContent(title: string, contentHtml: string, sourceUrl: s
       method: 'POST',
       credentials: 'include',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ scene: 2, noteUuid: 'draft', salt: 'web' }),
+      body: JSON.stringify({ scene: 2, noteUuid: 'draft', salt: 'web' })
     });
     if (!res.ok) throw new Error(`draft api failed: ${res.status}`);
     const json = (await res.json().catch(() => null)) as { content?: unknown } | null;
@@ -281,7 +299,7 @@ async function stageFillContent(title: string, contentHtml: string, sourceUrl: s
       return '';
     }
   })();
-  const existingHasSource = !!(sourceUrl && existingText.includes(sourceUrl));
+  const existingHasSource = !sourceUrl || existingText.includes(sourceUrl);
   const existingFirstLine = (() => {
     try {
       const text = String(editor.innerText || editor.textContent || '');
@@ -316,7 +334,7 @@ async function stageFillContent(title: string, contentHtml: string, sourceUrl: s
           await report({
             status: 'running',
             stage: 'fillContent',
-            userMessage: getMessage('v3MsgUploadingImageProgress', [String(current), String(total)]),
+            userMessage: getMessage('v3MsgUploadingImageProgress', [String(current), String(total)])
           });
         },
         insertImageAtCursorOverride: async (args) => {
@@ -327,7 +345,12 @@ async function stageFillContent(title: string, contentHtml: string, sourceUrl: s
           const isVisible = (node: HTMLElement): boolean => {
             try {
               const style = window.getComputedStyle(node);
-              if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+              if (
+                style.display === 'none' ||
+                style.visibility === 'hidden' ||
+                style.opacity === '0'
+              )
+                return false;
               const rect = node.getBoundingClientRect();
               return rect.width > 1 && rect.height > 1;
             } catch {
@@ -337,7 +360,11 @@ async function stageFillContent(title: string, contentHtml: string, sourceUrl: s
 
           const readVisibleToastText = (): string => {
             try {
-              const nodes = Array.from(document.querySelectorAll<HTMLElement>('.toast,[role="alert"],.el-message,.ant-message,.message'));
+              const nodes = Array.from(
+                document.querySelectorAll<HTMLElement>(
+                  '.toast,[role="alert"],.el-message,.ant-message,.message'
+                )
+              );
               return nodes
                 .filter(isVisible)
                 .map((n) => String(n.textContent || '').trim())
@@ -389,7 +416,10 @@ async function stageFillContent(title: string, contentHtml: string, sourceUrl: s
 
             while (Date.now() < deadline) {
               const toastText = readVisibleToastText();
-              if (toastText.includes('上传失败') || (toastText.includes('图片') && toastText.includes('失败'))) {
+              if (
+                toastText.includes('上传失败') ||
+                (toastText.includes('图片') && toastText.includes('失败'))
+              ) {
                 throw new Error(`图片上传失败（${label}）：${toastText.slice(0, 140)}`);
               }
 
@@ -399,26 +429,34 @@ async function stageFillContent(title: string, contentHtml: string, sourceUrl: s
               if (baselineDraftCount >= 0) {
                 const snap = await fetchDraftSnapshot().catch(() => null);
                 if (snap) {
-                  const insertedUuid = snap.uuids.find((uuid) => uuid && !baselineDraftUuids.includes(uuid)) || '';
+                  const insertedUuid =
+                    snap.uuids.find((uuid) => uuid && !baselineDraftUuids.includes(uuid)) || '';
 
                   // 期望：图片插入应导致 draft 内 image 节点数量 +1。
                   // 若数量未增长但出现新的 uuid，极可能是“替换已有图片”，必须尽快失败并回滚（否则最终图片数量不足）。
                   if (snap.count === baselineDraftCount && insertedUuid) {
-                    throw new Error(`图片疑似替换已有图片（${label}，draftCount=${snap.count} 未增长）`);
+                    throw new Error(
+                      `图片疑似替换已有图片（${label}，draftCount=${snap.count} 未增长）`
+                    );
                   }
 
-                  if (snap.count >= baselineDraftCount + 1) return { expectedCount: snap.count, insertedUuid };
+                  if (snap.count >= baselineDraftCount + 1)
+                    return { expectedCount: snap.count, insertedUuid };
                 }
 
                 // 若 paste/drop 事件被编辑器忽略，draft 与 DOM 都不会产生任何变化，
                 // 继续傻等 120s 会导致无法尽快切换到 drop/file-input 兜底。
                 if (!sawDomInsert && Date.now() > noopDeadline) {
-                  throw new Error(`未触发图片插入（${label}）：draft/DOM 无变化，尝试下一种插图方式`);
+                  throw new Error(
+                    `未触发图片插入（${label}）：draft/DOM 无变化，尝试下一种插图方式`
+                  );
                 }
               } else {
                 const imgs = Array.from(args.editorRoot.querySelectorAll<HTMLImageElement>('img'));
                 const newImgs = imgs.slice(Math.max(0, beforeCount));
-                const inserted = newImgs.find((img) => String(img.getAttribute('src') || '').trim());
+                const inserted = newImgs.find((img) =>
+                  String(img.getAttribute('src') || '').trim()
+                );
                 // 墨问编辑器在上传成功后依然可能保持 blob: 预览图（真实 fileId 存在于 ProseMirror 文档中），
                 // 因此这里以“图片节点已插入 + 未出现上传失败 toast”作为成功判定。
                 if (inserted) return { expectedCount: -1, insertedUuid: '__dom__' };
@@ -430,7 +468,7 @@ async function stageFillContent(title: string, contentHtml: string, sourceUrl: s
                 await report({
                   status: 'running',
                   stage: 'fillContent',
-                  userMessage: `${getMessage('v3MsgUploadingImageProgress', [String(current), String(total || '?')])}（等待上传完成 ${waited}s）`,
+                  userMessage: `${getMessage('v3MsgUploadingImageProgress', [String(current), String(total || '?')])}（等待上传完成 ${waited}s）`
                 });
                 lastReportAt = now;
               }
@@ -447,11 +485,28 @@ async function stageFillContent(title: string, contentHtml: string, sourceUrl: s
               const name = String(input.getAttribute('name') || '').toLowerCase();
               const id = String(input.id || '').toLowerCase();
               const cls = String(input.className || '').toLowerCase();
-              const parentText = String(input.closest('form,section,article,div')?.textContent || '').slice(0, 180).toLowerCase();
-              const isImage = accept.includes('image') || accept.includes('png') || accept.includes('jpg') || accept.includes('jpeg') || accept.includes('webp');
-              const looksImage = name.includes('image') || id.includes('image') || cls.includes('image') || cls.includes('upload');
+              const parentText = String(
+                input.closest('form,section,article,div')?.textContent || ''
+              )
+                .slice(0, 180)
+                .toLowerCase();
+              const isImage =
+                accept.includes('image') ||
+                accept.includes('png') ||
+                accept.includes('jpg') ||
+                accept.includes('jpeg') ||
+                accept.includes('webp');
+              const looksImage =
+                name.includes('image') ||
+                id.includes('image') ||
+                cls.includes('image') ||
+                cls.includes('upload');
               const inCover = parentText.includes('封面') || parentText.includes('cover');
-              const inImageDialog = parentText.includes('图片') || parentText.includes('插图') || parentText.includes('上传') || parentText.includes('image');
+              const inImageDialog =
+                parentText.includes('图片') ||
+                parentText.includes('插图') ||
+                parentText.includes('上传') ||
+                parentText.includes('image');
               let score = 0;
               if (isImage) score += 10;
               if (looksImage) score += 4;
@@ -467,7 +522,9 @@ async function stageFillContent(title: string, contentHtml: string, sourceUrl: s
           const listFileInputs = (): HTMLInputElement[] => {
             try {
               const doc = args.editorRoot.ownerDocument || document;
-              const nodes = Array.from(doc.querySelectorAll<HTMLInputElement>('input[type="file"]'));
+              const nodes = Array.from(
+                doc.querySelectorAll<HTMLInputElement>('input[type="file"]')
+              );
               return nodes
                 .map((input) => ({ input, score: scoreFileInput(input) }))
                 .sort((a, b) => b.score - a.score)
@@ -480,12 +537,21 @@ async function stageFillContent(title: string, contentHtml: string, sourceUrl: s
           const findImageButtons = (): HTMLElement[] => {
             const out: HTMLElement[] = [];
             try {
-              const nodes = Array.from(document.querySelectorAll<HTMLElement>('button,[role="button"],a,span,div'));
+              const nodes = Array.from(
+                document.querySelectorAll<HTMLElement>('button,[role="button"],a,span,div')
+              );
               for (const node of nodes) {
                 if (!isVisible(node)) continue;
-                const txt = `${node.textContent || ''} ${node.getAttribute('title') || ''} ${node.getAttribute('aria-label') || ''}`.toLowerCase();
+                const txt =
+                  `${node.textContent || ''} ${node.getAttribute('title') || ''} ${node.getAttribute('aria-label') || ''}`.toLowerCase();
                 if (!txt) continue;
-                if (txt.includes('图片') || txt.includes('插图') || txt.includes('上传') || txt.includes('image') || txt.includes('upload')) {
+                if (
+                  txt.includes('图片') ||
+                  txt.includes('插图') ||
+                  txt.includes('上传') ||
+                  txt.includes('image') ||
+                  txt.includes('upload')
+                ) {
                   out.push(node);
                   if (out.length >= 10) break;
                 }
@@ -501,7 +567,10 @@ async function stageFillContent(title: string, contentHtml: string, sourceUrl: s
 
           let lastBeforeCount = 0;
 
-          const tryOnce = async (label: string, action: () => Promise<void> | void): Promise<void> => {
+          const tryOnce = async (
+            label: string,
+            action: () => Promise<void> | void
+          ): Promise<void> => {
             const beforeCount = countImages();
             const beforeDraft = await fetchDraftSnapshot().catch(() => null);
             lastBeforeCount = beforeCount;
@@ -534,10 +603,16 @@ async function stageFillContent(title: string, contentHtml: string, sourceUrl: s
             const uploaded = await waitUploaded(beforeCount, beforeDraft, label);
             await new Promise((r) => setTimeout(r, 10_000));
 
-            if (uploaded.expectedCount >= 0 && uploaded.insertedUuid && uploaded.insertedUuid !== '__dom__') {
+            if (
+              uploaded.expectedCount >= 0 &&
+              uploaded.insertedUuid &&
+              uploaded.insertedUuid !== '__dom__'
+            ) {
               const stable = await fetchDraftSnapshot().catch(() => null);
               if (stable && stable.count < uploaded.expectedCount) {
-                throw new Error(`图片未稳定写入草稿（${label}，draft=${stable.count} < ${uploaded.expectedCount}）`);
+                throw new Error(
+                  `图片未稳定写入草稿（${label}，draft=${stable.count} < ${uploaded.expectedCount}）`
+                );
               }
               if (stable && !stable.uuids.includes(uploaded.insertedUuid)) {
                 throw new Error(`图片落稿后又消失（${label}，uuid=${uploaded.insertedUuid}）`);
@@ -624,10 +699,12 @@ async function stageFillContent(title: string, contentHtml: string, sourceUrl: s
               }
 
               try {
-                const ev = new (view as unknown as { ClipboardEvent: typeof ClipboardEvent }).ClipboardEvent('paste', {
+                const ev = new (
+                  view as unknown as { ClipboardEvent: typeof ClipboardEvent }
+                ).ClipboardEvent('paste', {
                   bubbles: true,
                   cancelable: true,
-                  clipboardData: dt,
+                  clipboardData: dt
                 } as unknown as ClipboardEventInit);
                 args.editorRoot.dispatchEvent(ev);
                 return;
@@ -697,7 +774,7 @@ async function stageFillContent(title: string, contentHtml: string, sourceUrl: s
           }
 
           throw new Error(errors.join(' | ') || '图片插入失败');
-        },
+        }
       });
 
       // 填充完成后做一次质量门禁：标题/段落/图片
@@ -746,7 +823,7 @@ async function stageFillContent(title: string, contentHtml: string, sourceUrl: s
         stage: 'waitingUser',
         userMessage: getMessage('v3MsgImageUploadFailed'),
         userSuggestion: getMessage('v3SugManualUploadImagesThenContinue'),
-        devDetails: { message: e instanceof Error ? e.message : String(e) },
+        devDetails: { message: e instanceof Error ? e.message : String(e) }
       });
       throw new Error('__BAWEI_V2_STOPPED__');
     }
@@ -756,33 +833,46 @@ async function stageFillContent(title: string, contentHtml: string, sourceUrl: s
 async function stageSaveDraft(): Promise<void> {
   currentStage = 'saveDraft';
   await report({ status: 'running', stage: 'saveDraft', userMessage: getMessage('v2MsgSaving') });
-  const el = Array.from(document.querySelectorAll<HTMLElement>('div, button, a')).find((n) => (n.textContent || '').trim() === '保存');
+  const el = Array.from(document.querySelectorAll<HTMLElement>('div, button, a')).find(
+    (n) => (n.textContent || '').trim() === '保存'
+  );
   if (!el) throw new Error('未找到保存按钮');
   el.click();
 }
 
 async function stageSubmitPublish(): Promise<void> {
   currentStage = 'submitPublish';
-  await report({ status: 'running', stage: 'submitPublish', userMessage: getMessage('v2MsgPublishing') });
-  const el = Array.from(document.querySelectorAll<HTMLElement>('div, button, a')).find((n) => (n.textContent || '').trim() === '发布');
+  await report({
+    status: 'running',
+    stage: 'submitPublish',
+    userMessage: getMessage('v2MsgPublishing')
+  });
+  const el = Array.from(document.querySelectorAll<HTMLElement>('div, button, a')).find(
+    (n) => (n.textContent || '').trim() === '发布'
+  );
   if (!el) throw new Error('未找到发布按钮');
   el.click();
 }
 
 async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<boolean> {
   currentStage = 'confirmSuccess';
-  await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgConfirmingResult') });
+  await report({
+    status: 'running',
+    stage: 'confirmSuccess',
+    userMessage: getMessage('v2MsgConfirmingResult')
+  });
 
-  const okTexts =
-    action === 'draft'
-      ? ['保存成功', '已保存']
-      : ['发布成功', '已发布'];
+  const okTexts = action === 'draft' ? ['保存成功', '已保存'] : ['发布成功', '已发布'];
 
   const deadline = Date.now() + 5000;
   while (Date.now() < deadline) {
     const text = document.body?.innerText || '';
     if (okTexts.some((t) => text.includes(t))) {
-      await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgSuccessDetectedStartVerify') });
+      await report({
+        status: 'running',
+        stage: 'confirmSuccess',
+        userMessage: getMessage('v2MsgSuccessDetectedStartVerify')
+      });
       return true;
     }
     await new Promise((r) => setTimeout(r, 300));
@@ -791,16 +881,23 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<boolean
   await report({
     status: 'waiting_user',
     stage: 'waitingUser',
-    userMessage: action === 'draft' ? getMessage('v2MsgPleaseConfirmSaveCompleted') : getMessage('v2MsgPleaseConfirmPublishCompleted'),
-    userSuggestion: getMessage('v2SugHandleModalRiskRequiredThenContinueOrRetry'),
+    userMessage:
+      action === 'draft'
+        ? getMessage('v2MsgPleaseConfirmSaveCompleted')
+        : getMessage('v2MsgPleaseConfirmPublishCompleted'),
+    userSuggestion: getMessage('v2SugHandleModalRiskRequiredThenContinueOrRetry')
   });
   return false;
 }
 
 async function runFlow(job: AnyJob): Promise<void> {
-  await report({ status: 'running', stage: 'openEntry', userMessage: getMessage('v2MsgEnteredEditorPage') });
+  await report({
+    status: 'running',
+    stage: 'openEntry',
+    userMessage: getMessage('v2MsgEnteredEditorPage')
+  });
   await stageDetectLogin();
-  await stageFillContent(job.article.title, job.article.contentHtml, job.article.sourceUrl);
+  await stageFillContent(job.article.title, job.article.contentHtml, job.article.sourceUrl || '');
   if (job.action === 'draft') {
     await stageSaveDraft();
     const confirmed = await stageConfirmSuccess('draft');
@@ -809,7 +906,7 @@ async function runFlow(job: AnyJob): Promise<void> {
       status: 'success',
       stage: 'done',
       userMessage: getMessage('v2MsgDraftSavedVerifyDone'),
-      devDetails: summarizeVerifyDetails({ draftUrl: location.href }),
+      devDetails: summarizeVerifyDetails({ draftUrl: location.href })
     });
     return;
   } else {
@@ -852,11 +949,10 @@ async function runFlow(job: AnyJob): Promise<void> {
         try {
           const u = new URL(target);
           const host = String(u.hostname || '').trim();
-          const path = String(u.pathname || '').replace(/\/+$/g, '').trim();
-          const pathToken = path
-            .split('/')
-            .filter(Boolean)
-            .pop();
+          const path = String(u.pathname || '')
+            .replace(/\/+$/g, '')
+            .trim();
+          const pathToken = path.split('/').filter(Boolean).pop();
           const hostHit = host ? hay.includes(host) : false;
           if (!hostHit) return false;
           if (!pathToken) return true;
@@ -899,16 +995,20 @@ async function runFlow(job: AnyJob): Promise<void> {
               method: 'POST',
               credentials: 'include',
               headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ uuid: noteUuid, peekKey: '', accessToken: '' }),
+              body: JSON.stringify({ uuid: noteUuid, peekKey: '', accessToken: '' })
             });
             if (!res.ok) throw new Error(`note/show api failed: ${res.status}`);
-            const json = (await res.json().catch(() => null)) as
-              | { detail?: { noteBase?: { title?: unknown; content?: unknown } } }
-              | null;
+            const json = (await res.json().catch(() => null)) as {
+              detail?: { noteBase?: { title?: unknown; content?: unknown } };
+            } | null;
             const title = String(json?.detail?.noteBase?.title || '').trim();
             const content = String(json?.detail?.noteBase?.content || '').trim();
             if (!content) throw new Error('note/show empty content');
-            if (content.length < 200 && !content.includes('原文链接') && !content.includes('mp.weixin.qq.com')) {
+            if (
+              content.length < 200 &&
+              !content.includes('原文链接') &&
+              !content.includes('mp.weixin.qq.com')
+            ) {
               throw new Error(`note/show content not ready (len=${content.length})`);
             }
             return { title, content };
@@ -918,19 +1018,22 @@ async function runFlow(job: AnyJob): Promise<void> {
         verifyFrom = 'api';
         apiTitle = show.title;
         apiContentLen = show.content.length;
-        ok = htmlContainsSourceUrl(show.content, job.article.sourceUrl);
+        ok = !job.article.sourceUrl || htmlContainsSourceUrl(show.content, job.article.sourceUrl);
         imageCount = countImagesInHtml(show.content);
       } catch {
         verifyFrom = 'dom';
-        ok = pageContainsSourceUrl(job.article.sourceUrl);
+        ok = !job.article.sourceUrl || pageContainsSourceUrl(job.article.sourceUrl);
         imageCount = (() => {
           if (!ok) return 0;
           try {
-            const anchor = Array.from(document.querySelectorAll<HTMLAnchorElement>('a')).find((a) => {
-              const href = String(a.href || '');
-              return href && job.article.sourceUrl && href.includes(job.article.sourceUrl);
-            });
-            const container = (anchor?.closest('article,main,section,div') as HTMLElement | null) || document.body;
+            const anchor = Array.from(document.querySelectorAll<HTMLAnchorElement>('a')).find(
+              (a) => {
+                const href = String(a.href || '');
+                return href && job.article.sourceUrl && href.includes(job.article.sourceUrl);
+              }
+            );
+            const container =
+              (anchor?.closest('article,main,section,div') as HTMLElement | null) || document.body;
             return container ? container.querySelectorAll('img').length : 0;
           } catch {
             return 0;
@@ -940,7 +1043,7 @@ async function runFlow(job: AnyJob): Promise<void> {
 
       const imageOk = expectedImagesForJob ? imageCount >= expectedImagesForJob : true;
       await report({
-        status: ok && imageOk ? 'success' : 'waiting_user',
+        status: ok && imageOk ? 'pending_review' : 'waiting_user',
         stage: ok && imageOk ? 'done' : 'waitingUser',
         userMessage:
           ok && imageOk
@@ -949,18 +1052,26 @@ async function runFlow(job: AnyJob): Promise<void> {
               ? getMessage('v2MsgVerifyFailedDetailNoSourceLink')
               : getMessage('v2MsgVerifyFailedDetailImageCountInsufficient', [
                   String(imageCount),
-                  String(expectedImagesForJob || '?'),
+                  String(expectedImagesForJob || '?')
                 ]),
-        userSuggestion: ok && imageOk ? undefined : getMessage('v2SugCheckSourceLinkAtEndThenContinue'),
+        userSuggestion:
+          ok && imageOk ? undefined : getMessage('v2SugCheckSourceLinkAtEndThenContinue'),
         devDetails: {
           ...summarizeVerifyDetails({
             publishedUrl: location.href,
-            sourceUrlPresent: ok,
+            candidatePublicUrl: location.href,
+            managementUrl: getChannelConfig(CHANNEL_ID).managementUrl,
+            reviewStatus: 'candidate_public_url',
+            expectedImageCount: expectedImagesForJob,
+            observedImageCount: imageCount,
+            sourceUrlPresent: job.article.sourceUrl ? ok : false
           }),
           verifyFrom,
-          ...(expectedImagesForJob ? { imageCount, expectedImages: expectedImagesForJob } : { imageCount }),
-          ...(verifyFrom === 'api' ? { apiTitle, apiContentLen, noteUuid } : { noteUuid }),
-        },
+          ...(expectedImagesForJob
+            ? { imageCount, expectedImages: expectedImagesForJob }
+            : { imageCount }),
+          ...(verifyFrom === 'api' ? { apiTitle, apiContentLen, noteUuid } : { noteUuid })
+        }
       });
       return;
     }
@@ -971,7 +1082,7 @@ async function runFlow(job: AnyJob): Promise<void> {
         status: 'running',
         stage: 'confirmSuccess',
         userMessage: getMessage('v2MsgMowenPublishTriggeredGoNotesListVerify'),
-        devDetails: summarizeVerifyDetails({ listUrl: 'https://note.mowen.cn/my/notes' }),
+        devDetails: summarizeVerifyDetails({ listUrl: 'https://note.mowen.cn/my/notes' })
       });
       location.href = 'https://note.mowen.cn/my/notes';
       return;
@@ -989,12 +1100,16 @@ async function bootstrap(): Promise<void> {
 
     if (!expectedImagesForJob) {
       try {
-        const html = withTitleAndSourceUrl(currentJob.article.contentHtml, currentJob.article.title, currentJob.article.sourceUrl);
+        const html = withTitleAndSourceUrl(
+          currentJob.article.contentHtml,
+          currentJob.article.title,
+          currentJob.article.sourceUrl || ''
+        );
         const tokens = buildRichContentTokens({
           contentHtml: html,
-          baseUrl: currentJob.article.sourceUrl,
+          baseUrl: currentJob.article.sourceUrl || '',
           sourceUrl: '',
-          htmlMode: 'raw',
+          htmlMode: 'raw'
         });
         expectedImagesForJob = tokens.filter((t) => t?.kind === 'image').length;
       } catch {
@@ -1009,7 +1124,11 @@ async function bootstrap(): Promise<void> {
 
     if (isListPage()) {
       currentStage = 'confirmSuccess';
-      await report({ status: 'running', stage: 'confirmSuccess', userMessage: getMessage('v2MsgVerifyFindNewNoteInList') });
+      await report({
+        status: 'running',
+        stage: 'confirmSuccess',
+        userMessage: getMessage('v2MsgVerifyFindNewNoteInList')
+      });
 
       if (!pageContainsTitle(currentJob.article.title)) {
         const key = 'bawei_v2_mowen_list_retry';
@@ -1020,7 +1139,7 @@ async function bootstrap(): Promise<void> {
             status: 'running',
             stage: 'confirmSuccess',
             userMessage: getMessage('v2MsgVerifyListNoTitleRefresh8s12', [String(n)]),
-            devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: false }),
+            devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: false })
           });
           setTimeout(() => location.reload(), 8000);
           return;
@@ -1049,19 +1168,30 @@ async function bootstrap(): Promise<void> {
           await report({
             status: 'running',
             stage: 'confirmSuccess',
-            userMessage: getMessage('v2MsgVerifyNotFoundNewArticleProbingDetails', ['1', String(probeCandidates.length)]),
-            devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: true, publishedUrl: probeCandidates[0] }),
+            userMessage: getMessage('v2MsgVerifyNotFoundNewArticleProbingDetails', [
+              '1',
+              String(probeCandidates.length)
+            ]),
+            devDetails: summarizeVerifyDetails({
+              listUrl: location.href,
+              listVisible: true,
+              publishedUrl: probeCandidates[0]
+            })
           });
           location.href = probeCandidates[0];
           return;
         }
 
         await report({
-          status: 'waiting_user',
-          stage: 'waitingUser',
+          status: 'pending_review',
+          stage: 'done',
           userMessage: getMessage('v2MsgVerifyFailedListNoTitleTitleIsFirstLine'),
-          userSuggestion: getMessage('v2SugRefreshListThenContinue'),
-          devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: false }),
+          devDetails: summarizeVerifyDetails({
+            listUrl: location.href,
+            managementUrl: location.href,
+            listVisible: false,
+            reviewStatus: 'submitted_not_indexed'
+          })
         });
         return;
       }
@@ -1069,13 +1199,15 @@ async function bootstrap(): Promise<void> {
       sessionStorage.removeItem('bawei_v2_mowen_list_retry');
 
       const node = findAnyElementContainingText(titleToken(currentJob.article.title));
-      const link = (node?.closest('a') as HTMLAnchorElement | null) || findAnchorContainingText(titleToken(currentJob.article.title));
+      const link =
+        (node?.closest('a') as HTMLAnchorElement | null) ||
+        findAnchorContainingText(titleToken(currentJob.article.title));
       if (link?.href) {
         await report({
           status: 'running',
           stage: 'confirmSuccess',
           userMessage: getMessage('v2MsgVerifyFoundTitleOpeningDetail'),
-          devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: true }),
+          devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: true })
         });
         location.href = link.href;
         return;
@@ -1086,7 +1218,7 @@ async function bootstrap(): Promise<void> {
         stage: 'waitingUser',
         userMessage: getMessage('v2MsgVerifyBlockedNoDetailLink'),
         userSuggestion: getMessage('v2SugOpenDetailManuallyThenWaitVerify'),
-        devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: true }),
+        devDetails: summarizeVerifyDetails({ listUrl: location.href, listVisible: true })
       });
       return;
     }
@@ -1119,11 +1251,10 @@ async function bootstrap(): Promise<void> {
         try {
           const u = new URL(target);
           const host = String(u.hostname || '').trim();
-          const path = String(u.pathname || '').replace(/\/+$/g, '').trim();
-          const pathToken = path
-            .split('/')
-            .filter(Boolean)
-            .pop();
+          const path = String(u.pathname || '')
+            .replace(/\/+$/g, '')
+            .trim();
+          const pathToken = path.split('/').filter(Boolean).pop();
           const hostHit = host ? hay.includes(host) : false;
           if (!hostHit) return false;
           if (!pathToken) return true;
@@ -1167,17 +1298,21 @@ async function bootstrap(): Promise<void> {
               method: 'POST',
               credentials: 'include',
               headers: { 'content-type': 'application/json' },
-              body: JSON.stringify({ uuid: noteUuid, peekKey: '', accessToken: '' }),
+              body: JSON.stringify({ uuid: noteUuid, peekKey: '', accessToken: '' })
             });
             if (!res.ok) throw new Error(`note/show api failed: ${res.status}`);
-            const json = (await res.json().catch(() => null)) as
-              | { detail?: { noteBase?: { title?: unknown; content?: unknown } } }
-              | null;
+            const json = (await res.json().catch(() => null)) as {
+              detail?: { noteBase?: { title?: unknown; content?: unknown } };
+            } | null;
             const title = String(json?.detail?.noteBase?.title || '').trim();
             const content = String(json?.detail?.noteBase?.content || '').trim();
             if (!content) throw new Error('note/show empty content');
             // 刚跳转到详情页时，接口可能返回极短内容；此处等到内容达到一定规模再开始验收。
-            if (content.length < 200 && !content.includes('原文链接') && !content.includes('mp.weixin.qq.com')) {
+            if (
+              content.length < 200 &&
+              !content.includes('原文链接') &&
+              !content.includes('mp.weixin.qq.com')
+            ) {
               throw new Error(`note/show content not ready (len=${content.length})`);
             }
             return { title, content };
@@ -1187,20 +1322,29 @@ async function bootstrap(): Promise<void> {
         verifyFrom = 'api';
         apiTitle = show.title;
         apiContentLen = show.content.length;
-        ok = htmlContainsSourceUrl(show.content, currentJob.article.sourceUrl);
+        ok =
+          !currentJob.article.sourceUrl ||
+          htmlContainsSourceUrl(show.content, currentJob.article.sourceUrl);
         imageCount = countImagesInHtml(show.content);
       } catch {
         // fallback: DOM（仍可能因异步渲染而不稳定，但比直接失败更好）
         verifyFrom = 'dom';
-        ok = pageContainsSourceUrl(currentJob.article.sourceUrl);
+        ok = !currentJob.article.sourceUrl || pageContainsSourceUrl(currentJob.article.sourceUrl);
         imageCount = (() => {
           if (!ok) return 0;
           try {
-            const anchor = Array.from(document.querySelectorAll<HTMLAnchorElement>('a')).find((a) => {
-              const href = String(a.href || '');
-              return href && currentJob?.article?.sourceUrl && href.includes(currentJob.article.sourceUrl);
-            });
-            const container = (anchor?.closest('article,main,section,div') as HTMLElement | null) || document.body;
+            const anchor = Array.from(document.querySelectorAll<HTMLAnchorElement>('a')).find(
+              (a) => {
+                const href = String(a.href || '');
+                return (
+                  href &&
+                  currentJob?.article?.sourceUrl &&
+                  href.includes(currentJob.article.sourceUrl)
+                );
+              }
+            );
+            const container =
+              (anchor?.closest('article,main,section,div') as HTMLElement | null) || document.body;
             return container ? container.querySelectorAll('img').length : 0;
           } catch {
             return 0;
@@ -1221,7 +1365,9 @@ async function bootstrap(): Promise<void> {
             try {
               const raw = sessionStorage.getItem(candidatesKey) || '[]';
               const parsed = JSON.parse(raw) as unknown;
-              return Array.isArray(parsed) ? parsed.map((v) => String(v || '').trim()).filter(Boolean) : [];
+              return Array.isArray(parsed)
+                ? parsed.map((v) => String(v || '').trim()).filter(Boolean)
+                : [];
             } catch {
               return [];
             }
@@ -1232,8 +1378,14 @@ async function bootstrap(): Promise<void> {
             await report({
               status: 'running',
               stage: 'confirmSuccess',
-              userMessage: getMessage('v2MsgVerifyNotFoundNewArticleProbingDetails', [String(idx + 1), String(candidates.length)]),
-              devDetails: summarizeVerifyDetails({ publishedUrl: candidates[idx], sourceUrlPresent: false }),
+              userMessage: getMessage('v2MsgVerifyNotFoundNewArticleProbingDetails', [
+                String(idx + 1),
+                String(candidates.length)
+              ]),
+              devDetails: summarizeVerifyDetails({
+                publishedUrl: candidates[idx],
+                sourceUrlPresent: false
+              })
             });
             location.href = candidates[idx];
             return;
@@ -1253,7 +1405,12 @@ async function bootstrap(): Promise<void> {
       }
 
       await report({
-        status: ok && imageOk ? 'success' : 'waiting_user',
+        status:
+          ok && imageOk
+            ? currentJob.action === 'draft'
+              ? 'success'
+              : 'pending_review'
+            : 'waiting_user',
         stage: ok && imageOk ? 'done' : 'waitingUser',
         userMessage:
           ok && imageOk
@@ -1262,15 +1419,26 @@ async function bootstrap(): Promise<void> {
               ? getMessage('v2MsgVerifyFailedDetailNoSourceLink')
               : getMessage('v2MsgVerifyFailedDetailImageCountInsufficient', [
                   String(imageCount),
-                  String(expectedImagesForJob || '?'),
+                  String(expectedImagesForJob || '?')
                 ]),
-        userSuggestion: ok && imageOk ? undefined : getMessage('v2SugCheckSourceLinkAtEndThenContinue'),
+        userSuggestion:
+          ok && imageOk ? undefined : getMessage('v2SugCheckSourceLinkAtEndThenContinue'),
         devDetails: {
-          ...summarizeVerifyDetails({ publishedUrl: location.href, sourceUrlPresent: ok }),
+          ...summarizeVerifyDetails({
+            publishedUrl: location.href,
+            candidatePublicUrl: location.href,
+            managementUrl: getChannelConfig(CHANNEL_ID).managementUrl,
+            reviewStatus: 'candidate_public_url',
+            expectedImageCount: expectedImagesForJob,
+            observedImageCount: imageCount,
+            sourceUrlPresent: currentJob.article.sourceUrl ? ok : false
+          }),
           verifyFrom,
-          ...(expectedImagesForJob ? { imageCount, expectedImages: expectedImagesForJob } : { imageCount }),
-          ...(verifyFrom === 'api' ? { apiTitle, apiContentLen, noteUuid } : { noteUuid }),
-        },
+          ...(expectedImagesForJob
+            ? { imageCount, expectedImages: expectedImagesForJob }
+            : { imageCount }),
+          ...(verifyFrom === 'api' ? { apiTitle, apiContentLen, noteUuid } : { noteUuid })
+        }
       });
       return;
     }
@@ -1281,7 +1449,7 @@ async function bootstrap(): Promise<void> {
       stage: currentStage,
       userMessage: getMessage('v2MsgFailed'),
       userSuggestion: getMessage('v2SugCheckLoginOrDomThenRetry'),
-      devDetails: { message: error instanceof Error ? error.message : String(error) },
+      devDetails: { message: error instanceof Error ? error.message : String(error) }
     });
   }
 }
@@ -1296,10 +1464,18 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     stopRequested = true;
     return;
   }
-  if (message?.type === V2_REQUEST_RETRY && message.jobId === currentJob.jobId && message.channelId === CHANNEL_ID) {
+  if (
+    message?.type === V2_REQUEST_RETRY &&
+    message.jobId === currentJob.jobId &&
+    message.channelId === CHANNEL_ID
+  ) {
     bootstrap();
   }
-  if (message?.type === V2_REQUEST_CONTINUE && message.jobId === currentJob.jobId && message.channelId === CHANNEL_ID) {
+  if (
+    message?.type === V2_REQUEST_CONTINUE &&
+    message.jobId === currentJob.jobId &&
+    message.channelId === CHANNEL_ID
+  ) {
     bootstrap();
   }
 });

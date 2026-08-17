@@ -18,12 +18,61 @@ const IMAGE_PROXY_ENDPOINT = 'https://read.useai.online/api/image-proxy?url=';
 const IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 const IMAGE_MIN_BYTES = 32;
 
+export function isTransientImageUrl(rawUrl: string): boolean {
+  const value = String(rawUrl || '').trim();
+  if (!value) return true;
+  if (/^(?:blob:|data:|chrome-extension:|moz-extension:)/i.test(value)) return true;
+  try {
+    const url = new URL(value);
+    const host = url.hostname.toLowerCase();
+    if (host === '127.0.0.1' || host === 'localhost' || host === '[::1]') return true;
+    if (host === 'read.useai.online' && url.pathname.startsWith('/api/image-proxy')) return true;
+    return url.protocol !== 'https:' && url.protocol !== 'http:';
+  } catch {
+    return true;
+  }
+}
+
+export function isPlatformHostedImageUrl(candidateUrl: string, sourceUrl?: string): boolean {
+  const candidate = String(candidateUrl || '').trim();
+  if (isTransientImageUrl(candidate)) return false;
+  const source = String(sourceUrl || '').trim();
+  if (!source) return true;
+  try {
+    const candidateParsed = new URL(candidate);
+    const sourceParsed = new URL(source);
+    return (
+      `${candidateParsed.origin}${candidateParsed.pathname}` !==
+      `${sourceParsed.origin}${sourceParsed.pathname}`
+    );
+  } catch {
+    return candidate !== source;
+  }
+}
+
+export async function waitForPlatformHostedImageUrl(
+  readUrl: () => string,
+  sourceUrl?: string,
+  timeoutMs = 60_000
+): Promise<string> {
+  const deadline = Date.now() + timeoutMs;
+  let lastUrl = '';
+  while (Date.now() < deadline) {
+    lastUrl = String(readUrl() || '').trim();
+    if (isPlatformHostedImageUrl(lastUrl, sourceUrl)) return lastUrl;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  throw new Error(`图片未转换为平台托管地址：${lastUrl || '<empty>'}`);
+}
+
 function normalizeProxyImageUrl(raw: string): string {
   const value = String(raw || '').trim();
   if (!value) return '';
   try {
     const outer = new URL(value);
-    const isProxy = outer.hostname.toLowerCase() === 'read.useai.online' && outer.pathname.startsWith('/api/image-proxy');
+    const isProxy =
+      outer.hostname.toLowerCase() === 'read.useai.online' &&
+      outer.pathname.startsWith('/api/image-proxy');
     if (!isProxy) return outer.toString();
     const innerRaw = String(outer.searchParams.get('url') || '').trim();
     if (!innerRaw) return outer.toString();
@@ -53,13 +102,18 @@ function buildDirectFetchCandidates(rawUrl: string): string[] {
 
   try {
     const u = new URL(input);
-    const isProxy = u.hostname.toLowerCase() === 'read.useai.online' && u.pathname.startsWith('/api/image-proxy');
+    const isProxy =
+      u.hostname.toLowerCase() === 'read.useai.online' && u.pathname.startsWith('/api/image-proxy');
     if (isProxy) {
       const innerRaw = String(u.searchParams.get('url') || '').trim();
       if (innerRaw) {
         try {
           const inner = new URL(innerRaw);
-          if (inner.protocol === 'http:' && (inner.hostname.toLowerCase().endsWith('.qpic.cn') || inner.hostname.toLowerCase().endsWith('.qlogo.cn'))) {
+          if (
+            inner.protocol === 'http:' &&
+            (inner.hostname.toLowerCase().endsWith('.qpic.cn') ||
+              inner.hostname.toLowerCase().endsWith('.qlogo.cn'))
+          ) {
             inner.protocol = 'https:';
           }
           if (inner.hash) inner.hash = '';
@@ -97,7 +151,13 @@ function looksLikeImageBinary(mimeType: string, buffer: ArrayBuffer, size: numbe
 
   if (mt.includes('png')) {
     if (byteLen < 64) return false;
-    return head.length >= 8 && head[0] === 0x89 && head[1] === 0x50 && head[2] === 0x4e && head[3] === 0x47;
+    return (
+      head.length >= 8 &&
+      head[0] === 0x89 &&
+      head[1] === 0x50 &&
+      head[2] === 0x4e &&
+      head[3] === 0x47
+    );
   }
   if (mt.includes('jpeg') || mt.includes('jpg')) {
     if (byteLen < 64) return false;
@@ -124,21 +184,28 @@ async function fetchImageAsFileByDirectFetch(url: string): Promise<File> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), IMAGE_FETCH_MESSAGE_TIMEOUT_MS);
   try {
-    const res = await fetch(candidate, { credentials: 'omit', signal: controller.signal, cache: 'no-store' });
+    const res = await fetch(candidate, {
+      credentials: 'omit',
+      signal: controller.signal,
+      cache: 'no-store'
+    });
     if (!res.ok) throw new Error(`direct fetch failed: ${res.status}`);
 
     const mimeType = String(res.headers.get('content-type') || '')
       .split(';')[0]
       .trim()
       .toLowerCase();
-    if (!mimeType.startsWith('image/')) throw new Error(`direct fetch unexpected content-type: ${mimeType || 'empty'}`);
+    if (!mimeType.startsWith('image/'))
+      throw new Error(`direct fetch unexpected content-type: ${mimeType || 'empty'}`);
 
     const buffer = await res.arrayBuffer();
     const size = Number(buffer?.byteLength || 0);
     if (!size) throw new Error('direct fetch empty image');
     if (size > IMAGE_MAX_BYTES) throw new Error(`direct fetch image too large: ${size}`);
     if (!looksLikeImageBinary(mimeType, buffer, size)) {
-      throw new Error(`direct fetch invalid image binary: mime=${mimeType || 'empty'} size=${size}`);
+      throw new Error(
+        `direct fetch invalid image binary: mime=${mimeType || 'empty'} size=${size}`
+      );
     }
 
     const ext = pickFileExtension(mimeType);
@@ -196,7 +263,9 @@ function base64ToArrayBuffer(input: string): ArrayBuffer {
   try {
     binary = atob(base64);
   } catch (error) {
-    throw new Error(`invalid base64 image buffer: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `invalid base64 image buffer: ${error instanceof Error ? error.message : String(error)}`
+    );
   }
   const bytes = new Uint8Array(binary.length);
   for (let i = 0; i < binary.length; i += 1) {
@@ -216,11 +285,14 @@ export async function fetchImageAsFile(jobId: string, url: string): Promise<File
         chrome.runtime.sendMessage({
           type: V3_FETCH_IMAGE,
           jobId,
-          url: normalizedInput,
+          url: normalizedInput
         }),
         new Promise<never>((_, reject) => {
-          setTimeout(() => reject(new Error('fetch image message timeout')), IMAGE_FETCH_MESSAGE_TIMEOUT_MS);
-        }),
+          setTimeout(
+            () => reject(new Error('fetch image message timeout')),
+            IMAGE_FETCH_MESSAGE_TIMEOUT_MS
+          );
+        })
       ])) as {
         success?: boolean;
         error?: string;
@@ -237,7 +309,8 @@ export async function fetchImageAsFile(jobId: string, url: string): Promise<File
       const mimeType = String(res.mimeType || 'image/png');
       const size = Number(res.size || 0);
       const buffer = (() => {
-        if (typeof res.bufferBase64 === 'string' && res.bufferBase64.trim()) return base64ToArrayBuffer(res.bufferBase64);
+        if (typeof res.bufferBase64 === 'string' && res.bufferBase64.trim())
+          return base64ToArrayBuffer(res.bufferBase64);
         if (res.buffer instanceof ArrayBuffer) return res.buffer;
         return null;
       })();
@@ -287,7 +360,8 @@ export async function fetchImageAsFile(jobId: string, url: string): Promise<File
           `empty image buffer (size=${size} keys=${keys.join(',')} base64Len=${base64Len} bufferTag=${bufferTag} bufferKeys=${bufferKeysSample} buffer0=${bufferSample0} bufferByteLength=${bufferByteLength})`
         );
       }
-      if (buffer.byteLength !== size) throw new Error(`invalid image buffer size: ${buffer.byteLength}/${size}`);
+      if (buffer.byteLength !== size)
+        throw new Error(`invalid image buffer size: ${buffer.byteLength}/${size}`);
       if (!looksLikeImageBinary(mimeType, buffer, size)) {
         throw new Error(`invalid image binary: mime=${mimeType || 'empty'} size=${size}`);
       }
@@ -328,11 +402,26 @@ function scoreImageFileInput(input: HTMLInputElement, index: number): number {
   const name = String(input.getAttribute('name') || '').toLowerCase();
   const id = String(input.id || '').toLowerCase();
   const cls = String(input.className || '').toLowerCase();
-  const parentText = String(input.closest('form,section,article,div')?.textContent || '').slice(0, 200).toLowerCase();
+  const parentText = String(input.closest('form,section,article,div')?.textContent || '')
+    .slice(0, 200)
+    .toLowerCase();
 
-  const isImageAccept = accept.includes('image') || accept.includes('png') || accept.includes('jpg') || accept.includes('jpeg') || accept.includes('webp');
-  const looksImage = name.includes('image') || id.includes('image') || cls.includes('image') || cls.includes('upload');
-  const inImageDialog = parentText.includes('选择图片') || parentText.includes('上传图片') || parentText.includes('插图') || parentText.includes('image');
+  const isImageAccept =
+    accept.includes('image') ||
+    accept.includes('png') ||
+    accept.includes('jpg') ||
+    accept.includes('jpeg') ||
+    accept.includes('webp');
+  const looksImage =
+    name.includes('image') ||
+    id.includes('image') ||
+    cls.includes('image') ||
+    cls.includes('upload');
+  const inImageDialog =
+    parentText.includes('选择图片') ||
+    parentText.includes('上传图片') ||
+    parentText.includes('插图') ||
+    parentText.includes('image');
   const inCoverArea = parentText.includes('封面') || parentText.includes('cover');
 
   let score = 0;
@@ -377,6 +466,25 @@ function isVisibleElement(node: Element | null): node is HTMLElement {
   return rect.width > 1 && rect.height > 1;
 }
 
+function isUnsafeImageToolbarCandidate(node: HTMLElement): boolean {
+  const ownText =
+    `${node.textContent || ''} ${node.getAttribute('title') || ''} ${node.getAttribute('aria-label') || ''}`
+      .replace(/\s+/g, ' ')
+      .trim()
+      .toLowerCase();
+  if (/上传日志|帮助中心|联系客服|功能更新|效率指南|upload log|help center/.test(ownText)) {
+    return true;
+  }
+  const utilityAncestor = node.closest<HTMLElement>(
+    '[role="menu"],aside,nav,[class*="help" i],[class*="support" i],[class*="log" i]'
+  );
+  const utilityText = String(utilityAncestor?.textContent || '')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+  return /上传日志|帮助中心|联系客服|功能更新|效率指南|upload log|help center/.test(utilityText);
+}
+
 function findToolbarImageButtons(doc: Document): HTMLElement[] {
   const selectors = [
     'button[aria-label*="图片" i]',
@@ -388,12 +496,14 @@ function findToolbarImageButtons(doc: Document): HTMLElement[] {
     '[role="button"][aria-label*="图片" i]',
     '[role="button"][title*="图片" i]',
     '[role="button"][aria-label*="image" i]',
-    '[role="button"][title*="image" i]',
+    '[role="button"][title*="image" i]'
   ];
 
   const out: HTMLElement[] = [];
   for (const selector of selectors) {
-    const nodes = Array.from(doc.querySelectorAll(selector)).filter(isVisibleElement);
+    const nodes = Array.from(doc.querySelectorAll(selector))
+      .filter(isVisibleElement)
+      .filter((node) => !isUnsafeImageToolbarCandidate(node));
     for (const node of nodes) {
       if (!out.includes(node)) out.push(node);
       if (out.length >= IMAGE_FALLBACK_CLICK_MAX) return out;
@@ -403,8 +513,17 @@ function findToolbarImageButtons(doc: Document): HTMLElement[] {
   const fuzzy = Array.from(doc.querySelectorAll<HTMLElement>('button,[role="button"],a,span,div'))
     .filter((node) => {
       if (!isVisibleElement(node)) return false;
-      const txt = `${node.textContent || ''} ${node.getAttribute('title') || ''} ${node.getAttribute('aria-label') || ''}`.toLowerCase();
-      return txt.includes('图片') || txt.includes('插图') || txt.includes('上传') || txt.includes('image') || txt.includes('upload');
+      if (isUnsafeImageToolbarCandidate(node)) return false;
+      const txt =
+        `${node.textContent || ''} ${node.getAttribute('title') || ''} ${node.getAttribute('aria-label') || ''}`.toLowerCase();
+      if (txt.replace(/\s+/g, ' ').trim().length > 80) return false;
+      return (
+        txt.includes('图片') ||
+        txt.includes('插图') ||
+        txt.includes('上传') ||
+        txt.includes('image') ||
+        txt.includes('upload')
+      );
     })
     .slice(0, IMAGE_FALLBACK_CLICK_MAX);
 
@@ -450,7 +569,9 @@ export async function insertImageAtCursor(params: {
     await retryUntil(
       async () => {
         const imgs = Array.from(editorRoot.querySelectorAll<HTMLImageElement>('img'));
-        const sources = imgs.map((img) => String(img.getAttribute('src') || '').trim()).filter(Boolean);
+        const sources = imgs
+          .map((img) => String(img.getAttribute('src') || '').trim())
+          .filter(Boolean);
         const hasNewSource = sources.some((src) => src && !beforeSources.has(src));
         if (hasNewSource || imgs.length > beforeCount) return true;
         throw new Error('img not inserted yet');
@@ -517,7 +638,9 @@ export async function insertImageAtCursor(params: {
   try {
     const docs = topDoc === doc ? [doc] : [doc, topDoc];
     for (const docCandidate of docs) {
-      const beforeInputs = new Set(Array.from(docCandidate.querySelectorAll<HTMLInputElement>('input[type="file"]')));
+      const beforeInputs = new Set(
+        Array.from(docCandidate.querySelectorAll<HTMLInputElement>('input[type="file"]'))
+      );
       const buttons = findToolbarImageButtons(docCandidate);
       for (const btn of buttons) {
         try {
@@ -527,7 +650,9 @@ export async function insertImageAtCursor(params: {
         }
         await new Promise((r) => setTimeout(r, 220));
 
-        const nowInputs = Array.from(docCandidate.querySelectorAll<HTMLInputElement>('input[type="file"]'));
+        const nowInputs = Array.from(
+          docCandidate.querySelectorAll<HTMLInputElement>('input[type="file"]')
+        );
         const newInputs = nowInputs.filter((input) => !beforeInputs.has(input));
         const candidateInputs = newInputs.length ? newInputs : nowInputs;
         const scored = candidateInputs
@@ -576,7 +701,11 @@ export async function fillEditorByTokens(params: {
   directHtmlAppend?: boolean;
   skipHtmlPasteEvent?: boolean;
   onImageProgress?: (current: number, total: number, imageUrl: string) => Promise<void> | void;
-  insertImageAtCursorOverride?: (args: { jobId: string; imageUrl: string; editorRoot: HTMLElement }) => Promise<void>;
+  insertImageAtCursorOverride?: (args: {
+    jobId: string;
+    imageUrl: string;
+    editorRoot: HTMLElement;
+  }) => Promise<void>;
 }): Promise<void> {
   const editorRoot = params.editorRoot;
   const doc = editorRoot.ownerDocument;
@@ -656,8 +785,17 @@ export async function fillEditorByTokens(params: {
     }
     try {
       (editorRoot as HTMLElement).innerText = ((editorRoot as HTMLElement).innerText || '') + t;
-      editorRoot.dispatchEvent(new view.InputEvent('input', { bubbles: true, cancelable: true, data: t, inputType: 'insertText' }));
-      editorRoot.dispatchEvent(new view.CompositionEvent('compositionend', { bubbles: true, data: t }));
+      editorRoot.dispatchEvent(
+        new view.InputEvent('input', {
+          bubbles: true,
+          cancelable: true,
+          data: t,
+          inputType: 'insertText'
+        })
+      );
+      editorRoot.dispatchEvent(
+        new view.CompositionEvent('compositionend', { bubbles: true, data: t })
+      );
     } catch {
       // ignore
     }
@@ -691,7 +829,10 @@ export async function fillEditorByTokens(params: {
     const hasGrowth = (): boolean => {
       try {
         const now = String(editorRoot.textContent || '').length;
-        return now - baselineLen > Math.min(20, Math.max(4, Math.round(plain.replace(/\s+/g, '').length * 0.15)));
+        return (
+          now - baselineLen >
+          Math.min(20, Math.max(4, Math.round(plain.replace(/\s+/g, '').length * 0.15)))
+        );
       } catch {
         return false;
       }
@@ -712,10 +853,12 @@ export async function fillEditorByTokens(params: {
         }
 
         try {
-          const ev = new (view as unknown as { ClipboardEvent: typeof ClipboardEvent }).ClipboardEvent('paste', {
+          const ev = new (
+            view as unknown as { ClipboardEvent: typeof ClipboardEvent }
+          ).ClipboardEvent('paste', {
             bubbles: true,
             cancelable: true,
-            clipboardData: dt,
+            clipboardData: dt
           } as unknown as ClipboardEventInit);
           editorRoot.dispatchEvent(ev);
           return true;

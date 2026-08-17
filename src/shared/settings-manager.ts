@@ -18,7 +18,7 @@ export const SETTINGS_KEY = 'copilot_settings';
 export const DEFAULT_SETTINGS: Settings = {
   autoPublish: false,
   autoCloseOriginal: false,
-  language: 'system',
+  language: 'system'
 };
 
 export function getSystemLanguage(): 'system' | 'en' | 'zh' {
@@ -102,14 +102,14 @@ export async function saveSettings(settings: Partial<Settings>): Promise<void> {
       } catch {
         currentSettings = DEFAULT_SETTINGS;
       }
-      
+
       // Merge with new settings
       const mergedSettings = { ...currentSettings, ...settings };
 
       // Check storage size limits
       const dataString = JSON.stringify({ [SETTINGS_KEY]: mergedSettings });
       const dataSize = new Blob([dataString]).size;
-      
+
       if (dataSize > SYNC_QUOTA_BYTES_PER_ITEM) {
         console.warn('Settings data too large for chrome.storage.sync, attempting to optimize...');
         // Try to optimize by removing non-essential data or compressing
@@ -126,7 +126,9 @@ export async function saveSettings(settings: Partial<Settings>): Promise<void> {
   } catch (error) {
     console.error('Error saving settings:', error);
     if (error instanceof Error && error.message?.includes('QUOTA_BYTES')) {
-      console.error('Storage quota exceeded. Consider reducing the number of prompts or their size.');
+      console.error(
+        'Storage quota exceeded. Consider reducing the number of prompts or their size.'
+      );
       throw new Error('Storage quota exceeded. Please reduce the number or size of your prompts.');
     }
     throw error;

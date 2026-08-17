@@ -1,15 +1,8 @@
-# bawei - Cross-post WeChat Official Account Articles
+# bawei — Cross-post WeChat Articles with Verifiable Results
 
-bawei is a Chrome extension that helps you publish the same WeChat Official Account article to multiple platforms. When you open an article page on `mp.weixin.qq.com`, bawei injects a publish panel, extracts the article title and rendered HTML content, then opens the target editors and fills everything for you.
+bawei is a Chrome extension for authors who need to reuse one WeChat Official Account article across multiple publishing platforms. Open an article on `mp.weixin.qq.com`, choose draft or publish, and bawei extracts the title, structured body, supported images, and optional source URL before processing the selected channels one at a time.
 
-## What it does
-
-- Extracts: title, rendered HTML content, and the source URL (current page)
-- Runs multi-platform publishing serially, focusing one editor at a time (save draft or publish)
-- “Original-first” behavior: if a platform has no usable source-link field (or it’s not available in original mode), bawei appends `原文链接：<url>` to the end of the content
-- Built-in diagnostics: if you hit login / captcha / identity verification / required fields / risk-control prompts, bawei shows guidance in the panel so you can fix it and continue/retry
-
-## Supported platforms (V2)
+## Supported platforms
 
 - CSDN
 - Tencent Cloud Developer Community
@@ -22,11 +15,20 @@ bawei is a Chrome extension that helps you publish the same WeChat Official Acco
 - Toutiao
 - Feishu Docs
 
-## Privacy
+## What bawei does
 
-- 100% local: no server required, no article content is uploaded by bawei
-- Permissions are used only to read the WeChat article page, open target tabs, and automate form filling/verification on those pages
+- Runs selected channels serially so only one editor is active at a time.
+- Preserves headings, paragraphs, lists, links, and supported images when the destination editor allows them.
+- Uploads images to the destination platform where supported instead of treating temporary local or proxy URLs as published media.
+- Supports saving drafts and submitting formal publications.
+- Reports seven distinct outcomes: public success, pending review, rejected, waiting for user security verification, technical failure, not logged in, and skipped duplicate.
+- Prevents duplicate submissions using a per-channel content hash. Pending, rejected, and user-verification states are rechecked or retained, not silently reposted.
+- Counts a formal publication as successful only after a fresh anonymous browser context can open the public detail page and verify the title, body anchors, and expected platform-hosted images.
 
-## Notes
+## Privacy and permissions
 
-- Image policy (current version): no image uploading. External image links are kept; if a platform blocks external images, follow the panel hints to fix them manually.
+bawei runs locally in Chrome and does not operate an article-processing server. Article content is read from the page you selected and sent only to the publishing sites you chose. The extension uses storage for local settings and publishing state, tabs to open and focus destination editors, scripting to automate those pages, and narrowly scoped host access for supported image transfer and local Markdown publishing.
+
+## Important limitations
+
+Each destination platform controls login, CAPTCHA, identity verification, required fields, moderation, and publication timing. bawei does not bypass those controls. A clicked submit button or an item visible only in an authenticated management list is not reported as public success. If a platform changes its editor or blocks an action, bawei keeps the browser open and reports the concrete blocker so you can inspect it safely.

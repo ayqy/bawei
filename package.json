@@ -1,7 +1,7 @@
 {
   "name": "bawei",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Cross-post WeChat Official Account articles to multiple platforms (draft/publish) with built-in diagnostics.",
   "type": "module",
   "scripts": {
@@ -25,6 +25,10 @@
     "test:serial:integration": "node scripts/background-serial.integration.test.mjs",
     "test:serial:e2e": "npm run build && node scripts/v3-e2e.mjs serial-all",
     "test:markdown": "node scripts/local-markdown.test.mjs",
+    "test:channels": "node scripts/channel-config.test.mjs",
+    "test:ledger": "node scripts/publication-ledger.test.mjs",
+    "test:verifier": "node scripts/publication-verifier.test.mjs",
+    "test:publish-core": "npm run test:channels && npm run test:ledger && npm run test:verifier && npm run test:markdown",
     "lint": "eslint . --ext .ts,.tsx --report-unused-disable-directives --max-warnings 0",
     "lint:fix": "eslint . --ext .ts,.tsx --fix",
     "format": "prettier --write \"src/**/*.{ts,tsx,css,html}\"",

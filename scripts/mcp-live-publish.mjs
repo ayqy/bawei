@@ -2,19 +2,9 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { chromium } from 'playwright';
+import { getChannelConfig, getChannelIds } from './channel-config.mjs';
 
-const ALL_CHANNELS = [
-  'csdn',
-  'tencent-cloud-dev',
-  'cnblogs',
-  'oschina',
-  'woshipm',
-  'mowen',
-  'sspai',
-  'baijiahao',
-  'toutiao',
-  'feishu-docs',
-];
+const ALL_CHANNELS = getChannelIds();
 
 const LIVE_PUBLISH_CHANNELS_RAW = String(process.env.LIVE_PUBLISH_CHANNELS || '').trim();
 
@@ -30,33 +20,11 @@ function parseActiveChannels(raw) {
 }
 
 const ACTIVE_CHANNELS = parseActiveChannels(LIVE_PUBLISH_CHANNELS_RAW);
-const OSCHINA_DIRECT_WRITE_ENTRY_URL = 'https://my.oschina.net/u/1/blog/write';
+const CHANNEL_ENTRY_URLS = Object.fromEntries(ALL_CHANNELS.map((channelId) => [channelId, getChannelConfig(channelId).entryUrl]));
 
-const CHANNEL_ENTRY_URLS = {
-  csdn: 'https://mp.csdn.net/mp_blog/creation/editor',
-  'tencent-cloud-dev': 'https://cloud.tencent.com/developer/article/write',
-  cnblogs: 'https://i.cnblogs.com/posts/edit',
-  oschina: OSCHINA_DIRECT_WRITE_ENTRY_URL,
-  woshipm: 'https://www.woshipm.com/writing',
-  mowen: 'https://note.mowen.cn/editor',
-  sspai: 'https://sspai.com/write',
-  baijiahao: 'https://baijiahao.baidu.com/builder/rc/edit?type=news&is_from_cms=1',
-  toutiao: 'https://mp.toutiao.com/profile_v4/graphic/publish',
-  'feishu-docs': 'https://wuxinxuexi.feishu.cn/drive/folder/PyWAfSFwrlMgiydvlHectMn2nSd',
-};
-
-const LOGIN_URL_RULES = {
-  csdn: [/passport\.csdn\.net\/login/i, /\/login/i],
-  'tencent-cloud-dev': [/cloud\.tencent\.com\/login/i, /\/account\/login/i, /\/login/i],
-  cnblogs: [/account\.cnblogs\.com\/signin/i, /\/signin/i, /\/login/i],
-  oschina: [/oschina\.net\/home\/login/i, /\/login/i],
-  woshipm: [/passport/i, /\/login/i, /\/signin/i],
-  mowen: [/\/login/i, /\/signin/i],
-  sspai: [/\/login/i, /\/signin/i],
-  baijiahao: [/passport/i, /\/login/i],
-  toutiao: [/\/auth\/page\/login/i, /\/login/i],
-  'feishu-docs': [/passport\.feishu\.cn/i, /\/login/i, /\/signin/i],
-};
+const LOGIN_URL_RULES = Object.fromEntries(
+  ALL_CHANNELS.map((channelId) => [channelId, getChannelConfig(channelId).loginUrlPatterns.map((pattern) => new RegExp(pattern, 'i'))])
+);
 
 const LOGIN_AUDIT_STRICT_TEXT_RULES = {
   oschina: /请登录|未登录|登录后继续|登录即可|请先登录|扫码登录|手机号登录|登录|注册|sign in|log in/i,
@@ -90,6 +58,8 @@ function nowIso() {
 function normalizeBadge(badge) {
   const text = String(badge || '').trim();
   if (text.includes('成功')) return 'success';
+  if (text.includes('审核中') || text.includes('待审核') || text.includes('pending_review')) return 'pending_review';
+  if (text.includes('退回') || text.includes('未通过') || text.includes('rejected')) return 'rejected';
   if (text.includes('进行中')) return 'running';
   if (text.includes('等待处理')) return 'waiting_user';
   if (text.includes('未登录')) return 'not_logged_in';
@@ -544,11 +514,13 @@ async function waitSingleChannelResult(params) {
           console.log(`[publish:${channelId}] 检测到图片失败痕迹，已触发继续`);
         }
       } else {
-        updateChannelProgress(progress, channelId, 'success', `发布成功 | ${row.progress || ''}`);
+        updateChannelProgress(progress, channelId, 'pending_review', `已提交，必须由 CDP runner 完成匿名公开验收 | ${row.progress || ''}`);
         saveProgress(progressPath, progress);
-        return { status: 'success' };
+        return { status: 'pending_review' };
       }
     }
+
+    if (status === 'pending_review' || status === 'rejected') return { status };
 
     if (status === 'not_logged_in') {
       return { status: 'not_logged_in' };
@@ -660,7 +632,7 @@ async function main() {
   while (true) {
     const pending = ACTIVE_CHANNELS.filter((id) => {
       const status = progress.channels[id].status;
-      if (status === 'success') return false;
+      if (status === 'success' || status === 'pending_review' || status === 'rejected') return false;
       if (!WAIT_FOR_LOGIN && status === 'not_logged_in') return false;
       return true;
     });
@@ -669,7 +641,10 @@ async function main() {
       if (!WAIT_FOR_LOGIN && blockedByLogin.length) {
         console.log(`\n⏸️ 已完成非登录阻塞渠道；以下渠道仍需人工登录：${blockedByLogin.join(', ')}`);
       } else {
-        console.log(`\n✅ 全部目标渠道发布成功（${ACTIVE_CHANNELS.length}/${ACTIVE_CHANNELS.length}）`);
+        const success = ACTIVE_CHANNELS.filter((id) => progress.channels[id].status === 'success');
+        const pendingReview = ACTIVE_CHANNELS.filter((id) => progress.channels[id].status === 'pending_review');
+        const rejected = ACTIVE_CHANNELS.filter((id) => progress.channels[id].status === 'rejected');
+        console.log(`\n发布终态：公开成功 ${success.length}/${ACTIVE_CHANNELS.length}，待匿名验收 ${pendingReview.length}，退回 ${rejected.length}`);
       }
       saveProgress(progressPath, progress);
       if (KEEP_BROWSER_OPEN) {
@@ -721,6 +696,11 @@ async function main() {
 
       if (result.status === 'success') {
         console.log(`[publish] ${channelId}: success`);
+        continue;
+      }
+
+      if (result.status === 'pending_review' || result.status === 'rejected') {
+        console.log(`[publish] ${channelId}: ${result.status}`);
         continue;
       }
 

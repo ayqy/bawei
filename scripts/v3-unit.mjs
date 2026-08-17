@@ -150,6 +150,36 @@ async function testFillEditorByTokensWithImage(page) {
   assert(result.imgCount >= 1, 'editor should contain at least 1 img');
 }
 
+async function testVisibleLoginSignals(page) {
+  await page.setContent(`
+    <div>创作中心 退出登录</div>
+    <input type="password" style="display:none" />
+  `);
+  const hiddenPassword = await page.evaluate(() => detectPageLoginState());
+  assert(hiddenPassword.status === 'logged_in', 'hidden password input must not be treated as logged out');
+
+  await page.setContent(`
+    <button>登录</button>
+    <input type="password" style="display:block;width:200px;height:30px" />
+  `);
+  const visiblePassword = await page.evaluate(() => detectPageLoginState());
+  assert(visiblePassword.status === 'not_logged_in', 'visible password form must be treated as logged out');
+}
+
+async function testPublishOutcomeAndImageStability(page) {
+  const result = await page.evaluate(() => ({
+    pending: classifySubmittedPublishPage({ pageText: '文章审核中', pendingPatterns: ['审核中'], rejectedPatterns: ['未通过'] }),
+    rejected: classifySubmittedPublishPage({ pageText: '审核未通过，文章已退回', pendingPatterns: ['审核中'], rejectedPatterns: ['未通过'] }),
+    loopback: isTransientImageUrl('http://127.0.0.1:1234/a.png'),
+    proxy: isTransientImageUrl('https://read.useai.online/api/image-proxy?url=x'),
+    hosted: isPlatformHostedImageUrl('https://cdn.example.com/a.png', 'https://source.example.com/a.png'),
+  }));
+  assert(result.pending.status === 'pending_review', 'reviewing content should be pending_review');
+  assert(result.rejected.status === 'rejected', 'rejected content should be rejected');
+  assert(result.loopback && result.proxy, 'loopback and proxy images should be transient');
+  assert(result.hosted, 'platform-hosted image should be accepted');
+}
+
 async function main() {
   const browser = await chromium.launch({ headless: true });
   const page = await browser.newPage();
@@ -185,6 +215,8 @@ async function main() {
   await testBuildRichContentTokens(page);
   await testBuildRichContentTokensSplitBlocks(page);
   await testFillEditorByTokensWithImage(page);
+  await testVisibleLoginSignals(page);
+  await testPublishOutcomeAndImageStability(page);
 
   await browser.close();
   console.log('✅ v3 unit tests passed');

@@ -1,0 +1,40 @@
+{
+  "schema_version": 1,
+  "operation": "configure",
+  "product": {
+    "name": "bawei",
+    "platform": "cws",
+    "version": "1.0.2",
+    "root": "."
+  },
+  "dashboard": {
+    "publisher_id": "301e74b1-6567-4278-a30a-74b31afa142c",
+    "item_id": "epgindgpaoemkikhhpbhigjcfgcnhkff",
+    "account_hint": "Google Account"
+  },
+  "sections": [
+    "store_listing"
+  ],
+  "store_listing": {
+    "description": "bawei extracts the WeChat Official Account article selected by the user and sends it to user-selected publishing platforms as a draft or review submission. It processes channels serially, preserves structured text and supported images, reports login and platform blockers, and only marks a formal publication successful after an anonymous public-page check.",
+    "support_url": "https://github.com/ayqy/bawei/issues",
+    "category": "Tools",
+    "summary_from_package": "Cross-post WeChat Official Account articles to multiple platforms—draft or publish—with built-in diagnostics.",
+    "assets": [
+      {
+        "role": "screenshot",
+        "slot_label": "Localized screenshots",
+        "occurrence": 0,
+        "multiple": true,
+        "replace": false,
+        "paths": [
+          "release/cws/1.0.2/assets/screenshot-01.png",
+          "release/cws/1.0.2/assets/screenshot-02.png",
+          "release/cws/1.0.2/assets/screenshot-03.png"
+        ],
+        "width": 1280,
+        "height": 800
+      }
+    ]
+  }
+}

@@ -28,7 +28,7 @@ let runChannels: Set<ChannelId> = new Set([
   'sspai',
   'baijiahao',
   'toutiao',
-  'feishu-docs',
+  'feishu-docs'
 ]);
 
 const ALL_CHANNELS: Array<{ id: ChannelId; labelKey: string }> = [
@@ -41,7 +41,7 @@ const ALL_CHANNELS: Array<{ id: ChannelId; labelKey: string }> = [
   { id: 'sspai', labelKey: 'channelSspai' },
   { id: 'baijiahao', labelKey: 'channelBaijiahao' },
   { id: 'toutiao', labelKey: 'channelToutiao' },
-  { id: 'feishu-docs', labelKey: 'channelFeishuDocs' },
+  { id: 'feishu-docs', labelKey: 'channelFeishuDocs' }
 ];
 
 let isStartingJob = false;
@@ -52,9 +52,20 @@ let imageRewriteObserver: MutationObserver | null = null;
 let imageRewriteScheduled = false;
 let panelKeepAliveTimer: number | null = null;
 let panelBridgeBound = false;
-let cachedArticlePayload: { title: string; sourceUrl: string; contentHtml: string; contentTokens: unknown[] } | null = null;
+let cachedArticlePayload: {
+  title: string;
+  sourceUrl: string;
+  contentHtml: string;
+  contentTokens: unknown[];
+} | null = null;
 type LoginAuditStatus = 'idle' | 'checking' | 'logged_in' | 'not_logged_in' | 'unknown';
-type LoginAuditState = { status: LoginAuditStatus; reason?: string; url?: string; checkedAt?: number; tabId?: number };
+type LoginAuditState = {
+  status: LoginAuditStatus;
+  reason?: string;
+  url?: string;
+  checkedAt?: number;
+  tabId?: number;
+};
 let channelLoginAuditState: Partial<Record<ChannelId, LoginAuditState>> = {};
 let isCheckingChannelLogins = false;
 
@@ -82,16 +93,16 @@ function extractArticleTitle(): string {
     '.rich_media_title',
     'h1',
     '.title',
-    '[data-role="title"]',
+    '[data-role="title"]'
   ];
-  
+
   for (const selector of titleSelectors) {
     const titleElement = document.querySelector(selector);
     if (titleElement && titleElement.textContent?.trim()) {
       return titleElement.textContent.trim();
     }
   }
-  
+
   // Fallback to page title
   return document.title || '';
 }
@@ -102,7 +113,7 @@ function findArticleContentRoot(): HTMLElement | null {
     '.rich_media_content',
     '.rich_media_area_primary',
     '.article-content',
-    '[data-role="content"]',
+    '[data-role="content"]'
   ];
 
   for (const selector of contentSelectors) {
@@ -182,7 +193,12 @@ function scheduleRewriteArticleImages(): void {
   });
 }
 
-function buildArticlePayload(): { title: string; sourceUrl: string; contentHtml: string; contentTokens: unknown[] } {
+function buildArticlePayload(): {
+  title: string;
+  sourceUrl: string;
+  contentHtml: string;
+  contentTokens: unknown[];
+} {
   rewriteArticleImageUrlsInDom();
   ensureArticleImageProxyObserver();
 
@@ -195,7 +211,7 @@ function buildArticlePayload(): { title: string; sourceUrl: string; contentHtml:
     baseUrl: sourceUrl,
     sourceUrl,
     htmlMode: 'raw',
-    splitBlocks: true,
+    splitBlocks: true
   });
 
   if (!title.trim()) {
@@ -245,7 +261,14 @@ function ensureArticleImageProxyObserver(): void {
     subtree: true,
     childList: true,
     attributes: true,
-    attributeFilter: ['src', 'srcset', 'data-src', 'data-original', 'data-actualsrc', 'data-lazy-src'],
+    attributeFilter: [
+      'src',
+      'srcset',
+      'data-src',
+      'data-original',
+      'data-actualsrc',
+      'data-lazy-src'
+    ]
   });
 }
 
@@ -266,14 +289,19 @@ function getRuntimeStateMirrorNode(): HTMLScriptElement {
 function writeRuntimeStateMirror(): void {
   try {
     const node = getRuntimeStateMirrorNode();
-    const state: Partial<Record<ChannelId, Pick<ChannelRuntimeState, 'status' | 'stage' | 'userMessage' | 'userSuggestion'>>> = {};
+    const state: Partial<
+      Record<
+        ChannelId,
+        Pick<ChannelRuntimeState, 'status' | 'stage' | 'userMessage' | 'userSuggestion'>
+      >
+    > = {};
     for (const ch of ALL_CHANNELS) {
       const s = latestState?.[ch.id];
       state[ch.id] = {
         status: s?.status || 'not_started',
         stage: s?.stage,
         userMessage: s?.userMessage || '',
-        userSuggestion: s?.userSuggestion || '',
+        userSuggestion: s?.userSuggestion || ''
       };
     }
 
@@ -293,7 +321,7 @@ function writeRuntimeStateMirror(): void {
       isStoppingJob,
       hasPanel: !!document.querySelector('#bawei-v2-panel'),
       hasLauncher: !!document.querySelector('#bawei-v2-launcher'),
-      state,
+      state
     });
   } catch {
     // ignore
@@ -381,7 +409,9 @@ function showPanel(): void {
 function collectUiState(): Record<string, unknown> {
   const runtime = (() => {
     try {
-      const raw = String(document.querySelector('#bawei-v2-runtime-state')?.textContent || '').trim();
+      const raw = String(
+        document.querySelector('#bawei-v2-runtime-state')?.textContent || ''
+      ).trim();
       if (!raw) return null;
       return JSON.parse(raw);
     } catch {
@@ -405,7 +435,8 @@ function collectUiState(): Record<string, unknown> {
     .filter(Boolean);
 
   const selectedActionValue =
-    (document.querySelector('input[name="bawei_v2_action"]:checked') as HTMLInputElement | null)?.value || '';
+    (document.querySelector('input[name="bawei_v2_action"]:checked') as HTMLInputElement | null)
+      ?.value || '';
   const startButton = document.querySelector('#bawei-v2-start') as HTMLButtonElement | null;
 
   return {
@@ -422,7 +453,7 @@ function collectUiState(): Record<string, unknown> {
     isCheckingChannelLogins,
     loginAuditState: channelLoginAuditState,
     diagnosisText: String(document.querySelector('#bawei-v2-diagnosis')?.textContent || '').trim(),
-    runtime,
+    runtime
   };
 }
 
@@ -451,7 +482,9 @@ async function handleWeixinPanelRemoteAction(
     ensurePanelArtifacts();
     showPanel();
     const value = String(payload?.value || '').trim();
-    const input = document.querySelector(`input[name="bawei_v2_action"][value="${value}"]`) as HTMLInputElement | null;
+    const input = document.querySelector(
+      `input[name="bawei_v2_action"][value="${value}"]`
+    ) as HTMLInputElement | null;
     if (!input) {
       return { ok: false, reason: 'action-input-not-found', value, ...collectUiState() };
     }
@@ -466,7 +499,9 @@ async function handleWeixinPanelRemoteAction(
     ensurePanelArtifacts();
     showPanel();
     const wanted = new Set(
-      Array.isArray(payload?.channelIds) ? payload.channelIds.map((item) => String(item || '').trim()).filter(Boolean) : []
+      Array.isArray(payload?.channelIds)
+        ? payload.channelIds.map((item) => String(item || '').trim()).filter(Boolean)
+        : []
     );
     const inputs = Array.from(document.querySelectorAll('input[id^="bawei-v2-run-"]')).filter(
       (node): node is HTMLInputElement => node instanceof HTMLInputElement
@@ -501,7 +536,9 @@ async function handleWeixinPanelRemoteAction(
     const nextAction = String(payload?.action || '').trim();
     if (nextAction === 'draft' || nextAction === 'publish') {
       selectedAction = nextAction as PublishAction;
-      const radio = document.querySelector(`input[name="bawei_v2_action"][value="${nextAction}"]`) as HTMLInputElement | null;
+      const radio = document.querySelector(
+        `input[name="bawei_v2_action"][value="${nextAction}"]`
+      ) as HTMLInputElement | null;
       if (radio) {
         radio.checked = true;
         radio.dispatchEvent(new Event('input', { bubbles: true, cancelable: true }));
@@ -510,7 +547,9 @@ async function handleWeixinPanelRemoteAction(
     }
 
     if (Array.isArray(payload?.channelIds)) {
-      runChannels = new Set(payload.channelIds.map((item) => String(item || '').trim()).filter(Boolean) as ChannelId[]);
+      runChannels = new Set(
+        payload.channelIds.map((item) => String(item || '').trim()).filter(Boolean) as ChannelId[]
+      );
       renderStatusList();
       refreshPanelControls();
       writeRuntimeStateMirror();
@@ -669,7 +708,7 @@ function createPublishPanel(): void {
   actionList.style.cssText = `display:flex; gap: 10px;`;
   for (const act of [
     { id: 'draft' as const, labelKey: 'actionDraft' },
-    { id: 'publish' as const, labelKey: 'actionPublish' },
+    { id: 'publish' as const, labelKey: 'actionPublish' }
   ]) {
     const label = document.createElement('label');
     label.style.cssText = `display:flex; align-items:center; gap:6px; font-size:12px; cursor:pointer;`;
@@ -837,7 +876,7 @@ async function handleStartClick(): Promise<void> {
     try {
       const response = await chrome.runtime.sendMessage({
         type: V2_REQUEST_STOP,
-        jobId: currentJobId,
+        jobId: currentJobId
       });
       if (!response?.success) {
         throw new Error(response?.error || 'stop failed');
@@ -850,7 +889,10 @@ async function handleStartClick(): Promise<void> {
       writeRuntimeStateMirror();
     } catch (error) {
       console.error('Failed to stop job:', error);
-      showError(getMessage('publishErrorToast') || `失败：${error instanceof Error ? error.message : getMessage('unknownError') || '未知错误'}`);
+      showError(
+        getMessage('publishErrorToast') ||
+          `失败：${error instanceof Error ? error.message : getMessage('unknownError') || '未知错误'}`
+      );
     } finally {
       isStoppingJob = false;
       refreshPanelControls();
@@ -899,8 +941,8 @@ async function handleStartClick(): Promise<void> {
         title,
         contentHtml,
         contentTokens,
-        sourceUrl,
-      },
+        sourceUrl
+      }
     });
 
     if (!response?.success || !response?.jobId) {
@@ -916,11 +958,12 @@ async function handleStartClick(): Promise<void> {
     refreshPanelControls();
     writeRuntimeStateMirror();
     showInfo(getMessage('panelStarted') || '任务已启动：正在逐个聚焦并执行各渠道...');
-
-    
   } catch (error) {
     console.error('Failed to publish article:', error);
-    showError(getMessage('publishErrorToast') || `失败：${error instanceof Error ? error.message : getMessage('unknownError') || '未知错误'}`);
+    showError(
+      getMessage('publishErrorToast') ||
+        `失败：${error instanceof Error ? error.message : getMessage('unknownError') || '未知错误'}`
+    );
   } finally {
     isStartingJob = false;
     refreshPanelControls();
@@ -933,10 +976,10 @@ async function handleStartClick(): Promise<void> {
  */
 async function initialize(): Promise<void> {
   if (isInitialized) return;
-  
+
   try {
     console.log('Initializing WeChat content script...');
-    
+
     // Load settings
     settings = (await getSettings()) as Settings;
     console.log('Settings loaded:', settings);
@@ -960,10 +1003,10 @@ async function initialize(): Promise<void> {
     } catch {
       // ignore
     }
-    
+
     // Wait for page to be ready
     if (document.readyState === 'loading') {
-      await new Promise(resolve => {
+      await new Promise((resolve) => {
         document.addEventListener('DOMContentLoaded', resolve, { once: true });
       });
     }
@@ -974,11 +1017,10 @@ async function initialize(): Promise<void> {
     }, 1000);
     startPanelKeepAlive();
     bindPanelBridgeEvents();
-    
+
     isInitialized = true;
     writeRuntimeStateMirror();
     console.log('WeChat content script initialized successfully');
-    
   } catch (error) {
     console.error('Failed to initialize WeChat content script:', error);
   }
@@ -1005,7 +1047,14 @@ function loginAuditStatusLabel(status: LoginAuditStatus): string {
 }
 
 async function handleCheckLoginClick(): Promise<void> {
-  if (runChannels.size === 0 || isCheckingChannelLogins || isStartingJob || isStoppingJob || isExecutingNow()) return;
+  if (
+    runChannels.size === 0 ||
+    isCheckingChannelLogins ||
+    isStartingJob ||
+    isStoppingJob ||
+    isExecutingNow()
+  )
+    return;
 
   isCheckingChannelLogins = true;
   const checkedAt = Date.now();
@@ -1013,7 +1062,7 @@ async function handleCheckLoginClick(): Promise<void> {
     channelLoginAuditState[channelId] = {
       ...(channelLoginAuditState[channelId] || {}),
       status: 'checking',
-      checkedAt,
+      checkedAt
     };
   }
   renderStatusList();
@@ -1023,11 +1072,22 @@ async function handleCheckLoginClick(): Promise<void> {
   try {
     const response = (await chrome.runtime.sendMessage({
       type: V2_AUDIT_CHANNEL_LOGIN,
-      channels: Array.from(runChannels),
+      channels: Array.from(runChannels)
     })) as
       | {
           success: true;
-          results: Partial<Record<ChannelId, { status: LoginAuditStatus; reason: string; url: string; checkedAt?: number; tabId?: number }>>;
+          results: Partial<
+            Record<
+              ChannelId,
+              {
+                status: LoginAuditStatus;
+                reason: string;
+                url: string;
+                checkedAt?: number;
+                tabId?: number;
+              }
+            >
+          >;
         }
       | { success: false; error?: string };
 
@@ -1043,19 +1103,29 @@ async function handleCheckLoginClick(): Promise<void> {
         reason: result?.reason || '',
         url: result?.url || '',
         tabId: result?.tabId,
-        checkedAt: now,
+        checkedAt: now
       };
     }
 
-    const notLoggedIn = Array.from(runChannels).filter((channelId) => channelLoginAuditState[channelId]?.status === 'not_logged_in');
+    const notLoggedIn = Array.from(runChannels).filter(
+      (channelId) => channelLoginAuditState[channelId]?.status === 'not_logged_in'
+    );
     if (notLoggedIn.length > 0) {
-      showInfo(getMessage('panelLoginCheckFinishedWithNotLoggedIn') || '登录检查完成：存在未登录渠道，已在后台静默打开对应页面。');
+      showInfo(
+        getMessage('panelLoginCheckFinishedWithNotLoggedIn') ||
+          '登录检查完成：存在未登录渠道，已在后台静默打开对应页面。'
+      );
     } else {
-      showInfo(getMessage('panelLoginCheckFinishedAllLoggedIn') || '登录检查完成：所选渠道均已登录。');
+      showInfo(
+        getMessage('panelLoginCheckFinishedAllLoggedIn') || '登录检查完成：所选渠道均已登录。'
+      );
     }
   } catch (error) {
     console.error('Failed to audit channel login status:', error);
-    showError(getMessage('panelLoginCheckFailed') || `失败：${error instanceof Error ? error.message : getMessage('unknownError') || '未知错误'}`);
+    showError(
+      getMessage('panelLoginCheckFailed') ||
+        `失败：${error instanceof Error ? error.message : getMessage('unknownError') || '未知错误'}`
+    );
   } finally {
     isCheckingChannelLogins = false;
     renderStatusList();
@@ -1067,6 +1137,8 @@ async function handleCheckLoginClick(): Promise<void> {
 function statusLabel(status: string): string {
   if (status === 'running') return getMessage('statusRunning') || '进行中';
   if (status === 'success') return getMessage('statusSuccess') || '成功';
+  if (status === 'pending_review') return getMessage('statusPendingReview') || '待审';
+  if (status === 'rejected') return getMessage('statusRejected') || '已退回';
   if (status === 'failed') return getMessage('statusFailed') || '失败';
   if (status === 'waiting_user') return getMessage('statusWaiting') || '等待处理';
   if (status === 'not_logged_in') return getMessage('statusNotLoggedIn') || '未登录';
@@ -1089,7 +1161,9 @@ function isExecutingNow(): boolean {
 function refreshPanelControls(): void {
   const executing = isExecutingNow();
 
-  const toggleAllCheckbox = document.querySelector('#bawei-v2-toggle-all') as HTMLInputElement | null;
+  const toggleAllCheckbox = document.querySelector(
+    '#bawei-v2-toggle-all'
+  ) as HTMLInputElement | null;
   if (toggleAllCheckbox) {
     const isAll = runChannels.size === ALL_CHANNELS.length;
     toggleAllCheckbox.checked = isAll;
@@ -1125,7 +1199,12 @@ function refreshPanelControls(): void {
   }
 
   if (checkLoginBtn) {
-    const canCheck = runChannels.size > 0 && !isCheckingChannelLogins && !isStartingJob && !isStoppingJob && !isExecutingNow();
+    const canCheck =
+      runChannels.size > 0 &&
+      !isCheckingChannelLogins &&
+      !isStartingJob &&
+      !isStoppingJob &&
+      !isExecutingNow();
     checkLoginBtn.disabled = !canCheck;
     checkLoginBtn.textContent = isCheckingChannelLogins
       ? getMessage('panelCheckingLogin') || '检查中...'
@@ -1188,15 +1267,19 @@ function renderStatusList(): void {
             : 'rgba(250,173,20,0.16)'
       : status === 'success'
         ? 'rgba(0,180,90,0.12)'
-        : status === 'failed'
-          ? 'rgba(255,77,79,0.12)'
-          : status === 'waiting_user'
-            ? 'rgba(250,173,20,0.16)'
-            : status === 'not_logged_in'
-              ? 'rgba(114,46,209,0.14)'
-              : status === 'running'
-                ? 'rgba(22,119,255,0.12)'
-                : 'rgba(0,0,0,0.06)';
+        : status === 'pending_review'
+          ? 'rgba(250,173,20,0.16)'
+          : status === 'rejected'
+            ? 'rgba(255,77,79,0.12)'
+            : status === 'failed'
+              ? 'rgba(255,77,79,0.12)'
+              : status === 'waiting_user'
+                ? 'rgba(250,173,20,0.16)'
+                : status === 'not_logged_in'
+                  ? 'rgba(114,46,209,0.14)'
+                  : status === 'running'
+                    ? 'rgba(22,119,255,0.12)'
+                    : 'rgba(0,0,0,0.06)';
     const badgeColor = useLoginAudit
       ? status === 'logged_in'
         ? '#0a7a3a'
@@ -1207,15 +1290,19 @@ function renderStatusList(): void {
             : '#ad6800'
       : status === 'success'
         ? '#0a7a3a'
-        : status === 'failed'
-          ? '#cf1322'
-          : status === 'waiting_user'
-            ? '#ad6800'
-            : status === 'not_logged_in'
-              ? '#531dab'
-              : status === 'running'
-                ? '#0958d9'
-                : '#555';
+        : status === 'pending_review'
+          ? '#ad6800'
+          : status === 'rejected'
+            ? '#cf1322'
+            : status === 'failed'
+              ? '#cf1322'
+              : status === 'waiting_user'
+                ? '#ad6800'
+                : status === 'not_logged_in'
+                  ? '#531dab'
+                  : status === 'running'
+                    ? '#0958d9'
+                    : '#555';
     badge.style.cssText = `
       font-size: 11px;
       padding: 2px 8px;
@@ -1223,13 +1310,19 @@ function renderStatusList(): void {
       background: ${badgeBg};
       color: ${badgeColor};
     `;
-    badge.textContent = useLoginAudit ? loginAuditStatusLabel(status as LoginAuditStatus) : statusLabel(status);
+    badge.textContent = useLoginAudit
+      ? loginAuditStatusLabel(status as LoginAuditStatus)
+      : statusLabel(status);
     if (!useLoginAudit && currentJobId && status !== 'not_started') {
       badge.style.cursor = 'pointer';
       badge.title = getMessage('panelDiagnosisHint') || '点击跳转到该渠道页面';
       badge.addEventListener('click', async () => {
         try {
-          await chrome.runtime.sendMessage({ type: V2_FOCUS_CHANNEL_TAB, jobId: currentJobId, channelId: ch.id });
+          await chrome.runtime.sendMessage({
+            type: V2_FOCUS_CHANNEL_TAB,
+            jobId: currentJobId,
+            channelId: ch.id
+          });
         } catch {
           // ignore
         }
@@ -1238,7 +1331,9 @@ function renderStatusList(): void {
 
     right.appendChild(badge);
 
-    const progressText = useLoginAudit ? audit?.reason || '' : state?.userMessage || state?.stage || '';
+    const progressText = useLoginAudit
+      ? audit?.reason || ''
+      : state?.userMessage || state?.stage || '';
     const progress = document.createElement('span');
     progress.style.cssText = `font-size:11px; color:#666; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;`;
     progress.textContent = progressText;
@@ -1249,7 +1344,11 @@ function renderStatusList(): void {
       btn.textContent = getMessage('panelContinue') || '继续';
       btn.style.cssText = `font-size:11px; padding:4px 8px; border-radius:6px; border:1px solid rgba(0,0,0,0.12); background:#fff; cursor:pointer;`;
       btn.addEventListener('click', async () => {
-        await chrome.runtime.sendMessage({ type: V2_REQUEST_CONTINUE, jobId: currentJobId, channelId: ch.id });
+        await chrome.runtime.sendMessage({
+          type: V2_REQUEST_CONTINUE,
+          jobId: currentJobId,
+          channelId: ch.id
+        });
       });
       right.appendChild(btn);
     }
@@ -1259,7 +1358,11 @@ function renderStatusList(): void {
       btn.textContent = getMessage('panelRetry') || '重试';
       btn.style.cssText = `font-size:11px; padding:4px 8px; border-radius:6px; border:1px solid rgba(0,0,0,0.12); background:#fff; cursor:pointer;`;
       btn.addEventListener('click', async () => {
-        await chrome.runtime.sendMessage({ type: V2_REQUEST_RETRY, jobId: currentJobId, channelId: ch.id });
+        await chrome.runtime.sendMessage({
+          type: V2_REQUEST_RETRY,
+          jobId: currentJobId,
+          channelId: ch.id
+        });
       });
       right.appendChild(btn);
     }
@@ -1269,7 +1372,11 @@ function renderStatusList(): void {
       btn.textContent = getMessage('panelRetry') || '重试';
       btn.style.cssText = `font-size:11px; padding:4px 8px; border-radius:6px; border:1px solid rgba(0,0,0,0.12); background:#fff; cursor:pointer;`;
       btn.addEventListener('click', async () => {
-        await chrome.runtime.sendMessage({ type: V2_REQUEST_RETRY, jobId: currentJobId, channelId: ch.id });
+        await chrome.runtime.sendMessage({
+          type: V2_REQUEST_RETRY,
+          jobId: currentJobId,
+          channelId: ch.id
+        });
       });
       right.appendChild(btn);
     }
@@ -1297,16 +1404,24 @@ function renderDiagnosis(): void {
   const lines: string[] = [];
   const labelKey = ALL_CHANNELS.find((c) => c.id === focusChannel)?.labelKey || '';
 
-  lines.push(`${getMessage('panelDiagnosisChannel') || '渠道'}：${(labelKey && getMessage(labelKey)) || focusChannel}`);
-  lines.push(`${getMessage('panelDiagnosisStatus') || '状态'}：${statusLabel(state?.status || 'not_started')}`);
+  lines.push(
+    `${getMessage('panelDiagnosisChannel') || '渠道'}：${(labelKey && getMessage(labelKey)) || focusChannel}`
+  );
+  lines.push(
+    `${getMessage('panelDiagnosisStatus') || '状态'}：${statusLabel(state?.status || 'not_started')}`
+  );
   if (state?.stage) lines.push(`${getMessage('panelDiagnosisStage') || '步骤'}：${state.stage}`);
-  if (state?.userMessage) lines.push(`${getMessage('panelDiagnosisMessage') || '提示'}：${state.userMessage}`);
-  if (state?.userSuggestion) lines.push(`${getMessage('panelDiagnosisSuggestion') || '建议'}：${state.userSuggestion}`);
+  if (state?.userMessage)
+    lines.push(`${getMessage('panelDiagnosisMessage') || '提示'}：${state.userMessage}`);
+  if (state?.userSuggestion)
+    lines.push(`${getMessage('panelDiagnosisSuggestion') || '建议'}：${state.userSuggestion}`);
   if (globalHint) lines.push(`\n${globalHint}`);
 
   // 注意：content script 运行在浏览器环境，`process` 可能不存在；直接引用会触发 ReferenceError
   const isDevBuild =
-    (typeof process !== 'undefined' ? (process as { env?: { BUILD_TARGET?: string } }).env?.BUILD_TARGET : 'production') !== 'production';
+    (typeof process !== 'undefined'
+      ? (process as { env?: { BUILD_TARGET?: string } }).env?.BUILD_TARGET
+      : 'production') !== 'production';
   if (isDevBuild && state?.devDetails) {
     lines.push(`\n[DEV]\n${JSON.stringify(state.devDetails, null, 2)}`);
   }
@@ -1323,10 +1438,22 @@ if (shouldRun()) {
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
-  if (message?.type === V3_EXECUTE_MAIN_WORLD && typeof message?.action === 'string' && message.action.startsWith('weixin-')) {
-    handleWeixinPanelRemoteAction(message.action, (message as { payload?: Record<string, unknown> }).payload)
+  if (
+    message?.type === V3_EXECUTE_MAIN_WORLD &&
+    typeof message?.action === 'string' &&
+    message.action.startsWith('weixin-')
+  ) {
+    handleWeixinPanelRemoteAction(
+      message.action,
+      (message as { payload?: Record<string, unknown> }).payload
+    )
       .then((result) => sendResponse({ success: true, result }))
-      .catch((error) => sendResponse({ success: false, error: error instanceof Error ? error.message : String(error) }));
+      .catch((error) =>
+        sendResponse({
+          success: false,
+          error: error instanceof Error ? error.message : String(error)
+        })
+      );
     return true;
   }
 
