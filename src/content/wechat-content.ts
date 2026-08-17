@@ -72,13 +72,13 @@ let isCheckingChannelLogins = false;
 /**
  * Gets localized message
  * @param key Message key
- * @returns Localized message or key as fallback
+ * @returns Localized message, or an empty string so each call site can use its visible fallback
  */
 function getMessage(key: string): string {
   try {
-    return chrome.i18n.getMessage(key) || key;
+    return chrome.i18n.getMessage(key) || '';
   } catch {
-    return key;
+    return '';
   }
 }
 
