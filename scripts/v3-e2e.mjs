@@ -873,7 +873,7 @@ function buildFeishuFolderHtml({ title, docxUrl }) {
   return pageTemplate({ title: `${title} - 飞书文件夹`, body });
 }
 
-function buildFeishuDocxHtml({ title, runId }) {
+function buildFeishuDocxHtml({ title, runId, restoreStored = true }) {
   const body = `
     <h1 class="page-block-content page-block-title-empty" contenteditable="true">${title}</h1>
     <div class="note-title__time">已经保存到云端</div>
@@ -906,7 +906,7 @@ function buildFeishuDocxHtml({ title, runId }) {
       if (!editor) return;
       try {
         const saved = sessionStorage.getItem(key) || '';
-        if (saved) editor.innerHTML = saved;
+        if (${restoreStored ? 'true' : 'false'} && saved) editor.innerHTML = saved;
       } catch {}
       const save = () => {
         try { sessionStorage.setItem(key, String(editor.innerHTML || '')); } catch {}
@@ -1734,10 +1734,18 @@ async function main() {
             });
             return;
           }
+          currentRun.feishuDocxRenderCount =
+            Number(currentRun.feishuDocxRenderCount || 0) + 1;
+          const dropFirstSerialRestore =
+            currentRun.channelId === 'serial-all' && currentRun.feishuDocxRenderCount === 2;
           await route.fulfill({
             status: 200,
             headers: { 'content-type': 'text/html; charset=utf-8' },
-            body: buildFeishuDocxHtml({ title, runId })
+            body: buildFeishuDocxHtml({
+              title,
+              runId,
+              restoreStored: !dropFirstSerialRestore
+            })
           });
           return;
         }

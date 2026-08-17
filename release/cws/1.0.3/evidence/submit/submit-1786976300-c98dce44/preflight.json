@@ -1,0 +1,226 @@
+{
+  "status": "failed",
+  "structural_validation": {
+    "status": "passed",
+    "manifest": "/Users/pocket/Documents/project/bawei/release/cws/1.0.3/release-manifest.json",
+    "phase": "prepare",
+    "checked_at": "2026-08-17T14:18:20+00:00",
+    "errors": [],
+    "blockers": [],
+    "warnings": [],
+    "target_root": "/Users/pocket/Documents/project/bawei",
+    "resolved_source_commit": "4900616506e674a6066850ced69f5aeb71dd678a"
+  },
+  "execution": {
+    "phase": "preflight",
+    "started_at": "2026-08-17T14:18:20+00:00",
+    "commands": [
+      {
+        "label": "Type-check extension and release adapter",
+        "argv": [
+          "npm",
+          "run",
+          "type-check"
+        ],
+        "cwd": "/Users/pocket/Documents/project/bawei",
+        "returncode": 0,
+        "elapsed_seconds": 2.722,
+        "stdout": "\n> bawei@1.0.3 type-check\n> tsc --noEmit\n\n",
+        "stderr": ""
+      },
+      {
+        "label": "Lint TypeScript source",
+        "argv": [
+          "npm",
+          "run",
+          "lint"
+        ],
+        "cwd": "/Users/pocket/Documents/project/bawei",
+        "returncode": 0,
+        "elapsed_seconds": 4.405,
+        "stdout": "\n> bawei@1.0.3 lint\n> eslint . --ext .ts,.tsx --report-unused-disable-directives --max-warnings 0\n\n",
+        "stderr": ""
+      },
+      {
+        "label": "Run publication-core regression suite",
+        "argv": [
+          "npm",
+          "run",
+          "test:publish-core"
+        ],
+        "cwd": "/Users/pocket/Documents/project/bawei",
+        "returncode": 0,
+        "elapsed_seconds": 1.838,
+        "stdout": "\n> bawei@1.0.3 test:publish-core\n> npm run test:channels && npm run test:ledger && npm run test:verifier && npm run test:markdown\n\n\n> bawei@1.0.3 test:channels\n> node scripts/channel-config.test.mjs\n\n✅ channel config unit tests passed\n\n> bawei@1.0.3 test:ledger\n> node scripts/publication-ledger.test.mjs\n\n✅ publication ledger unit tests passed\n\n> bawei@1.0.3 test:verifier\n> node scripts/publication-verifier.test.mjs\n\n✅ publication verifier unit tests passed\n\n> bawei@1.0.3 test:markdown\n> node scripts/local-markdown.test.mjs\n\n✅ local markdown unit tests passed\n",
+        "stderr": ""
+      },
+      {
+        "label": "Run V3 and serial queue unit regressions",
+        "argv": [
+          "npm",
+          "run",
+          "test:v3:unit"
+        ],
+        "cwd": "/Users/pocket/Documents/project/bawei",
+        "returncode": 0,
+        "elapsed_seconds": 1.939,
+        "stdout": "\n> bawei@1.0.3 test:v3:unit\n> node scripts/v3-unit.mjs\n\n✅ v3 unit tests passed\n",
+        "stderr": ""
+      },
+      {
+        "label": "Run serial queue unit regressions",
+        "argv": [
+          "npm",
+          "run",
+          "test:serial"
+        ],
+        "cwd": "/Users/pocket/Documents/project/bawei",
+        "returncode": 0,
+        "elapsed_seconds": 0.697,
+        "stdout": "\n> bawei@1.0.3 test:serial\n> node scripts/serial-channel-queue.test.mjs\n\n✅ serial channel queue unit tests passed\n",
+        "stderr": ""
+      },
+      {
+        "label": "Run serial queue integration regressions",
+        "argv": [
+          "npm",
+          "run",
+          "test:serial:integration"
+        ],
+        "cwd": "/Users/pocket/Documents/project/bawei",
+        "returncode": 0,
+        "elapsed_seconds": 0.383,
+        "stdout": "\n> bawei@1.0.3 test:serial:integration\n> node scripts/background-serial.integration.test.mjs\n\nbawei V2 background script loaded\nBackground received message: {\n  type: 'V2_CHANNEL_UPDATE',\n  jobId: '15535b4a-0537-4540-b115-62ba476fa725',\n  channelId: 'csdn',\n  patch: { status: 'success', stage: 'done' }\n} from { tab: { id: 1 } }\nBackground received message: {\n  type: 'V2_CHANNEL_UPDATE',\n  jobId: '15535b4a-0537-4540-b115-62ba476fa725',\n  channelId: 'cnblogs',\n  patch: { status: 'success', stage: 'done' }\n} from { tab: { id: 2 } }\nBackground received message: {\n  type: 'V2_CHANNEL_UPDATE',\n  jobId: '96263cfd-c63a-4a2e-8f14-f9611c06a7c3',\n  channelId: 'csdn',\n  patch: { status: 'pending_review', stage: 'done' }\n} from { tab: { id: 1 } }\nBackground received message: {\n  type: 'V2_CHANNEL_UPDATE',\n  jobId: '96263cfd-c63a-4a2e-8f14-f9611c06a7c3',\n  channelId: 'tencent-cloud-dev',\n  patch: { status: 'rejected', stage: 'done' }\n} from { tab: { id: 3 } }\nBackground received message: {\n  type: 'V2_CHANNEL_UPDATE',\n  jobId: '96263cfd-c63a-4a2e-8f14-f9611c06a7c3',\n  channelId: 'cnblogs',\n  patch: { status: 'success', stage: 'done' }\n} from { tab: { id: 2 } }\nBackground received message: {\n  type: 'V2_CHANNEL_UPDATE',\n  jobId: '96263cfd-c63a-4a2e-8f14-f9611c06a7c3',\n  channelId: 'oschina',\n  patch: { status: 'success', stage: 'done' }\n} from { tab: { id: 4 } }\nBackground received message: {\n  type: 'V2_CHANNEL_UPDATE',\n  jobId: '96263cfd-c63a-4a2e-8f14-f9611c06a7c3',\n  channelId: 'woshipm',\n  patch: { status: 'success', stage: 'done' }\n} from { tab: { id: 5 } }\nBackground received message: {\n  type: 'V2_CHANNEL_UPDATE',\n  jobId: '96263cfd-c63a-4a2e-8f14-f9611c06a7c3',\n  channelId: 'mowen',\n  patch: { status: 'success', stage: 'done' }\n} from { tab: { id: 6 } }\nBackground received message: {\n  type: 'V2_CHANNEL_UPDATE',\n  jobId: '96263cfd-c63a-4a2e-8f14-f9611c06a7c3',\n  channelId: 'sspai',\n  patch: { status: 'success', stage: 'done' }\n} from { tab: { id: 7 } }\nBackground received message: {\n  type: 'V2_CHANNEL_UPDATE',\n  jobId: '96263cfd-c63a-4a2e-8f14-f9611c06a7c3',\n  channelId: 'baijiahao',\n  patch: { status: 'success', stage: 'done' }\n} from { tab: { id: 8 } }\nBackground received message: {\n  type: 'V2_CHANNEL_UPDATE',\n  jobId: '96263cfd-c63a-4a2e-8f14-f9611c06a7c3',\n  channelId: 'toutiao',\n  patch: { status: 'success', stage: 'done' }\n} from { tab: { id: 9 } }\nBackground received message: {\n  type: 'V2_CHANNEL_UPDATE',\n  jobId: '96263cfd-c63a-4a2e-8f14-f9611c06a7c3',\n  channelId: 'feishu-docs',\n  patch: { status: 'success', stage: 'done' }\n} from { tab: { id: 10 } }\n✅ background serial integration test passed\n",
+        "stderr": ""
+      },
+      {
+        "label": "Run isolated all-channel browser regressions",
+        "argv": [
+          "npm",
+          "run",
+          "e2e:v3"
+        ],
+        "cwd": "/Users/pocket/Documents/project/bawei",
+        "returncode": 1,
+        "elapsed_seconds": 700.273,
+        "stdout": "\n> bawei@1.0.3 e2e:v3\n> npm run build && node scripts/v3-e2e.mjs\n\n\n> bawei@1.0.3 build\n> npm run clean && BUILD_TARGET=development node scripts/inline-build.ts\n\n\n> bawei@1.0.3 clean\n> rm -rf dist && rm -rf .tmp_build && rm -rf .tmp_build_prod\n\n🚀 Building Chrome Extension...\n🧹 Cleaned stale .ts and runner.js from public/test\n📦 Generating icons...\nGenerating icons...\n✅ Icons generated successfully\n✅ Icons generated successfully\n\n=== [V3 E2E] channel=csdn action=not_logged_in ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=csdn action=draft ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=csdn action=publish ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=tencent-cloud-dev action=not_logged_in ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=tencent-cloud-dev action=draft ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=tencent-cloud-dev action=publish ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=cnblogs action=not_logged_in ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=cnblogs action=draft ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=cnblogs action=publish ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=oschina action=not_logged_in ===\n\n=== [V3 E2E] channel=oschina action=draft ===\n\n=== [V3 E2E] channel=oschina action=publish ===\n\n=== [V3 E2E] channel=woshipm action=not_logged_in ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=woshipm action=draft ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=woshipm action=publish ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=mowen action=not_logged_in ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=mowen action=draft ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=mowen action=publish ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=sspai action=not_logged_in ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=sspai action=draft ===\n\n=== [V3 E2E] channel=sspai action=publish ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=baijiahao action=not_logged_in ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=baijiahao action=draft ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=baijiahao action=publish ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=toutiao action=not_logged_in ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=toutiao action=draft ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=toutiao action=publish ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=feishu-docs action=not_logged_in ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=feishu-docs action=draft ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=feishu-docs action=publish ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=tencent-cloud-dev action=rejected ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] serial all 10 channels action=draft ===\n",
+        "stderr": "\n❌ v3 e2e tests failed: Error: 等待渠道状态超时：channel=feishu-docs want=成功 last={\"ok\":true,\"badge\":\"等待处理\",\"progress\":\"验收未通过：未检测到“已保存到云端”或原文链接\"} storedState={\"channelId\":\"feishu-docs\",\"devDetails\":{\"expectedImageCount\":2,\"managementUrl\":\"https://wuxinxuexi.feishu.cn/drive/folder/PyWAfSFwrlMgiydvlHectMn2nSd\",\"missingTextBlockCount\":2,\"observedBlockCount\":1,\"observedImageCount\":0,\"publishedUrl\":\"https://wuxinxuexi.feishu.cn/docx/e2e_doc_serial_all_1786976765467\",\"reviewStatus\":\"draft_saved\",\"titleMatches\":true,\"verified\":{\"listVisible\":false,\"savedToCloud\":true,\"sourceUrlPresent\":false}},\"stage\":\"waitingUser\",\"status\":\"waiting_user\",\"tabId\":595356119,\"updatedAt\":1786976892249,\"userMessage\":\"验收未通过：未检测到“已保存到云端”或原文链接\",\"userSuggestion\":\"请确认页面出现“已经保存到云端”，且正文末尾包含“原文链接”，再点“继续”\"}\n    at runSerialAllChannels (file:///Users/pocket/Documents/project/bawei/scripts/v3-e2e.mjs:2153:17)\n    at async main (file:///Users/pocket/Documents/project/bawei/scripts/v3-e2e.mjs:2213:7)\n"
+      }
+    ],
+    "browser": null,
+    "steps": [
+      {
+        "index": 1,
+        "label": "legacy command group",
+        "type": "command",
+        "state": "failed",
+        "started_at": "2026-08-17T14:18:20+00:00",
+        "finished_at": "2026-08-17T14:30:12+00:00",
+        "elapsed_seconds": 712.264,
+        "results": [
+          {
+            "label": "Type-check extension and release adapter",
+            "argv": [
+              "npm",
+              "run",
+              "type-check"
+            ],
+            "cwd": "/Users/pocket/Documents/project/bawei",
+            "returncode": 0,
+            "elapsed_seconds": 2.722,
+            "stdout": "\n> bawei@1.0.3 type-check\n> tsc --noEmit\n\n",
+            "stderr": ""
+          },
+          {
+            "label": "Lint TypeScript source",
+            "argv": [
+              "npm",
+              "run",
+              "lint"
+            ],
+            "cwd": "/Users/pocket/Documents/project/bawei",
+            "returncode": 0,
+            "elapsed_seconds": 4.405,
+            "stdout": "\n> bawei@1.0.3 lint\n> eslint . --ext .ts,.tsx --report-unused-disable-directives --max-warnings 0\n\n",
+            "stderr": ""
+          },
+          {
+            "label": "Run publication-core regression suite",
+            "argv": [
+              "npm",
+              "run",
+              "test:publish-core"
+            ],
+            "cwd": "/Users/pocket/Documents/project/bawei",
+            "returncode": 0,
+            "elapsed_seconds": 1.838,
+            "stdout": "\n> bawei@1.0.3 test:publish-core\n> npm run test:channels && npm run test:ledger && npm run test:verifier && npm run test:markdown\n\n\n> bawei@1.0.3 test:channels\n> node scripts/channel-config.test.mjs\n\n✅ channel config unit tests passed\n\n> bawei@1.0.3 test:ledger\n> node scripts/publication-ledger.test.mjs\n\n✅ publication ledger unit tests passed\n\n> bawei@1.0.3 test:verifier\n> node scripts/publication-verifier.test.mjs\n\n✅ publication verifier unit tests passed\n\n> bawei@1.0.3 test:markdown\n> node scripts/local-markdown.test.mjs\n\n✅ local markdown unit tests passed\n",
+            "stderr": ""
+          },
+          {
+            "label": "Run V3 and serial queue unit regressions",
+            "argv": [
+              "npm",
+              "run",
+              "test:v3:unit"
+            ],
+            "cwd": "/Users/pocket/Documents/project/bawei",
+            "returncode": 0,
+            "elapsed_seconds": 1.939,
+            "stdout": "\n> bawei@1.0.3 test:v3:unit\n> node scripts/v3-unit.mjs\n\n✅ v3 unit tests passed\n",
+            "stderr": ""
+          },
+          {
+            "label": "Run serial queue unit regressions",
+            "argv": [
+              "npm",
+              "run",
+              "test:serial"
+            ],
+            "cwd": "/Users/pocket/Documents/project/bawei",
+            "returncode": 0,
+            "elapsed_seconds": 0.697,
+            "stdout": "\n> bawei@1.0.3 test:serial\n> node scripts/serial-channel-queue.test.mjs\n\n✅ serial channel queue unit tests passed\n",
+            "stderr": ""
+          },
+          {
+            "label": "Run serial queue integration regressions",
+            "argv": [
+              "npm",
+              "run",
+              "test:serial:integration"
+            ],
+            "cwd": "/Users/pocket/Documents/project/bawei",
+            "returncode": 0,
+            "elapsed_seconds": 0.383,
+            "stdout": "\n> bawei@1.0.3 test:serial:integration\n> node scripts/background-serial.integration.test.mjs\n\nbawei V2 background script loaded\nBackground received message: {\n  type: 'V2_CHANNEL_UPDATE',\n  jobId: '15535b4a-0537-4540-b115-62ba476fa725',\n  channelId: 'csdn',\n  patch: { status: 'success', stage: 'done' }\n} from { tab: { id: 1 } }\nBackground received message: {\n  type: 'V2_CHANNEL_UPDATE',\n  jobId: '15535b4a-0537-4540-b115-62ba476fa725',\n  channelId: 'cnblogs',\n  patch: { status: 'success', stage: 'done' }\n} from { tab: { id: 2 } }\nBackground received message: {\n  type: 'V2_CHANNEL_UPDATE',\n  jobId: '96263cfd-c63a-4a2e-8f14-f9611c06a7c3',\n  channelId: 'csdn',\n  patch: { status: 'pending_review', stage: 'done' }\n} from { tab: { id: 1 } }\nBackground received message: {\n  type: 'V2_CHANNEL_UPDATE',\n  jobId: '96263cfd-c63a-4a2e-8f14-f9611c06a7c3',\n  channelId: 'tencent-cloud-dev',\n  patch: { status: 'rejected', stage: 'done' }\n} from { tab: { id: 3 } }\nBackground received message: {\n  type: 'V2_CHANNEL_UPDATE',\n  jobId: '96263cfd-c63a-4a2e-8f14-f9611c06a7c3',\n  channelId: 'cnblogs',\n  patch: { status: 'success', stage: 'done' }\n} from { tab: { id: 2 } }\nBackground received message: {\n  type: 'V2_CHANNEL_UPDATE',\n  jobId: '96263cfd-c63a-4a2e-8f14-f9611c06a7c3',\n  channelId: 'oschina',\n  patch: { status: 'success', stage: 'done' }\n} from { tab: { id: 4 } }\nBackground received message: {\n  type: 'V2_CHANNEL_UPDATE',\n  jobId: '96263cfd-c63a-4a2e-8f14-f9611c06a7c3',\n  channelId: 'woshipm',\n  patch: { status: 'success', stage: 'done' }\n} from { tab: { id: 5 } }\nBackground received message: {\n  type: 'V2_CHANNEL_UPDATE',\n  jobId: '96263cfd-c63a-4a2e-8f14-f9611c06a7c3',\n  channelId: 'mowen',\n  patch: { status: 'success', stage: 'done' }\n} from { tab: { id: 6 } }\nBackground received message: {\n  type: 'V2_CHANNEL_UPDATE',\n  jobId: '96263cfd-c63a-4a2e-8f14-f9611c06a7c3',\n  channelId: 'sspai',\n  patch: { status: 'success', stage: 'done' }\n} from { tab: { id: 7 } }\nBackground received message: {\n  type: 'V2_CHANNEL_UPDATE',\n  jobId: '96263cfd-c63a-4a2e-8f14-f9611c06a7c3',\n  channelId: 'baijiahao',\n  patch: { status: 'success', stage: 'done' }\n} from { tab: { id: 8 } }\nBackground received message: {\n  type: 'V2_CHANNEL_UPDATE',\n  jobId: '96263cfd-c63a-4a2e-8f14-f9611c06a7c3',\n  channelId: 'toutiao',\n  patch: { status: 'success', stage: 'done' }\n} from { tab: { id: 9 } }\nBackground received message: {\n  type: 'V2_CHANNEL_UPDATE',\n  jobId: '96263cfd-c63a-4a2e-8f14-f9611c06a7c3',\n  channelId: 'feishu-docs',\n  patch: { status: 'success', stage: 'done' }\n} from { tab: { id: 10 } }\n✅ background serial integration test passed\n",
+            "stderr": ""
+          },
+          {
+            "label": "Run isolated all-channel browser regressions",
+            "argv": [
+              "npm",
+              "run",
+              "e2e:v3"
+            ],
+            "cwd": "/Users/pocket/Documents/project/bawei",
+            "returncode": 1,
+            "elapsed_seconds": 700.273,
+            "stdout": "\n> bawei@1.0.3 e2e:v3\n> npm run build && node scripts/v3-e2e.mjs\n\n\n> bawei@1.0.3 build\n> npm run clean && BUILD_TARGET=development node scripts/inline-build.ts\n\n\n> bawei@1.0.3 clean\n> rm -rf dist && rm -rf .tmp_build && rm -rf .tmp_build_prod\n\n🚀 Building Chrome Extension...\n🧹 Cleaned stale .ts and runner.js from public/test\n📦 Generating icons...\nGenerating icons...\n✅ Icons generated successfully\n✅ Icons generated successfully\n\n=== [V3 E2E] channel=csdn action=not_logged_in ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=csdn action=draft ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=csdn action=publish ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=tencent-cloud-dev action=not_logged_in ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=tencent-cloud-dev action=draft ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=tencent-cloud-dev action=publish ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=cnblogs action=not_logged_in ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=cnblogs action=draft ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=cnblogs action=publish ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=oschina action=not_logged_in ===\n\n=== [V3 E2E] channel=oschina action=draft ===\n\n=== [V3 E2E] channel=oschina action=publish ===\n\n=== [V3 E2E] channel=woshipm action=not_logged_in ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=woshipm action=draft ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=woshipm action=publish ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=mowen action=not_logged_in ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=mowen action=draft ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=mowen action=publish ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=sspai action=not_logged_in ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=sspai action=draft ===\n\n=== [V3 E2E] channel=sspai action=publish ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=baijiahao action=not_logged_in ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=baijiahao action=draft ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=baijiahao action=publish ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=toutiao action=not_logged_in ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=toutiao action=draft ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=toutiao action=publish ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=feishu-docs action=not_logged_in ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=feishu-docs action=draft ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=feishu-docs action=publish ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] channel=tencent-cloud-dev action=rejected ===\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n[wechat][console] Failed to load resource: the server responded with a status of 502 (Bad Gateway)\n\n=== [V3 E2E] serial all 10 channels action=draft ===\n",
+            "stderr": "\n❌ v3 e2e tests failed: Error: 等待渠道状态超时：channel=feishu-docs want=成功 last={\"ok\":true,\"badge\":\"等待处理\",\"progress\":\"验收未通过：未检测到“已保存到云端”或原文链接\"} storedState={\"channelId\":\"feishu-docs\",\"devDetails\":{\"expectedImageCount\":2,\"managementUrl\":\"https://wuxinxuexi.feishu.cn/drive/folder/PyWAfSFwrlMgiydvlHectMn2nSd\",\"missingTextBlockCount\":2,\"observedBlockCount\":1,\"observedImageCount\":0,\"publishedUrl\":\"https://wuxinxuexi.feishu.cn/docx/e2e_doc_serial_all_1786976765467\",\"reviewStatus\":\"draft_saved\",\"titleMatches\":true,\"verified\":{\"listVisible\":false,\"savedToCloud\":true,\"sourceUrlPresent\":false}},\"stage\":\"waitingUser\",\"status\":\"waiting_user\",\"tabId\":595356119,\"updatedAt\":1786976892249,\"userMessage\":\"验收未通过：未检测到“已保存到云端”或原文链接\",\"userSuggestion\":\"请确认页面出现“已经保存到云端”，且正文末尾包含“原文链接”，再点“继续”\"}\n    at runSerialAllChannels (file:///Users/pocket/Documents/project/bawei/scripts/v3-e2e.mjs:2153:17)\n    at async main (file:///Users/pocket/Documents/project/bawei/scripts/v3-e2e.mjs:2213:7)\n"
+          }
+        ],
+        "error": "Run isolated all-channel browser regressions: command failed with exit code 1",
+        "authentication": null
+      }
+    ],
+    "step_total": 1,
+    "current_step": null,
+    "resumed_from": null,
+    "reused_step_count": 0,
+    "blocked_skips": [],
+    "allowed_dirty_paths": [],
+    "finished_at": "2026-08-17T14:30:12+00:00"
+  },
+  "error": "Run isolated all-channel browser regressions: command failed with exit code 1"
+}

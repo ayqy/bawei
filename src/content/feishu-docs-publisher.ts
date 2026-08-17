@@ -44,6 +44,10 @@ function getDocUrlKey(jobId: string): string {
   return `bawei_v2_feishu_doc_url_${jobId}`;
 }
 
+function getContentRepairKey(jobId: string): string {
+  return `bawei_v2_feishu_content_repair_${jobId}`;
+}
+
 function setDocUrlForJob(jobId: string, url: string): void {
   try {
     sessionStorage.setItem(getDocUrlKey(jobId), url);
@@ -856,6 +860,36 @@ async function verifyFromDocx(job: AnyJob): Promise<void> {
     titleMatches &&
     missingTextBlocks.length === 0 &&
     evidence.imageUrls.length >= expectedImageCount;
+
+  const repairKey = getContentRepairKey(job.jobId);
+  if (!ok) {
+    const repairCount = Number(sessionStorage.getItem(repairKey) || '0');
+    if (repairCount < 1) {
+      sessionStorage.setItem(repairKey, String(repairCount + 1));
+      await report({
+        status: 'running',
+        stage: 'fillContent',
+        userMessage: getMessage('v2MsgFillingContent'),
+        devDetails: summarizeVerifyDetails({
+          publishedUrl: location.href,
+          managementUrl: FEISHU_FOLDER_URL,
+          reviewStatus: 'repairing_missing_content',
+          sourceUrlPresent,
+          savedToCloud: isSaved,
+          titleMatches,
+          missingTextBlockCount: missingTextBlocks.length,
+          observedBlockCount: evidence.blockCount,
+          expectedImageCount,
+          observedImageCount: evidence.imageUrls.length
+        })
+      });
+      await runDocxFlow(job);
+      return;
+    }
+  } else {
+    sessionStorage.removeItem(repairKey);
+  }
+
   await report({
     status: ok ? (job.action === 'draft' ? 'success' : 'pending_review') : 'waiting_user',
     stage: ok ? 'done' : 'waitingUser',
