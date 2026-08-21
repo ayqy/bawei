@@ -1104,6 +1104,60 @@ async function waitForCreatedOrReusedChannelPage(
   );
 }
 
+function waitForSerialChannelPageTransition(context, wechatPage, channelId, timeoutMs = 120_000) {
+  const baselinePages = new Set(context.pages());
+  const reusablePages = context
+    .pages()
+    .filter(
+      (page) =>
+        page !== wechatPage && !page.isClosed() && isReusableChannelPage(channelId, page.url())
+    );
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    let timeoutId;
+    const navigationListeners = new Map();
+
+    const cleanup = () => {
+      context.off('page', onPage);
+      for (const [page, listener] of navigationListeners) {
+        page.off('framenavigated', listener);
+      }
+      if (timeoutId) clearTimeout(timeoutId);
+    };
+    const finish = (page) => {
+      if (settled || page === wechatPage || page.isClosed()) return;
+      settled = true;
+      cleanup();
+      resolve(page);
+    };
+    const onPage = (page) => {
+      if (!baselinePages.has(page)) finish(page);
+    };
+
+    context.on('page', onPage);
+    for (const page of reusablePages) {
+      const listener = (frame) => {
+        if (frame === page.mainFrame()) finish(page);
+      };
+      navigationListeners.set(page, listener);
+      page.on('framenavigated', listener);
+    }
+    timeoutId = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(
+        new Error(
+          `等待串行渠道 Tab 切换超时：channel=${channelId} pages=${JSON.stringify(
+            context.pages().map((page) => page.url())
+          )}`
+        )
+      );
+    }, timeoutMs);
+  });
+}
+
 async function startJobAndWaitChannelTab(context, wechatPage, { channelId, action }) {
   const openFocus = pickOpenFocusChannel(channelId);
   // 诊断区在 job 未启动前是隐藏的，selectOption 会因为不可见而超时；用 evaluate 直接写入值并触发 change。
@@ -2369,9 +2423,14 @@ async function main() {
         select.dispatchEvent(new Event('change', { bubbles: true, cancelable: true }));
       }, ALL_CHANNELS[0]);
 
-      const firstPagePromise = context.waitForEvent('page', { timeout: 15_000 });
+      const startBaselinePages = new Set(context.pages());
       await wechatPage.click('#bawei-v2-start');
-      let channelPage = await firstPagePromise;
+      let channelPage = await waitForCreatedOrReusedChannelPage(
+        context,
+        wechatPage,
+        ALL_CHANNELS[0],
+        startBaselinePages
+      );
       const openedChannelPages = [];
 
       for (let index = 0; index < ALL_CHANNELS.length; index += 1) {
@@ -2379,16 +2438,19 @@ async function main() {
         const createdPages = context
           .pages()
           .filter((page) => page !== wechatPage && !baselinePages.has(page));
+        const observedSerialPages = new Set([...createdPages, ...openedChannelPages, channelPage]);
         assert(
-          createdPages.length === index + 1,
-          `串行第 ${index + 1} 步不应预开后续渠道 Tab：expected=${index + 1} actual=${
-            createdPages.length
-          } urls=${JSON.stringify(createdPages.map((page) => page.url()))}`
+          createdPages.length <= index + 1 && observedSerialPages.size === index + 1,
+          `串行第 ${index + 1} 步不应预开或重复复用渠道 Tab：expected=${
+            index + 1
+          } created=${createdPages.length} observed=${observedSerialPages.size} urls=${JSON.stringify(
+            [...observedSerialPages].map((page) => page.url())
+          )}`
         );
 
         const nextPagePromise =
           index + 1 < ALL_CHANNELS.length
-            ? context.waitForEvent('page', { timeout: 120_000 })
+            ? waitForSerialChannelPageTransition(context, wechatPage, ALL_CHANNELS[index + 1])
             : null;
         await channelPage.waitForLoadState('domcontentloaded', { timeout: 10_000 }).catch(() => {});
         const fixtureAlreadyRunning = await channelPage
