@@ -1,0 +1,61 @@
+{
+  "schema_version": 1,
+  "status": "passed",
+  "manifest": "/Users/pocket/Documents/project/bawei/release/cws/1.0.3/release-manifest.json",
+  "platform": "cws",
+  "checked_at": "2026-08-21T05:25:12+00:00",
+  "checked_date": "2026-08-21",
+  "remote_mutation": false,
+  "manifest_updated": true,
+  "rules": [
+    {
+      "index": 0,
+      "url": "https://developer.chrome.com/docs/webstore/publish/",
+      "topic": "lifecycle",
+      "status": "passed",
+      "attempts": 1,
+      "http_status": 200,
+      "resolved_url": "https://developer.chrome.com/docs/webstore/publish/",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 139595,
+      "sha256": "32b68451a41e70a7e7253782c3a19d512f74419cbf6398f4f226cc28d133fb2a"
+    },
+    {
+      "index": 1,
+      "url": "https://developer.chrome.com/docs/webstore/api/reference/rest/v2/publishers.items/publish",
+      "topic": "lifecycle",
+      "status": "passed",
+      "attempts": 1,
+      "http_status": 200,
+      "resolved_url": "https://developer.chrome.com/docs/webstore/api/reference/rest/v2/publishers.items/publish",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 150052,
+      "sha256": "f0938025c225ee1ab5000250be192f57e5814a1aa03078dd510c697cc61d4129"
+    },
+    {
+      "index": 2,
+      "url": "https://developer.chrome.com/docs/webstore/program-policies/",
+      "topic": "policy",
+      "status": "passed",
+      "attempts": 1,
+      "http_status": 200,
+      "resolved_url": "https://developer.chrome.com/docs/webstore/program-policies/",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 151616,
+      "sha256": "06aa9f7f469aae02724caef7aa82aaec6ca576a03bd9f97a1ef50ca786578a7a"
+    },
+    {
+      "index": 3,
+      "url": "https://developer.chrome.com/docs/webstore/images/",
+      "topic": "assets",
+      "status": "passed",
+      "attempts": 1,
+      "http_status": 200,
+      "resolved_url": "https://developer.chrome.com/docs/webstore/images/",
+      "content_type": "text/html; charset=utf-8",
+      "bytes": 172960,
+      "sha256": "9aaf0ac9eeb684e60011eecf29d9ad5857174635ea1b4f363c490b4831816c57"
+    }
+  ],
+  "errors": []
+}

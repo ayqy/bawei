@@ -35,31 +35,63 @@
   "rules_researched": [
     {
       "url": "https://developer.chrome.com/docs/webstore/publish/",
-      "checked_at": "2026-08-17",
+      "checked_at": "2026-08-21",
       "claim": "Package upload, review submission, approval, and public availability are distinct lifecycle states; a submission is not publicly released until its published revision is available from the store.",
       "topic": "lifecycle",
-      "evidence_kind": "direct"
+      "evidence_kind": "direct",
+      "refresh_evidence": {
+        "checked_at": "2026-08-21T05:25:12+00:00",
+        "http_status": 200,
+        "resolved_url": "https://developer.chrome.com/docs/webstore/publish/",
+        "content_type": "text/html; charset=utf-8",
+        "bytes": 139595,
+        "sha256": "32b68451a41e70a7e7253782c3a19d512f74419cbf6398f4f226cc28d133fb2a"
+      }
     },
     {
       "url": "https://developer.chrome.com/docs/webstore/api/reference/rest/v2/publishers.items/publish",
-      "checked_at": "2026-08-17",
+      "checked_at": "2026-08-21",
       "claim": "The Chrome Web Store API v2 publish method accepts publishType=DEFAULT_PUBLISH for automatic publication after approval and skipReview=false to submit the revision for review.",
       "topic": "lifecycle",
-      "evidence_kind": "direct"
+      "evidence_kind": "direct",
+      "refresh_evidence": {
+        "checked_at": "2026-08-21T05:25:12+00:00",
+        "http_status": 200,
+        "resolved_url": "https://developer.chrome.com/docs/webstore/api/reference/rest/v2/publishers.items/publish",
+        "content_type": "text/html; charset=utf-8",
+        "bytes": 150052,
+        "sha256": "f0938025c225ee1ab5000250be192f57e5814a1aa03078dd510c697cc61d4129"
+      }
     },
     {
       "url": "https://developer.chrome.com/docs/webstore/program-policies/",
-      "checked_at": "2026-08-17",
+      "checked_at": "2026-08-21",
       "claim": "The extension, listing, permissions, privacy disclosures, and promotional material must accurately represent a narrow user-facing purpose and the data practices of the submitted product.",
       "topic": "policy",
-      "evidence_kind": "direct"
+      "evidence_kind": "direct",
+      "refresh_evidence": {
+        "checked_at": "2026-08-21T05:25:12+00:00",
+        "http_status": 200,
+        "resolved_url": "https://developer.chrome.com/docs/webstore/program-policies/",
+        "content_type": "text/html; charset=utf-8",
+        "bytes": 151616,
+        "sha256": "06aa9f7f469aae02724caef7aa82aaec6ca576a03bd9f97a1ef50ca786578a7a"
+      }
     },
     {
       "url": "https://developer.chrome.com/docs/webstore/images/",
-      "checked_at": "2026-08-17",
+      "checked_at": "2026-08-21",
       "claim": "A Chrome Web Store listing supports a 128x128 icon, a 440x280 small promotional image, and representative screenshots at 1280x800 or 640x400.",
       "topic": "assets",
-      "evidence_kind": "direct"
+      "evidence_kind": "direct",
+      "refresh_evidence": {
+        "checked_at": "2026-08-21T05:25:12+00:00",
+        "http_status": 200,
+        "resolved_url": "https://developer.chrome.com/docs/webstore/images/",
+        "content_type": "text/html; charset=utf-8",
+        "bytes": 172960,
+        "sha256": "9aaf0ac9eeb684e60011eecf29d9ad5857174635ea1b4f363c490b4831816c57"
+      }
     }
   ],
   "growth": {
@@ -284,7 +316,11 @@
       "commands": [
         {
           "label": "Type-check extension and release adapter",
-          "argv": ["npm", "run", "type-check"],
+          "argv": [
+            "npm",
+            "run",
+            "type-check"
+          ],
           "cwd": ".",
           "required_env": [],
           "timeout_seconds": 1800,
@@ -292,7 +328,11 @@
         },
         {
           "label": "Lint TypeScript source",
-          "argv": ["npm", "run", "lint"],
+          "argv": [
+            "npm",
+            "run",
+            "lint"
+          ],
           "cwd": ".",
           "required_env": [],
           "timeout_seconds": 1800,
@@ -300,7 +340,11 @@
         },
         {
           "label": "Run publication-core regression suite",
-          "argv": ["npm", "run", "test:publish-core"],
+          "argv": [
+            "npm",
+            "run",
+            "test:publish-core"
+          ],
           "cwd": ".",
           "required_env": [],
           "timeout_seconds": 1800,
@@ -308,7 +352,11 @@
         },
         {
           "label": "Run V3 and serial queue unit regressions",
-          "argv": ["npm", "run", "test:v3:unit"],
+          "argv": [
+            "npm",
+            "run",
+            "test:v3:unit"
+          ],
           "cwd": ".",
           "required_env": [],
           "timeout_seconds": 1800,
@@ -316,7 +364,11 @@
         },
         {
           "label": "Run serial queue unit regressions",
-          "argv": ["npm", "run", "test:serial"],
+          "argv": [
+            "npm",
+            "run",
+            "test:serial"
+          ],
           "cwd": ".",
           "required_env": [],
           "timeout_seconds": 1800,
@@ -324,7 +376,11 @@
         },
         {
           "label": "Run serial queue integration regressions",
-          "argv": ["npm", "run", "test:serial:integration"],
+          "argv": [
+            "npm",
+            "run",
+            "test:serial:integration"
+          ],
           "cwd": ".",
           "required_env": [],
           "timeout_seconds": 1800,
@@ -332,7 +388,11 @@
         },
         {
           "label": "Run isolated all-channel browser regressions",
-          "argv": ["npm", "run", "e2e:v3"],
+          "argv": [
+            "npm",
+            "run",
+            "e2e:v3"
+          ],
           "cwd": ".",
           "required_env": [],
           "timeout_seconds": 1800,
@@ -435,7 +495,9 @@
           "read_only": true
         }
       ],
-      "covers": ["terminal_status"]
+      "covers": [
+        "terminal_status"
+      ]
     }
   }
 }
