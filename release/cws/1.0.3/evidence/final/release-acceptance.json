@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "product": "bawei",
+  "platform": "cws",
+  "version": "1.0.3",
+  "operation": "submit",
+  "item_id": "epgindgpaoemkikhhpbhigjcfgcnhkff",
+  "publisher_id": "301e74b1-6567-4278-a30a-74b31afa142c",
+  "release_method": "automatic_after_review",
+  "source": {
+    "branch": "main",
+    "commit": "51b08d6c0c9994bfb399f5789e3b85164619bbac",
+    "remote_default_commit_matched": true,
+    "repository_clean_before_submit": true
+  },
+  "submission": {
+    "completed_at": "2026-08-21T07:19:52.925Z",
+    "upload_state": "SUCCEEDED",
+    "submitted_state": "PENDING_REVIEW",
+    "submitted_version": "1.0.3",
+    "package_sha256": "8fe526e18aadcfeb74d1be1be7352c2755d3e6cc6a3311a38a3c4a0d2cdb52bb",
+    "publish_type": "DEFAULT_PUBLISH",
+    "skip_review": false,
+    "block_on_warnings": true,
+    "automatic_publish_after_approval": true,
+    "public_release_triggered_during_submit": false
+  },
+  "public_status": {
+    "checked_at": "2026-08-21T07:54:05.601Z",
+    "submitted_state": null,
+    "submitted_versions": [],
+    "published_state": "PUBLISHED",
+    "published_versions": ["1.0.3"],
+    "target_terminal_state": "public"
+  },
+  "store_package": {
+    "download_source": "Chrome update service for the bound item ID",
+    "format": "CRX3",
+    "bytes": 592554,
+    "sha256": "c3ecfb957bba06a734ecc2a91af31600c1c89f885558e9247bec9e38d671f914",
+    "header_bytes": 1309,
+    "zip_offset": 1321,
+    "crx_id_hex": "4f68d36f0e4ca8a77f178692562d7a55",
+    "derived_extension_id": "epgindgpaoemkikhhpbhigjcfgcnhkff",
+    "manifest_sha256": "d48eb49d2f1948679e4e1af61d687b31b2ee6622bcc5f0dd9f6434c3ba43a67e",
+    "manifest_version": 3,
+    "extension_version": "1.0.3",
+    "update_url": "https://clients2.google.com/service/update2/crx",
+    "content_script_count": 11,
+    "permissions": ["storage", "tabs", "scripting"]
+  },
+  "runtime_acceptance": {
+    "status": "passed",
+    "artifact": "unpacked payload from the downloaded store CRX3",
+    "browser_profile": "fresh isolated Playwright profile",
+    "network_contract": "all destination URLs were intercepted by offline fixtures",
+    "real_channel_mutations": 0,
+    "marketing_browser_touched": false,
+    "baijiahao_verification_touched": false,
+    "scenarios": [
+      "ten channels: not_logged_in",
+      "ten channels: draft",
+      "ten channels: publish",
+      "tencent-cloud-dev: rejected",
+      "ten channels: strict serial draft"
+    ]
+  },
+  "evidence_hashes": {
+    "submit_result_sha256": "55377d447e485e2c8762aef0e1c5293d25e36cc5c281127a3bb34e079d00fa6c",
+    "cws_submit_sha256": "97cc29d32a2722aa810e2b875fbc254c4f2747fa97e7dea71294c113c0ae2c63",
+    "cws_public_status_sha256": "80a11746798b6f6f00af1ea09da2da169c4eed2d150cf4cb7a23d8c2056a6358"
+  }
+}
