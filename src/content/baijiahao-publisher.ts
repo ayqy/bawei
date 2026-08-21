@@ -28,6 +28,7 @@ type AnyJob = Pick<PublishJob, 'jobId' | 'action' | 'article' | 'stoppedAt'>;
 let currentJob: AnyJob | null = null;
 let currentStage: ChannelRuntimeState['stage'] = 'init';
 let stopRequested = false;
+let continueInFlight = false;
 
 (
   globalThis as unknown as { __BAWEI_V2_IS_STOP_REQUESTED?: () => boolean }
@@ -1753,6 +1754,57 @@ async function stageSaveDraft(): Promise<void> {
   btn.click();
 }
 
+function baijiahaoSecurityText(): string {
+  return (document.body?.innerText || document.body?.textContent || '').replace(/\s+/g, ' ').trim();
+}
+
+function isBaijiahaoSecurityDialogPresent(): boolean {
+  const text = baijiahaoSecurityText();
+  if (!text) return false;
+  return (
+    text.includes('百度安全验证') ||
+    text.includes('安全验证') ||
+    text.includes('完成下方验证') ||
+    text.includes('拖动左侧滑块') ||
+    text.includes('扫码验证') ||
+    text.includes('百度APP扫描') ||
+    text.includes('二维码') ||
+    text.includes('手机验证') ||
+    text.includes('验证码已发送至你的手机') ||
+    text.includes('验证方式选择') ||
+    text.includes('去验证') ||
+    text.includes('已完成验证')
+  );
+}
+
+function isBaijiahaoPhoneVerificationPresent(): boolean {
+  const text = baijiahaoSecurityText();
+  return (
+    /手机号?(?:验证|是否可用于验证)|验证码已发送至你的手机|请输入.{0,8}验证码/.test(text) ||
+    !!document.querySelector('.mod-dialog-authwidget [class*="mobile"], .authwidget-dialog')
+  );
+}
+
+async function reportBaijiahaoSecurityWaiting(): Promise<boolean> {
+  const isPhoneVerification = isBaijiahaoPhoneVerificationPresent();
+  currentStage = 'waitingUser';
+  await report({
+    status: 'waiting_user',
+    stage: 'waitingUser',
+    userMessage: getMessage('v2MsgPublishBlockedBySecurityVerify'),
+    userSuggestion: isPhoneVerification
+      ? '请在百家号完成手机号验证后点击继续；正文、三张图片和封面均已保留'
+      : '请在百家号完成平台安全验证后点击继续；当前稿件已保留',
+    devDetails: {
+      message: isPhoneVerification
+        ? '百家号要求手机号验证，正文、三张图片和封面已保留，未重复提交'
+        : '百家号要求交互式安全验证，稿件已保留，自动化未尝试绕过',
+      verificationType: isPhoneVerification ? 'phone' : 'interactive-security'
+    }
+  });
+  return isPhoneVerification;
+}
+
 async function stageSubmitPublish(): Promise<void> {
   currentStage = 'submitPublish';
   await report({
@@ -1795,30 +1847,9 @@ async function stageSubmitPublish(): Promise<void> {
   });
 
   const handleSecurityVerificationBestEffort = async (): Promise<void> => {
-    const isSecurityDialogPresent = (): boolean => {
-      const t = (document.body?.innerText || document.body?.textContent || '')
-        .replace(/\s+/g, ' ')
-        .trim();
-      if (!t) return false;
-      return (
-        t.includes('百度安全验证') ||
-        t.includes('安全验证') ||
-        t.includes('完成下方验证') ||
-        t.includes('拖动左侧滑块') ||
-        t.includes('扫码验证') ||
-        t.includes('百度APP扫描') ||
-        t.includes('二维码') ||
-        t.includes('手机验证') ||
-        t.includes('验证码已发送至你的手机') ||
-        t.includes('验证方式选择') ||
-        t.includes('去验证') ||
-        t.includes('已完成验证')
-      );
-    };
-
     const firstSeen = await retryUntil(
       async () => {
-        if (!isSecurityDialogPresent()) throw new Error('no security dialog');
+        if (!isBaijiahaoSecurityDialogPresent()) throw new Error('no security dialog');
         return true;
       },
       { timeoutMs: 10_000, intervalMs: 400 }
@@ -1831,28 +1862,7 @@ async function stageSubmitPublish(): Promise<void> {
       userMessage: getMessage('v2MsgPublishBlockedBySecurityVerify')
     });
 
-    const securityText = (document.body?.innerText || document.body?.textContent || '')
-      .replace(/\s+/g, ' ')
-      .trim();
-    const isPhoneVerification =
-      /手机号?(?:验证|是否可用于验证)|验证码已发送至你的手机|请输入.{0,8}验证码/.test(
-        securityText
-      ) || !!document.querySelector('.mod-dialog-authwidget [class*="mobile"], .authwidget-dialog');
-    currentStage = 'waitingUser';
-    await report({
-      status: 'waiting_user',
-      stage: 'waitingUser',
-      userMessage: getMessage('v2MsgPublishBlockedBySecurityVerify'),
-      userSuggestion: isPhoneVerification
-        ? '请在百家号完成手机号验证后点击继续；正文、三张图片和封面均已保留'
-        : '请在百家号完成平台安全验证后点击继续；当前稿件已保留',
-      devDetails: {
-        message: isPhoneVerification
-          ? '百家号要求手机号验证，正文、三张图片和封面已保留，未重复提交'
-          : '百家号要求交互式安全验证，稿件已保留，自动化未尝试绕过',
-        verificationType: isPhoneVerification ? 'phone' : 'interactive-security'
-      }
-    });
+    const isPhoneVerification = await reportBaijiahaoSecurityWaiting();
     throw new Error(
       isPhoneVerification
         ? 'waiting_user:baijiahao-phone-verification'
@@ -1943,6 +1953,54 @@ async function stageConfirmSuccess(action: 'draft' | 'publish'): Promise<void> {
   );
 }
 
+async function submitPreparedPublish(): Promise<void> {
+  await stageSubmitPublish();
+  await stageConfirmSuccess('publish');
+
+  await report({
+    status: 'running',
+    stage: 'confirmSuccess',
+    userMessage: getMessage('v2MsgPublishTriggeredGoWorksListVerify'),
+    devDetails: summarizeVerifyDetails({ listUrl: LIST_URL })
+  });
+  location.href = LIST_URL;
+}
+
+async function resumeAfterWaitingUser(job: AnyJob): Promise<void> {
+  if (continueInFlight) return;
+  continueInFlight = true;
+  try {
+    if (isBaijiahaoSecurityDialogPresent()) {
+      await reportBaijiahaoSecurityWaiting();
+      return;
+    }
+    if (job.action !== 'publish') {
+      currentStage = 'openEntry';
+      await runEditorFlow(job);
+      return;
+    }
+
+    await stageEnsureAiDeclaration();
+    await stageEnsureCategorySelected();
+    await stageEnsureSummaryFilled(job);
+    await stageEnsureEventSourceSelected();
+    await stageEnsureCoverSelected();
+    await submitPreparedPublish();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (message.startsWith('waiting_user:')) return;
+    await report({
+      status: 'failed',
+      stage: currentStage,
+      userMessage: getMessage('v2MsgFailed'),
+      userSuggestion: getMessage('v2SugCheckLoginOrDomThenRetry'),
+      devDetails: { message }
+    });
+  } finally {
+    continueInFlight = false;
+  }
+}
+
 async function runEditorFlow(job: AnyJob): Promise<void> {
   await report({
     status: 'running',
@@ -1977,16 +2035,7 @@ async function runEditorFlow(job: AnyJob): Promise<void> {
     return;
   }
 
-  await stageSubmitPublish();
-  await stageConfirmSuccess('publish');
-
-  await report({
-    status: 'running',
-    stage: 'confirmSuccess',
-    userMessage: getMessage('v2MsgPublishTriggeredGoWorksListVerify'),
-    devDetails: summarizeVerifyDetails({ listUrl: LIST_URL })
-  });
-  location.href = LIST_URL;
+  await submitPreparedPublish();
 }
 
 async function verifyFromList(job: AnyJob): Promise<void> {
@@ -2215,7 +2264,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
     message.jobId === currentJob.jobId &&
     message.channelId === CHANNEL_ID
   ) {
-    bootstrap();
+    void resumeAfterWaitingUser(currentJob);
   }
 });
 

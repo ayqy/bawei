@@ -660,7 +660,7 @@ function buildSspaiWriteHtml({ title }) {
   return pageTemplate({ title: `${title} - SSPAI`, body, script });
 }
 
-function buildBaijiahaoEditorHtml({ title }) {
+function buildBaijiahaoEditorHtml({ title, securityResume = false }) {
   const body = `
     <h1>百家号编辑器（E2E）</h1>
     <div data-testid="news-title-input" style="margin:12px 0;">
@@ -692,6 +692,10 @@ function buildBaijiahaoEditorHtml({ title }) {
       <span id="bjh-cover-applied" style="display:none;">编辑 更换</span>
     </div>
     <div class="cheetah-modal" role="dialog" style="display:none;width:200px;height:80px;">其他隐藏弹窗</div>
+    <div id="bjh-security" class="mod-dialog-authwidget authwidget-dialog" role="dialog" style="display:none;width:420px;min-height:180px;">
+      <div>手机验证</div>
+      <div>验证码已发送至你的手机</div>
+    </div>
     <div id="bjh-cover-modal" class="cheetah-modal" role="dialog" style="display:none;width:600px;height:400px;">
       <div role="tab">正文/本地上传(1)</div><div role="tab">AI封图</div>
       <div>封面预览 (3:2)</div>
@@ -705,6 +709,8 @@ function buildBaijiahaoEditorHtml({ title }) {
     <div id="bjh-status" class="hint"></div>
   `;
   const script = `
+    window.__baweiSecurityResume = ${securityResume ? 'true' : 'false'};
+    window.__baweiSecurityVerified = false;
     try { sessionStorage.setItem('__bawei_e2e_baijiahao_publish_click_count', '0'); } catch {}
     try { sessionStorage.setItem('__bawei_e2e_baijiahao_ai_checked', '0'); } catch {}
     const bjhAiDeclaration = document.querySelector('#bjh-ai-declaration');
@@ -829,6 +835,11 @@ function buildBaijiahaoEditorHtml({ title }) {
         );
       } catch {}
       window.__baweiPublishClickCount = publishClickCount;
+      if (window.__baweiSecurityResume && !window.__baweiSecurityVerified) {
+        const security = document.querySelector('#bjh-security');
+        if (security) security.style.display = 'block';
+        return;
+      }
       try { document.querySelector('#bjh-status').textContent = '发布成功'; } catch {}
       document.body.append(' 发布成功');
     });
@@ -1257,6 +1268,23 @@ async function clickChannelBadge(wechatPage, channelId) {
     const badge = spans[0];
     if (badge) badge.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
   }, channelId);
+}
+
+async function clickChannelControl(wechatPage, channelId, text) {
+  const clicked = await wechatPage.evaluate(
+    ({ id, buttonText }) => {
+      const cb = document.querySelector(`#bawei-v2-run-${id}`);
+      const row = cb?.closest('div');
+      const button = Array.from(row?.querySelectorAll('button') || []).find(
+        (candidate) => String(candidate.textContent || '').trim() === buttonText
+      );
+      if (!button) return false;
+      button.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+      return true;
+    },
+    { id: channelId, buttonText: text }
+  );
+  assert(clicked, `未找到渠道控制按钮：channel=${channelId} text=${text}`);
 }
 
 async function waitForBadgeText(wechatPage, channelId, wantText, timeoutMs) {
@@ -1834,7 +1862,10 @@ async function main() {
           await route.fulfill({
             status: 200,
             headers: { 'content-type': 'text/html; charset=utf-8' },
-            body: buildBaijiahaoEditorHtml({ title })
+            body: buildBaijiahaoEditorHtml({
+              title,
+              securityResume: action === 'waiting_user_resume'
+            })
           });
           return;
         }
@@ -2025,7 +2056,7 @@ async function main() {
 
       const channelPage = await startJobAndWaitChannelTab(context, wechatPage, {
         channelId,
-        action: action === 'rejected' ? 'publish' : action
+        action: action === 'rejected' || action === 'waiting_user_resume' ? 'publish' : action
       });
 
       if (action === 'not_logged_in') {
@@ -2090,6 +2121,62 @@ async function main() {
           '点击 badge 未重开入口页'
         );
         await reopened.close().catch(() => {});
+        await wechatPage.close().catch(() => {});
+        return;
+      }
+
+      if (action === 'waiting_user_resume') {
+        await waitForBadgeText(wechatPage, channelId, '等待', 60_000);
+        const beforeContinue = await channelPage.evaluate(() => ({
+          publishClickCount: Number(
+            sessionStorage.getItem('__bawei_e2e_baijiahao_publish_click_count') || 0
+          ),
+          securityVisible: Boolean(document.querySelector('#bjh-security')?.offsetParent)
+        }));
+        assert(
+          beforeContinue.publishClickCount === 1 && beforeContinue.securityVisible,
+          `百家号首次安全验证状态异常：${JSON.stringify(beforeContinue)}`
+        );
+
+        await clickChannelControl(wechatPage, channelId, '继续');
+        await wechatPage.waitForTimeout(1_000);
+        const blockedContinue = await channelPage.evaluate(() => ({
+          publishClickCount: Number(
+            sessionStorage.getItem('__bawei_e2e_baijiahao_publish_click_count') || 0
+          ),
+          securityVisible: Boolean(document.querySelector('#bjh-security')?.offsetParent)
+        }));
+        assert(
+          blockedContinue.publishClickCount === 1 && blockedContinue.securityVisible,
+          `验证未完成时“继续”不得二次点击发布：${JSON.stringify(blockedContinue)}`
+        );
+
+        await channelPage.evaluate(() => {
+          window.__baweiSecurityVerified = true;
+          const security = document.querySelector('#bjh-security');
+          if (security) security.style.display = 'none';
+        });
+        await clickChannelControl(wechatPage, channelId, '继续');
+        await waitForBadgeText(wechatPage, channelId, '待审', 60_000);
+
+        const resumedState = await readStoredChannelRuntimeState(context, wechatPage, channelId);
+        assert(
+          resumedState?.status === 'pending_review' &&
+            !!resumedState?.devDetails?.candidatePublicUrl,
+          `百家号人工验证后未恢复到待审终态：${JSON.stringify(resumedState)}`
+        );
+        const resumedPage = await channelPage.evaluate(() => ({
+          publishClickCount: Number(
+            sessionStorage.getItem('__bawei_e2e_baijiahao_publish_click_count') || 0
+          ),
+          url: location.href
+        }));
+        assert(
+          resumedPage.publishClickCount === 2 &&
+            !resumedPage.url.startsWith('https://baijiahao.baidu.com/builder/rc/edit'),
+          `百家号验证后必须只追加一次提交：${JSON.stringify(resumedPage)}`
+        );
+        await channelPage.close().catch(() => {});
         await wechatPage.close().catch(() => {});
         return;
       }
@@ -2501,7 +2588,10 @@ async function main() {
     const onlyChannel =
       onlyChannelArg && ALL_CHANNELS.includes(onlyChannelArg) ? onlyChannelArg : '';
     const onlyAction =
-      onlyActionArg && ['not_logged_in', 'draft', 'publish', 'rejected'].includes(onlyActionArg)
+      onlyActionArg &&
+      ['not_logged_in', 'draft', 'publish', 'rejected', 'waiting_user_resume'].includes(
+        onlyActionArg
+      )
         ? onlyActionArg
         : '';
 
@@ -2510,11 +2600,14 @@ async function main() {
     }
     if (onlyActionArg && !onlyAction) {
       throw new Error(
-        `未知 action 参数：${onlyActionArg}（可选：not_logged_in, draft, publish, rejected）`
+        `未知 action 参数：${onlyActionArg}（可选：not_logged_in, draft, publish, rejected, waiting_user_resume）`
       );
     }
     if (onlyAction === 'rejected' && onlyChannel !== 'tencent-cloud-dev') {
       throw new Error('rejected 夹具仅适用于 tencent-cloud-dev');
+    }
+    if (onlyAction === 'waiting_user_resume' && onlyChannel !== 'baijiahao') {
+      throw new Error('waiting_user_resume 夹具仅适用于 baijiahao');
     }
 
     if (serialOnly) {
