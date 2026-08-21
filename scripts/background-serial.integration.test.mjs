@@ -85,6 +85,12 @@ globalThis.chrome = {
       operations.push({ kind: 'update', tabId, ...updateProperties });
       return { ...tab };
     },
+    async reload(tabId) {
+      const tab = tabs.get(tabId);
+      if (!tab) throw new Error(`missing tab ${tabId}`);
+      tab.lastAccessed = Date.now();
+      operations.push({ kind: 'reload', tabId, url: tab.url });
+    },
     async get(tabId) {
       const tab = tabs.get(tabId);
       if (!tab) throw new Error(`missing tab ${tabId}`);
@@ -276,14 +282,20 @@ for (let index = 0; index < allChannels.length; index += 1) {
 
 const allFinalState = storageData.get(`bawei_v2_state_${allStart.jobId}`);
 assert.ok(
-  allChannels.every((channelId, index) => allFinalState[channelId].status === terminalStatuses[index]),
+  allChannels.every(
+    (channelId, index) => allFinalState[channelId].status === terminalStatuses[index]
+  ),
   '成功、待审、退回都必须作为串行终态保存并推进队列'
 );
 assert.equal(tabRemovedListeners.length, 1, '应注册一个 tab 关闭监听器');
 tabRemovedListeners[0](allNavigationTabIds[0]);
 tabRemovedListeners[0](allNavigationTabIds[1]);
 await new Promise((resolve) => setTimeout(resolve, 0));
-assert.equal(allFinalState[allChannels[0]].status, 'pending_review', '关闭待审渠道 Tab 不得覆写终态');
+assert.equal(
+  allFinalState[allChannels[0]].status,
+  'pending_review',
+  '关闭待审渠道 Tab 不得覆写终态'
+);
 assert.equal(allFinalState[allChannels[1]].status, 'rejected', '关闭退回渠道 Tab 不得覆写终态');
 assert.equal(
   operations
@@ -304,5 +316,61 @@ const noSourceStart = await dispatch({
   }
 });
 assert.equal(noSourceStart.success, true, '本地 Markdown 未声明 source_url 时仍必须能启动渠道任务');
+
+const sameUrlOperationsStart = operations.length;
+const sameUrlStart = await dispatch({
+  type: 'V2_START_JOB',
+  action: 'draft',
+  focusChannel: 'sspai',
+  channels: ['sspai'],
+  article: {
+    title: '少数派同地址复用刷新测试',
+    contentHtml: '<p>正文</p>',
+    sourceUrl: 'https://example.com/sspai-same-url-reload'
+  }
+});
+assert.equal(sameUrlStart.success, true);
+const sameUrlOperations = operations.slice(sameUrlOperationsStart);
+const sameUrlUpdate = sameUrlOperations.find(
+  (item) => item.kind === 'update' && item.url === getChannelConfig('sspai').entryUrl
+);
+assert.ok(sameUrlUpdate, '少数派复用标签页时仍应绑定并更新目标地址');
+assert.ok(
+  sameUrlOperations.some((item) => item.kind === 'reload' && item.tabId === sameUrlUpdate.tabId),
+  '目标地址未变化时必须强制 reload，让新任务上下文绑定到新内容脚本'
+);
+
+const woshipmDraftUrl = 'https://www.woshipm.com/writing?pid=6451992';
+const woshipmTab = Array.from(tabs.values()).find((tab) =>
+  String(tab.url || '').startsWith(getChannelConfig('woshipm').entryUrl)
+);
+assert.ok(woshipmTab, '十渠道集成流程应保留人人都是产品经理标签页');
+woshipmTab.url = woshipmDraftUrl;
+const woshipmReuseOperationsStart = operations.length;
+const woshipmReuseStart = await dispatch({
+  type: 'V2_START_JOB',
+  action: 'publish',
+  focusChannel: 'woshipm',
+  channels: ['woshipm'],
+  article: {
+    title: '人人都是产品经理既有草稿复用测试',
+    contentHtml: '<p>正文</p>',
+    sourceUrl: 'https://example.com/woshipm-existing-draft'
+  }
+});
+assert.equal(woshipmReuseStart.success, true);
+const woshipmReuseOperations = operations.slice(woshipmReuseOperationsStart);
+assert.ok(
+  woshipmReuseOperations.some(
+    (item) => item.kind === 'update' && item.tabId === woshipmTab.id && item.url === woshipmDraftUrl
+  ),
+  '人人都是产品经理重试必须保留带 pid 的既有草稿编辑地址'
+);
+assert.ok(
+  woshipmReuseOperations.some(
+    (item) => item.kind === 'reload' && item.tabId === woshipmTab.id && item.url === woshipmDraftUrl
+  ),
+  '人人都是产品经理复用同一草稿时必须刷新内容脚本'
+);
 
 console.log('✅ background serial integration test passed');

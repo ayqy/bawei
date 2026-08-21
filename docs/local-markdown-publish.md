@@ -77,4 +77,6 @@ CHROME_PROFILE_DIR="$HOME/.bawei-live-profile" BOOTSTRAP_PROFILE=0 npm run publi
 
 真实回归必须显式保持当前现场：`LIVE_PUBLISH_REQUIRE_EXISTING_CHROME=1`、`BOOTSTRAP_PROFILE=0`，并使用同一个 `CHROME_PROFILE_DIR`。不要在登录完成后再次执行会重启浏览器的 `live:open`。
 
+若 Chrome 自身的 `chrome://extensions` 管理接口在一次失败的 unpacked reload 后持续阻塞，但扩展已由同一浏览器原地重新启用、`dist` 已成功构建且构建版本已核对，可在该次有界恢复中同时设置 `LIVE_PUBLISH_SKIP_BUILD=1 LIVE_PUBLISH_SKIP_EXTENSION_REFRESH=1`。这样不会再次短暂删除正在加载的 unpacked 目录；脚本仍会刷新目标渠道页、重建 background bridge 并校验运行版本。这两个开关不得用于切换 Profile、复用未验证构建或绕过版本不一致。
+
 `publish:markdown` 会先完成构建，再在这个现有浏览器中禁用/启用一次 unpacked bawei 扩展以加载最新 `dist`；该过程不会重启浏览器、替换 Profile 或清除渠道登录态。对本轮仍需提交且已经打开的渠道页，脚本随后会原址刷新一次，让刚构建的 content script 真正注入；已公开、待审或退回而被防重跳过的渠道不会刷新。若无法在当前浏览器中定位并重新启用 bawei，任务会直接失败，不会回退到新浏览器。

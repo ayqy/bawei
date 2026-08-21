@@ -26,6 +26,9 @@ const LIVE_PUBLISH_REQUIRE_EXISTING_CHROME =
   String(process.env.LIVE_PUBLISH_REQUIRE_EXISTING_CHROME || '1') === '1';
 const LIVE_PUBLISH_PRESERVE_EXISTING_PAGES =
   String(process.env.LIVE_PUBLISH_PRESERVE_EXISTING_PAGES || '1') === '1';
+const LIVE_PUBLISH_SKIP_EXTENSION_REFRESH =
+  String(process.env.LIVE_PUBLISH_SKIP_EXTENSION_REFRESH || '0') === '1';
+const LIVE_PUBLISH_SKIP_BUILD = String(process.env.LIVE_PUBLISH_SKIP_BUILD || '0') === '1';
 const LIVE_PUBLISH_ACTION_RAW = String(process.env.LIVE_PUBLISH_ACTION || 'publish')
   .trim()
   .toLowerCase();
@@ -1452,11 +1455,7 @@ async function refreshBaweiExtensionInExistingChrome(context, distDir) {
       );
     }
 
-    if (
-      !refreshed?.id ||
-      refreshed.state !== 'ENABLED' ||
-      refreshed.version !== expectedVersion
-    ) {
+    if (!refreshed?.id || refreshed.state !== 'ENABLED' || refreshed.version !== expectedVersion) {
       throw new Error(
         `现有浏览器中的 bawei 扩展刷新失败（state=${refreshed?.state || 'missing'} version=${refreshed?.version || 'missing'} expected=${expectedVersion}）`
       );
@@ -2586,7 +2585,11 @@ async function collectFeishuVirtualEvidence(page) {
           .trim();
         const images = Array.from(block.querySelectorAll('img.docx-image, img'))
           .map((image) => String(image.currentSrc || image.src || '').trim())
-          .filter((url) => /^https:\/\//i.test(url) && !/^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?\//i.test(url));
+          .filter(
+            (url) =>
+              /^https:\/\//i.test(url) &&
+              !/^https?:\/\/(?:127\.0\.0\.1|localhost)(?::\d+)?\//i.test(url)
+          );
         const imageTokens = Array.from(block.querySelectorAll('[image-token]'))
           .map((node) => String(node.getAttribute('image-token') || '').trim())
           .filter(Boolean);
@@ -2621,11 +2624,18 @@ async function collectFeishuVirtualEvidence(page) {
     const imageUrls = Array.from(new Set(values.flatMap((value) => value.images)));
     const imageTokens = Array.from(new Set(values.flatMap((value) => value.imageTokens)));
     const saveText = Array.from(document.querySelectorAll('.note-title__time'))
-      .map((node) => String(node.textContent || '').replace(/\s+/g, ' ').trim())
+      .map((node) =>
+        String(node.textContent || '')
+          .replace(/\s+/g, ' ')
+          .trim()
+      )
       .filter(Boolean);
     return {
       title,
-      text: values.map((value) => value.text).filter(Boolean).join('\n'),
+      text: values
+        .map((value) => value.text)
+        .filter(Boolean)
+        .join('\n'),
       blocks: values,
       blockCount: values.length,
       imageUrls,
@@ -2662,8 +2672,12 @@ async function findFeishuRecoveryPage(context, article) {
       .reverse()
       .filter((page) => /^https:\/\/wuxinxuexi\.feishu\.cn\/docx\//i.test(page.url()));
     for (const page of candidates) {
-      const bodyText = await page.locator('body').innerText().catch(() => '');
-      if (!article?.title || bodyText.includes(article.title) || candidates.length === 1) return page;
+      const bodyText = await page
+        .locator('body')
+        .innerText()
+        .catch(() => '');
+      if (!article?.title || bodyText.includes(article.title) || candidates.length === 1)
+        return page;
     }
     await sleep(500);
   }
@@ -2679,7 +2693,8 @@ async function restoreFeishuTitleTrusted(page, title) {
     .replace(/\u200b/g, '')
     .replace(/\s+/g, ' ')
     .trim();
-  if (current === String(title || '').trim()) return;
+  const titleLineCount = await editor.locator('.ace-line').count();
+  if (current === String(title || '').trim() && titleLineCount === 1) return;
   await editor.click();
   await page.keyboard.press('Meta+A');
   await page.keyboard.insertText(String(title || '').trim());
@@ -2707,26 +2722,33 @@ async function pasteFeishuArticleTrusted(context, page, article) {
       '.page-block-children .block.docx-text-block .zone-container.text-editor[contenteditable="true"]'
     )
     .first();
-  await bodyEditor.waitFor({ state: 'visible', timeout: 30_000 });
-  await bodyEditor.click();
-  await page.keyboard.press('Meta+A');
-  await page.keyboard.press('Meta+A');
-  await page.keyboard.press('Backspace');
-  await page.waitForTimeout(600);
-
+  const hadBodyEditor = (await bodyEditor.count()) > 0;
+  if (hadBodyEditor) {
+    await bodyEditor.waitFor({ state: 'visible', timeout: 30_000 });
+    await bodyEditor.click();
+    await page.keyboard.press('Meta+A');
+    await page.keyboard.press('Meta+A');
+    await page.keyboard.press('Backspace');
+    await page.waitForTimeout(600);
+  }
   bodyEditor = page
     .locator(
       '.page-block-children .block.docx-text-block .zone-container.text-editor[contenteditable="true"]'
     )
     .first();
   if (!(await bodyEditor.count())) {
+    // A truly blank Feishu doc has no .page-block-children text block yet. Its only
+    // body affordance is the empty .page-block-children surface. A trusted pointer click
+    // there creates the first block; pressing Enter from the root/title does not.
     await restoreFeishuTitleTrusted(page, article.title);
-    const titleEditor = page
-      .locator('h1.page-block-content .zone-container.text-editor[contenteditable="true"]')
-      .first();
-    await titleEditor.click();
-    await page.keyboard.press('End');
-    await page.keyboard.press('Enter');
+    const bodySurface = page.locator('.page-block-children').first();
+    await bodySurface.waitFor({ state: 'visible', timeout: 30_000 });
+    const box = await bodySurface.boundingBox();
+    if (!box) throw new Error('飞书空白正文点击区域不可用');
+    await page.mouse.click(
+      box.x + Math.min(90, Math.max(8, box.width / 4)),
+      box.y + box.height / 2
+    );
     bodyEditor = page
       .locator(
         '.page-block-children .block.docx-text-block .zone-container.text-editor[contenteditable="true"]'
@@ -2741,7 +2763,12 @@ async function pasteFeishuArticleTrusted(context, page, article) {
 async function ensureFeishuAnonymousSharingTrusted(page) {
   const shareButton = page.locator('button.suite-share').filter({ hasText: '分享' }).last();
   await shareButton.waitFor({ state: 'visible', timeout: 30_000 });
-  if (!(await page.locator('.share-popover-v2').isVisible().catch(() => false))) {
+  if (
+    !(await page
+      .locator('.share-popover-v2')
+      .isVisible()
+      .catch(() => false))
+  ) {
     await shareButton.click();
   }
   const sharePopover = page.locator('.share-popover-v2').last();
@@ -2785,7 +2812,10 @@ async function verifyFeishuAnonymouslyTrusted(url, article) {
     await page.waitForTimeout(5000);
     const evidence = await collectFeishuVirtualEvidence(page);
     const match = feishuEvidenceMatchesArticle(evidence, article);
-    const bodyText = await page.locator('body').innerText().catch(() => '');
+    const bodyText = await page
+      .locator('body')
+      .innerText()
+      .catch(() => '');
     if (!match.ok) {
       throw new Error(
         `飞书匿名验收失败：title=${evidence.title === article.title} images=${evidence.imageCount}/${match.expectedImages} missing=${match.missingAnchors.length}`
@@ -2861,10 +2891,7 @@ async function recoverFeishuWithTrustedClipboard({ context, bridge, jobId, chann
   let anonymousEvidence;
   if (isPublishing) {
     await ensureFeishuAnonymousSharingTrusted(page);
-    anonymousEvidence = await verifyFeishuAnonymouslyTrusted(
-      documentUrl,
-      channelRun.article
-    );
+    anonymousEvidence = await verifyFeishuAnonymouslyTrusted(documentUrl, channelRun.article);
   }
   const devDetails = {
     documentUrl,
@@ -2896,9 +2923,7 @@ async function recoverFeishuWithTrustedClipboard({ context, bridge, jobId, chann
   return {
     status: LIVE_PUBLISH_ACTION === 'draft' ? 'success' : 'pending_review',
     row: { devDetails },
-    notes: isPublishing
-      ? '飞书可信粘贴与无 Cookie 匿名验收通过'
-      : '飞书可信粘贴与云端保存验收通过'
+    notes: isPublishing ? '飞书可信粘贴与无 Cookie 匿名验收通过' : '飞书可信粘贴与云端保存验收通过'
   };
 }
 
@@ -3151,7 +3176,13 @@ async function runPublishOnce(articleUrl, options) {
     if (!context) throw new Error('CDP context 不存在');
     let extensionRefreshedInExistingChrome = false;
     if (options?.requireExistingChrome) {
-      await refreshBaweiExtensionInExistingChrome(context, distDir);
+      if (LIVE_PUBLISH_SKIP_EXTENSION_REFRESH) {
+        console.log(
+          '[cdp] 按显式恢复开关跳过 chrome://extensions 刷新；将原址刷新目标渠道页并校验 background bridge'
+        );
+      } else {
+        await refreshBaweiExtensionInExistingChrome(context, distDir);
+      }
       extensionRefreshedInExistingChrome = true;
     }
     installContextDialogAutoDismiss(context, 'publish');
@@ -3392,9 +3423,12 @@ async function runPublishOnce(articleUrl, options) {
 
     const blockedByLogin = [];
     for (const channelId of ACTIVE_CHANNELS) {
-      const isStableLedgerOutcome = ['success', 'pending_review', 'rejected', 'waiting_user'].includes(
-        progress.channels[channelId].status
-      );
+      const isStableLedgerOutcome = [
+        'success',
+        'pending_review',
+        'rejected',
+        'waiting_user'
+      ].includes(progress.channels[channelId].status);
       if (LIVE_PUBLISH_ACTION === 'publish' && isStableLedgerOutcome) continue;
       const auditStatus = audit.channels[channelId]?.status || 'unknown';
       const auditReason = String(audit.channels[channelId]?.reason || '');
@@ -3429,9 +3463,12 @@ async function runPublishOnce(articleUrl, options) {
       await waitForManualLogin(context, loginPages, blockedByLogin, audit, auditPath);
 
       for (const channelId of blockedByLogin) {
-        const isStableLedgerOutcome = ['success', 'pending_review', 'rejected', 'waiting_user'].includes(
-          progress.channels[channelId].status
-        );
+        const isStableLedgerOutcome = [
+          'success',
+          'pending_review',
+          'rejected',
+          'waiting_user'
+        ].includes(progress.channels[channelId].status);
         if (LIVE_PUBLISH_ACTION === 'publish' && isStableLedgerOutcome) continue;
         const auditStatus = audit.channels[channelId]?.status || 'unknown';
         const auditReason = String(audit.channels[channelId]?.reason || '');
@@ -3566,7 +3603,8 @@ async function runPublishOnce(articleUrl, options) {
         } catch (error) {
           result = {
             ...result,
-            notes: `${result.notes || ''}\n飞书可信剪贴板恢复失败：${error instanceof Error ? error.message : String(error)}`.trim()
+            notes:
+              `${result.notes || ''}\n飞书可信剪贴板恢复失败：${error instanceof Error ? error.message : String(error)}`.trim()
           };
         }
       }
@@ -3784,7 +3822,15 @@ async function main() {
     return;
   }
   if (cli.mode === 'markdown') {
-    runBuildOrThrow();
+    if (LIVE_PUBLISH_SKIP_BUILD) {
+      const manifestPath = path.join(abs('dist'), 'manifest.json');
+      if (!fs.existsSync(manifestPath)) {
+        throw new Error(`恢复模式要求既有构建产物，但未找到：${manifestPath}`);
+      }
+      console.log('[build] 按显式恢复开关复用已验证的 dist，跳过本轮原子重建');
+    } else {
+      runBuildOrThrow();
+    }
     const prepared = await prepareLocalMarkdown(cli.markdownPath);
     console.log(
       `[markdown] ready: title=${prepared.article.title} images=${prepared.assetCount} source=${prepared.article.sourceUrl || '<none>'}`

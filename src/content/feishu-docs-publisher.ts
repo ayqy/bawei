@@ -104,6 +104,73 @@ function findFeishuBodyEditor(): HTMLElement | null {
   );
 }
 
+function findFeishuRootEditor(): HTMLElement | null {
+  return document.querySelector<HTMLElement>(
+    '.page-block.root-block[data-content-editable-root="true"][contenteditable="true"]'
+  );
+}
+
+function normalizeFeishuTitle(value: unknown): string {
+  return String(value || '')
+    .replace(/\u200b/g, '')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function findExistingFeishuDocUrlByTitle(title: string): string | null {
+  const expected = normalizeFeishuTitle(title);
+  if (!expected) return null;
+  const links = Array.from(document.querySelectorAll<HTMLAnchorElement>('a[href*="/docx/"]'));
+  const exact = links.find((link) => normalizeFeishuTitle(link.textContent) === expected) || null;
+  const prefixed =
+    links.find((link) => {
+      const text = normalizeFeishuTitle(link.textContent);
+      if (!text.startsWith(expected) || text.length <= expected.length) return false;
+      const walker = document.createTreeWalker(link, NodeFilter.SHOW_TEXT);
+      let node = walker.nextNode();
+      while (node) {
+        const firstText = normalizeFeishuTitle(node.textContent);
+        if (firstText) return firstText === expected;
+        node = walker.nextNode();
+      }
+      return false;
+    }) || null;
+  const hit = exact || prefixed;
+  return hit?.href || null;
+}
+
+async function ensureFeishuBodyEditor(): Promise<HTMLElement> {
+  const existing = findFeishuBodyEditor();
+  if (existing) return existing;
+
+  const root = await retryUntil(
+    async () => {
+      const editor = findFeishuRootEditor();
+      if (!editor) throw new Error('feishu root editor not ready');
+      return editor;
+    },
+    { timeoutMs: 30_000, intervalMs: 500 }
+  );
+  // A blank Feishu document exposes the empty body surface but no text block. Clicking
+  // that surface creates the first block. Never synthesize Enter from the title: on the
+  // current editor it adds a second title line while leaving the body empty.
+  const bodySurface =
+    document.querySelector<HTMLElement>('.page-block-children') ||
+    document.querySelector<HTMLElement>('.ai-block-write-placeholder') ||
+    root;
+  simulateFocus(root);
+  simulateClick(bodySurface);
+
+  return await retryUntil(
+    async () => {
+      const editor = findFeishuBodyEditor();
+      if (!editor) throw new Error('feishu first body block not ready');
+      return editor;
+    },
+    { timeoutMs: 10_000, intervalMs: 400 }
+  );
+}
+
 type FeishuDocumentEvidence = {
   title: string;
   text: string;
@@ -431,6 +498,28 @@ async function ensureNewBlankDocxCreated(job: AnyJob): Promise<void> {
     userMessage: getMessage('v2MsgFeishuCreatingBlankDoc')
   });
 
+  // A retry gets a new jobId, so sessionStorage alone cannot prevent duplicate documents.
+  // Reuse the exact existing title in the bound folder before any create API/UI mutation.
+  const existingDocUrl = await retryUntil(
+    async () => {
+      const found = findExistingFeishuDocUrlByTitle(job.article.title);
+      if (!found) throw new Error('existing doc not rendered yet');
+      return found;
+    },
+    { timeoutMs: 18_000, intervalMs: 800 }
+  ).catch(() => null);
+  if (existingDocUrl) {
+    setDocUrlForJob(job.jobId, existingDocUrl);
+    await report({
+      status: 'running',
+      stage: 'openEntry',
+      userMessage: getMessage('v2MsgVerifyFoundTitleOpeningDocDetail'),
+      devDetails: { reusedExistingDoc: true, docUrl: existingDocUrl }
+    });
+    navigateWithinChannel(existingDocUrl);
+    return;
+  }
+
   // Prefer API creation to avoid menu click instability and to keep the doc opened in the same tab.
   const folderToken =
     getFolderTokenFromUrl(location.href) || getFolderTokenFromUrl(FEISHU_FOLDER_URL);
@@ -564,14 +653,7 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
     userSuggestion: getMessage('v2SugFeishuNoSourceFieldAppend')
   });
 
-  const editor = await retryUntil(
-    async () => {
-      const el = findFeishuBodyEditor();
-      if (!el) throw new Error('editor not ready');
-      return el;
-    },
-    { timeoutMs: 60_000, intervalMs: 800 }
-  );
+  const editor = await ensureFeishuBodyEditor();
 
   const rawTokens = buildRichContentTokens({ contentHtml, baseUrl: sourceUrl, sourceUrl });
   const tokens = [...rawTokens];

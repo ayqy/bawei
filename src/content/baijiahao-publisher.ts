@@ -256,6 +256,21 @@ function baijiahaoExpectedTextBlocks(html: string): string[] {
     .filter((text) => text.length >= 8);
 }
 
+function normalizeBaijiahaoComparableImageUrl(value: string): string {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  try {
+    const url = new URL(raw, location.href);
+    // 百家号正文 DOM 仍可能保存 http://，而 Chromium 的 currentSrc 会按站点
+    // upgrade-insecure-requests 自动显示成 https://。只统一协议，其余 host/path/query/hash
+    // 继续逐字比较，图片数量和顺序也仍保持严格验收。
+    if (url.protocol === 'http:' || url.protocol === 'https:') url.protocol = 'https:';
+    return url.toString();
+  } catch {
+    return raw.replace(/^http:\/\//i, 'https://');
+  }
+}
+
 function countNormalizedOccurrences(haystack: string, needle: string): number {
   const full = normalizeTitleValue(haystack);
   const part = normalizeTitleValue(needle);
@@ -1126,7 +1141,10 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
           throw new Error(`百家号正文图片数量不精确：${currentImages.length}/${expectedImages}`);
         }
         for (let index = 0; index < expectedImageUrls.length; index += 1) {
-          if (currentImages[index] !== expectedImageUrls[index]) {
+          if (
+            normalizeBaijiahaoComparableImageUrl(currentImages[index]) !==
+            normalizeBaijiahaoComparableImageUrl(expectedImageUrls[index])
+          ) {
             throw new Error(`百家号正文第 ${index + 1} 张图片顺序或地址不一致`);
           }
         }
@@ -1174,15 +1192,23 @@ async function stageEnsureNoCover(): Promise<void> {
 }
 
 async function stageEnsureAiDeclaration(): Promise<void> {
-  const marker = findAnyElementContainingText('AI创作声明');
+  const marker =
+    document.querySelector<HTMLElement>('.aigc_bjh_status') ||
+    findAnyElementContainingText('采用AI生成内容') ||
+    findAnyElementContainingText('AI创作声明');
   if (!marker) return;
 
+  const label = marker.closest('label');
   const input =
-    (marker.closest('label')?.querySelector('input[type="checkbox"]') as HTMLInputElement | null) ||
+    (label?.querySelector('input[type="checkbox"]') as HTMLInputElement | null) ||
     (marker.parentElement?.querySelector('input[type="checkbox"]') as HTMLInputElement | null) ||
     null;
   if (!input) return;
-  if (input.checked) return;
+  const isChecked = () =>
+    input.checked ||
+    !!label?.classList.contains('cheetah-checkbox-wrapper-checked') ||
+    !!label?.querySelector('.cheetah-checkbox-checked');
+  if (isChecked()) return;
 
   try {
     simulateClick(input as unknown as HTMLElement);
@@ -1198,6 +1224,14 @@ async function stageEnsureAiDeclaration(): Promise<void> {
   } catch {
     // ignore
   }
+
+  await retryUntil(
+    async () => {
+      if (isChecked()) return true;
+      throw new Error('AI declaration not selected');
+    },
+    { timeoutMs: 8000, intervalMs: 300 }
+  );
 }
 
 async function stageEnsureCategorySelected(): Promise<void> {

@@ -134,7 +134,7 @@ function imageHandlersScript(
   `;
 }
 
-function iframeEditorSrcdoc() {
+function iframeEditorSrcdoc(uploadedImagePrefix = 'https://img-blog.csdnimg.cn/bawei-e2e-upload-') {
   // srcdoc inherits origin, so content scripts can access contentDocument.
   return `
 <!doctype html>
@@ -147,7 +147,7 @@ function iframeEditorSrcdoc() {
   </head>
   <body contenteditable="true">
     <script>
-      ${imageHandlersScript('body')}
+      ${imageHandlersScript('body', uploadedImagePrefix)}
     </script>
   </body>
 </html>`;
@@ -553,7 +553,9 @@ function buildWoshipmWriteHtml({ action, title, detailUrl }) {
     <div class="bar">
       <input placeholder="文章标题" style="flex:1; padding:8px; border:1px solid #ddd; border-radius:8px;" />
     </div>
-    <iframe style="width:100%; height:220px; border:1px solid #ddd; border-radius:8px;" srcdoc="${iframeEditorSrcdoc().replaceAll('"', '&quot;')}"></iframe>
+    <iframe id="post_content_ifr" style="width:100%; height:220px; border:1px solid #ddd; border-radius:8px;" srcdoc="${iframeEditorSrcdoc(
+      'https://image.woshipm.com/bawei-e2e-upload-'
+    ).replaceAll('"', '&quot;')}"></iframe>
     <div class="bar">
       <label><input type="checkbox" name="copyright" />我承诺图片、字体、内容等不存在侵权行为，如侵权愿承担法律风险。</label>
       <label><input type="checkbox" name="copyright_other" />知晓并同意发布后的内容会同步到头条号/网易号/搜狐号等平台。</label>
@@ -567,10 +569,37 @@ function buildWoshipmWriteHtml({ action, title, detailUrl }) {
   const script = `
     const ACTION = ${JSON.stringify(action)};
     const DETAIL_URL = ${JSON.stringify(detailUrl)};
+    const woshipmFrame = document.querySelector('#post_content_ifr');
+    const woshipmEditor = {
+      setContent(html) {
+        const body = woshipmFrame?.contentDocument?.body;
+        if (body) body.innerHTML = String(html || '');
+      },
+      getContent() {
+        return String(woshipmFrame?.contentDocument?.body?.innerHTML || '');
+      },
+      getBody() {
+        return woshipmFrame?.contentDocument?.body || null;
+      },
+      save() {},
+      fire() {},
+      nodeChanged() {}
+    };
+    window.tinymce = { activeEditor: woshipmEditor, editors: [woshipmEditor] };
+    const saveFinalHtml = () => {
+      try {
+        sessionStorage.setItem(
+          '__bawei_e2e_woshipm_final_html',
+          String(woshipmFrame?.contentDocument?.body?.innerHTML || '')
+        );
+      } catch {}
+    };
     document.querySelector('#woshipm-draft')?.addEventListener('click', () => {
+      saveFinalHtml();
       location.href = DETAIL_URL;
     });
     document.querySelector('#woshipm-submit')?.addEventListener('click', () => {
+      saveFinalHtml();
       location.href = DETAIL_URL;
     });
   `;
@@ -648,6 +677,15 @@ function buildBaijiahaoEditorHtml({ title }) {
       '&quot;'
     )}"></iframe>
     <textarea id="abstract" placeholder="摘要" style="width:100%;height:40px;margin-top:10px;"></textarea>
+    <div class="box">
+      <label class="cheetah-checkbox-wrapper">
+        <span class="cheetah-checkbox">
+          <input id="bjh-ai-declaration" class="cheetah-checkbox-input" type="checkbox" />
+          <span class="cheetah-checkbox-inner"></span>
+        </span>
+        <span class="aigc_bjh_status">采用AI生成内容</span>
+      </label>
+    </div>
     <div class="form-item-cover box">
       <span>设置封面</span><span>单图</span><span>三图</span>
       <button id="bjh-cover-select" type="button">选择封面</button>
@@ -668,6 +706,17 @@ function buildBaijiahaoEditorHtml({ title }) {
   `;
   const script = `
     try { sessionStorage.setItem('__bawei_e2e_baijiahao_publish_click_count', '0'); } catch {}
+    try { sessionStorage.setItem('__bawei_e2e_baijiahao_ai_checked', '0'); } catch {}
+    const bjhAiDeclaration = document.querySelector('#bjh-ai-declaration');
+    bjhAiDeclaration?.addEventListener('change', () => {
+      const checked = Boolean(bjhAiDeclaration.checked);
+      bjhAiDeclaration
+        .closest('.cheetah-checkbox-wrapper')
+        ?.classList.toggle('cheetah-checkbox-wrapper-checked', checked);
+      try {
+        sessionStorage.setItem('__bawei_e2e_baijiahao_ai_checked', checked ? '1' : '0');
+      } catch {}
+    });
     window.__baweiOpenImageModal = (target) => {
       if (!target?.isConnected) return;
       setTimeout(() => {
@@ -821,8 +870,8 @@ function buildToutiaoEditorHtml({ title }) {
     <div class="ProseMirror editor" contenteditable="true" style="min-height:180px;"></div>
 
     <div class="bar">
-      <button class="btn primary">发布</button>
-      <button class="btn">确定</button>
+      <button id="toutiao-preview-publish" class="btn primary">发布</button>
+      <button id="toutiao-confirm-publish" class="btn primary" style="display:none;">确认发布</button>
     </div>
   `;
 
@@ -838,12 +887,23 @@ function buildToutiaoEditorHtml({ title }) {
       selection.removeAllRanges();
       selection.addRange(range);
     });
-    document.querySelector('button')?.addEventListener('click', () => {
+    document.querySelector('#toutiao-preview-publish')?.addEventListener('click', (event) => {
+      const button = event.currentTarget;
+      button.style.display = 'none';
+      document.querySelector('#toutiao-confirm-publish').style.display = 'inline-block';
+      const count = Number(sessionStorage.getItem('__bawei_e2e_toutiao_preview_count') || 0) + 1;
+      sessionStorage.setItem('__bawei_e2e_toutiao_preview_count', String(count));
+    });
+    document.querySelector('#toutiao-confirm-publish')?.addEventListener('click', () => {
       try {
         sessionStorage.setItem(
           '__bawei_e2e_toutiao_final_html',
           document.querySelector('.ProseMirror')?.innerHTML || ''
         );
+        const count = Number(
+          sessionStorage.getItem('__bawei_e2e_toutiao_confirm_count') || 0
+        ) + 1;
+        sessionStorage.setItem('__bawei_e2e_toutiao_confirm_count', String(count));
       } catch {}
       document.body.append(' 发布成功');
     });
@@ -873,37 +933,44 @@ function buildFeishuFolderHtml({ title, docxUrl }) {
   return pageTemplate({ title: `${title} - 飞书文件夹`, body });
 }
 
-function buildFeishuDocxHtml({ title, runId, restoreStored = true }) {
+function buildFeishuDocxHtml({ title, runId, restoreStored = true, startBlank = false }) {
+  const bodyBlock = startBlank
+    ? ''
+    : `<div class="block docx-text-block" data-block-id="e2e-body-${runId}">
+          <div class="zone-container text-editor editor" contenteditable="true" tabindex="0" style="min-height:220px;"></div>
+        </div>`;
   const body = `
-    <h1 class="page-block-content page-block-title-empty" contenteditable="true">${title}</h1>
+    <div class="page-block root-block" data-content-editable-root="true" contenteditable="true">
+      <h1 class="page-block-content page-block-title-empty">
+        <div class="zone-container text-editor" contenteditable="true">${title}</div>
+      </h1>
+    </div>
     <div class="note-title__time">已经保存到云端</div>
     <button id="feishu-share" class="btn">分享</button>
     <div id="feishu-share-panel" class="box" style="display:none;">
       <label><input type="checkbox" role="switch" aria-checked="true" checked />互联网上获得链接的任何人可阅读</label>
     </div>
     <div class="bear-web-x-container" style="max-height:360px;overflow:auto;">
-      <div class="page-block-children">
-        <div class="block docx-text-block" data-block-id="e2e-body-${runId}">
-          <div class="zone-container text-editor editor" contenteditable="true" style="min-height:220px;"></div>
-        </div>
-      </div>
+      <div class="page-block-children" style="min-height:26px;">${bodyBlock}</div>
+    </div>
+    <div class="ai-block-write-container" style="${startBlank ? '' : 'display:none;'}">
+      <div class="ai-block-write-placeholder is-root">按“/”插入内容，或让 AI 帮我写</div>
     </div>
   `;
   const script = `
-    ${imageHandlersScript(
-      '.page-block-children .block.docx-text-block .zone-container.text-editor',
-      'https://sf3-scmcdn2-cn.feishucdn.com/bawei-e2e-upload-'
-    )}
-    document.querySelector('#feishu-share')?.addEventListener('click', () => {
-      const panel = document.querySelector('#feishu-share-panel');
-      if (panel) panel.style.display = 'block';
-    });
-    (function(){
+    const __baweiFeishuEditorSelector =
+      '.page-block-children .block.docx-text-block .zone-container.text-editor';
+    function __baweiInstallFeishuImageHandlers() {
+      ${imageHandlersScript(
+        '.page-block-children .block.docx-text-block .zone-container.text-editor',
+        'https://sf3-scmcdn2-cn.feishucdn.com/bawei-e2e-upload-'
+      )}
+    }
+    function __baweiInstallFeishuPersistence() {
       const key = ${JSON.stringify(`__bawei_e2e_feishu_doc_${runId || 'unknown'}`)};
-      const editor = document.querySelector(
-        '.page-block-children .block.docx-text-block .zone-container.text-editor'
-      );
-      if (!editor) return;
+      const editor = document.querySelector(__baweiFeishuEditorSelector);
+      if (!editor || editor.__baweiPersistenceInstalled) return;
+      editor.__baweiPersistenceInstalled = true;
       try {
         const saved = sessionStorage.getItem(key) || '';
         if (${restoreStored ? 'true' : 'false'} && saved) editor.innerHTML = saved;
@@ -916,7 +983,30 @@ function buildFeishuDocxHtml({ title, runId, restoreStored = true }) {
         const mo = new MutationObserver(save);
         mo.observe(editor, { childList: true, subtree: true, characterData: true });
       } catch {}
-    })();
+    }
+    function __baweiCreateBlankFeishuBody() {
+      if (document.querySelector(__baweiFeishuEditorSelector)) return;
+      const children = document.querySelector('.page-block-children');
+      if (!children) return;
+      sessionStorage.setItem(
+        '__bawei_e2e_feishu_blank_click_count',
+        String(Number(sessionStorage.getItem('__bawei_e2e_feishu_blank_click_count') || '0') + 1)
+      );
+      children.innerHTML = '<div class="block docx-text-block" data-block-id="e2e-body-${runId}"><div class="zone-container text-editor editor" contenteditable="true" tabindex="0" style="min-height:220px;"></div></div>';
+      document.querySelector('.ai-block-write-container')?.remove();
+      __baweiInstallFeishuImageHandlers();
+      __baweiInstallFeishuPersistence();
+    }
+    document.querySelector('.page-block-children')?.addEventListener(
+      'click',
+      __baweiCreateBlankFeishuBody
+    );
+    __baweiInstallFeishuImageHandlers();
+    __baweiInstallFeishuPersistence();
+    document.querySelector('#feishu-share')?.addEventListener('click', () => {
+      const panel = document.querySelector('#feishu-share-panel');
+      if (panel) panel.style.display = 'block';
+    });
   `;
   return pageTemplate({ title: `${title} - 飞书文档`, body, script });
 }
@@ -1694,6 +1784,7 @@ async function main() {
       // Feishu docs
       if (u.hostname === 'wuxinxuexi.feishu.cn') {
         if (u.pathname.startsWith('/space/api/explorer/v2/create/object/')) {
+          currentRun.feishuCreateCount = Number(currentRun.feishuCreateCount || 0) + 1;
           const payload = {
             code: 0,
             msg: 'ok',
@@ -1734,8 +1825,7 @@ async function main() {
             });
             return;
           }
-          currentRun.feishuDocxRenderCount =
-            Number(currentRun.feishuDocxRenderCount || 0) + 1;
+          currentRun.feishuDocxRenderCount = Number(currentRun.feishuDocxRenderCount || 0) + 1;
           const dropFirstSerialRestore =
             currentRun.channelId === 'serial-all' && currentRun.feishuDocxRenderCount === 2;
           await route.fulfill({
@@ -1744,7 +1834,9 @@ async function main() {
             body: buildFeishuDocxHtml({
               title,
               runId,
-              restoreStored: !dropFirstSerialRestore
+              restoreStored: !dropFirstSerialRestore,
+              startBlank:
+                currentRun.channelId === 'feishu-docs' && currentRun.feishuDocxRenderCount === 1
             })
           });
           return;
@@ -1878,20 +1970,22 @@ async function main() {
         return;
       }
 
-      // 百家号通过主世界 UEditor 整段写入；飞书当前只写文本；两者都不产生逐图上传提示。
+      // 百家号通过主世界 UEditor 整段写入；飞书可能复用已完整落地的同名文档。
+      // 两者都不能把“出现逐图上传提示”作为必需的流程信号。
       if (channelId !== 'baijiahao' && channelId !== 'feishu-docs') {
         await waitForDiagnosisContains(wechatPage, '正在上传图片（', 60_000);
       }
 
       // 草稿落盘是成功终态；发布只代表平台已接收，必须保持待审，不能误报公开成功。
-      const expectedBadge =
-        action === 'rejected' ? '退回' : action === 'publish' ? '待审' : '成功';
+      const expectedBadge = action === 'rejected' ? '退回' : action === 'publish' ? '待审' : '成功';
       try {
         await waitForBadgeText(wechatPage, channelId, expectedBadge, 60_000);
       } catch (error) {
         const channelPageState = await channelPage
           .evaluate(() => {
-            const editor = document.querySelector('.tiptap.ProseMirror.aie-content');
+            const editor = document.querySelector(
+              '.tiptap.ProseMirror.aie-content, .page-block-children .block.docx-text-block .zone-container.text-editor'
+            );
             const images = Array.from(editor?.querySelectorAll('img') || []).map((image) =>
               String(image.getAttribute('src') || '')
             );
@@ -1907,6 +2001,9 @@ async function main() {
               editorTextLength: String(editor?.textContent || '').length,
               imageCount: images.length,
               imageSources: images,
+              blankClickCount: Number(
+                sessionStorage.getItem('__bawei_e2e_feishu_blank_click_count') || '0'
+              ),
               bridges
             };
           })
@@ -1963,9 +2060,13 @@ async function main() {
           };
         });
         const first = oschinaSnapshot.html.indexOf('第一段：用于 E2E 测试。');
-        const firstImage = oschinaSnapshot.html.indexOf(oschinaSnapshot.imageSources[0] || 'missing');
+        const firstImage = oschinaSnapshot.html.indexOf(
+          oschinaSnapshot.imageSources[0] || 'missing'
+        );
         const second = oschinaSnapshot.html.indexOf('第二段：图片后继续内容。');
-        const secondImage = oschinaSnapshot.html.indexOf(oschinaSnapshot.imageSources[1] || 'missing');
+        const secondImage = oschinaSnapshot.html.indexOf(
+          oschinaSnapshot.imageSources[1] || 'missing'
+        );
         const third = oschinaSnapshot.html.indexOf('第三段：结尾。');
         assert(
           oschinaSnapshot.imageSources.length === 2 &&
@@ -1987,18 +2088,87 @@ async function main() {
           );
         }
       }
-      if (channelId === 'baijiahao' && action === 'publish') {
-        const publishClickCount = await channelPage.evaluate(
-          () =>
-            Number(
-              sessionStorage.getItem('__bawei_e2e_baijiahao_publish_click_count') ||
-                window.__baweiPublishClickCount ||
-                0
+      if (channelId === 'woshipm') {
+        const woshipmSnapshot = await channelPage.evaluate(() => {
+          const html = sessionStorage.getItem('__bawei_e2e_woshipm_final_html') || '';
+          const root = document.createElement('div');
+          root.innerHTML = html;
+          return {
+            html,
+            text: String(root.textContent || '').replace(/\s+/g, ''),
+            imageSources: Array.from(root.querySelectorAll('img')).map((image) =>
+              String(image.getAttribute('src') || '')
             )
+          };
+        });
+        const first = woshipmSnapshot.html.indexOf('第一段：用于 E2E 测试。');
+        const firstImage = woshipmSnapshot.html.indexOf(
+          woshipmSnapshot.imageSources[0] || 'missing'
+        );
+        const second = woshipmSnapshot.html.indexOf('第二段：图片后继续内容。');
+        const secondImage = woshipmSnapshot.html.indexOf(
+          woshipmSnapshot.imageSources[1] || 'missing'
+        );
+        const third = woshipmSnapshot.html.indexOf('第三段：结尾。');
+        assert(
+          woshipmSnapshot.imageSources.length === 2 &&
+            woshipmSnapshot.imageSources.every((src) =>
+              src.startsWith('https://image.woshipm.com/bawei-e2e-upload-')
+            ) &&
+            first >= 0 &&
+            first < firstImage &&
+            firstImage < second &&
+            second < secondImage &&
+            secondImage < third,
+          `人人都是产品经理图文原子重建失败：${JSON.stringify(woshipmSnapshot)}`
+        );
+        for (const paragraph of [
+          '第一段：用于E2E测试。',
+          '第二段：图片后继续内容。',
+          '第三段：结尾。'
+        ]) {
+          assert(
+            woshipmSnapshot.text.split(paragraph).length - 1 === 1,
+            `人人都是产品经理段落丢失或重复：${paragraph} ${JSON.stringify(woshipmSnapshot)}`
+          );
+        }
+      }
+      if (channelId === 'feishu-docs') {
+        const feishuSnapshot = await channelPage.evaluate(() => ({
+          blankClickCount: Number(
+            sessionStorage.getItem('__bawei_e2e_feishu_blank_click_count') || '0'
+          ),
+          bodyEditorCount: document.querySelectorAll(
+            '.page-block-children .block.docx-text-block .zone-container.text-editor'
+          ).length
+        }));
+        assert(
+          Number(currentRun?.feishuCreateCount || 0) === 0,
+          `飞书已存在同名文档时不得再次调用创建接口：${currentRun?.feishuCreateCount || 0}`
         );
         assert(
-          publishClickCount === 1,
-          `百家号发布按钮必须且只能触发一次：${publishClickCount}`
+          feishuSnapshot.blankClickCount === 1 && feishuSnapshot.bodyEditorCount === 1,
+          `飞书空白正文必须通过正文区域点击创建且不得污染标题：${JSON.stringify(feishuSnapshot)}`
+        );
+      }
+      if (channelId === 'baijiahao' && action === 'publish') {
+        const baijiahaoSnapshot = await channelPage.evaluate(() => ({
+          aiDeclarationChecked:
+            Boolean(document.querySelector('#bjh-ai-declaration')?.checked) ||
+            sessionStorage.getItem('__bawei_e2e_baijiahao_ai_checked') === '1',
+          publishClickCount: Number(
+            sessionStorage.getItem('__bawei_e2e_baijiahao_publish_click_count') ||
+              window.__baweiPublishClickCount ||
+              0
+          )
+        }));
+        assert(
+          baijiahaoSnapshot.aiDeclarationChecked,
+          `百家号新版“采用AI生成内容”声明未勾选：${JSON.stringify(baijiahaoSnapshot)}`
+        );
+        assert(
+          baijiahaoSnapshot.publishClickCount === 1,
+          `百家号发布按钮必须且只能触发一次：${baijiahaoSnapshot.publishClickCount}`
         );
       }
       if (channelId === 'toutiao') {
@@ -2014,7 +2184,9 @@ async function main() {
             text: String(root.textContent || '').replace(/\s+/g, ''),
             imageSources: Array.from(root.querySelectorAll('img')).map((image) =>
               String(image.getAttribute('src') || '')
-            )
+            ),
+            previewCount: Number(sessionStorage.getItem('__bawei_e2e_toutiao_preview_count') || 0),
+            confirmCount: Number(sessionStorage.getItem('__bawei_e2e_toutiao_confirm_count') || 0)
           };
         });
         const first = toutiaoSnapshot.html.indexOf('第一段：用于 E2E 测试。');
@@ -2045,9 +2217,16 @@ async function main() {
             `今日头条段落丢失或重复：${paragraph} ${JSON.stringify(toutiaoSnapshot)}`
           );
         }
+        if (action === 'publish') {
+          assert(
+            toutiaoSnapshot.previewCount === 1 && toutiaoSnapshot.confirmCount === 1,
+            `今日头条必须且只能经过一次预览和一次最终确认：${JSON.stringify(toutiaoSnapshot)}`
+          );
+        }
       }
 
-      // SSPAI 的远程图片走官方 URL 批量转存；百家号由 UEditor 验收；飞书当前只写文本；其余渠道走 V3_FETCH_IMAGE。
+      // SSPAI 的远程图片走官方 URL 批量转存；百家号由 UEditor 验收；飞书允许复用
+      // 已有平台托管图片；其余渠道要求本轮至少触发一次 V3_FETCH_IMAGE。
       if (channelId === 'sspai') {
         if (currentRun?.useLocalSspaiImages) {
           assert(serviceWorkerImageFetchCount >= 2, 'SSPAI 本地图片未通过扩展读取');

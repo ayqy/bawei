@@ -1,0 +1,9 @@
+{
+  "run_id": "submit-1786977649-4202cf20",
+  "phase": "submit",
+  "manifest": "/Users/pocket/Documents/project/bawei/release/cws/1.0.3/release-manifest.json",
+  "started_at": "2026-08-17T14:40:49+00:00",
+  "status": "failed",
+  "error": "release outputs failed validation after preflight",
+  "finished_at": "2026-08-17T14:50:55+00:00"
+}

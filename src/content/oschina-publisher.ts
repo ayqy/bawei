@@ -19,7 +19,13 @@ type AnyJob = Pick<PublishJob, 'jobId' | 'action' | 'article' | 'stoppedAt'>;
 type OschinaContentToken =
   | { kind: 'html'; html: string }
   | { kind: 'image'; src: string; alt?: string };
-type OschinaEditorCommand = 'reset' | 'insert-html' | 'replace-html' | 'focus-end' | 'upload-image';
+type OschinaEditorCommand =
+  | 'ensure-editor'
+  | 'reset'
+  | 'insert-html'
+  | 'replace-html'
+  | 'focus-end'
+  | 'upload-image';
 type OschinaImageFilePayload = {
   name: string;
   type: string;
@@ -362,6 +368,36 @@ async function stageFillTitle(title: string): Promise<void> {
   }
 }
 
+async function ensureOschinaEditorReady(): Promise<void> {
+  currentStage = 'openEntry';
+  await report({
+    status: 'running',
+    stage: 'openEntry',
+    userMessage: getMessage('v2MsgEnteredEditorPage')
+  });
+  const result = await executeOschinaEditorCommand('ensure-editor');
+  await retryUntil(
+    async () => {
+      const title = document.querySelector<HTMLInputElement>(
+        'input.title-input[placeholder="请输入文章标题"], input[name="title"], input[placeholder*="文章标题"]'
+      );
+      const editor = document.querySelector<HTMLElement>(
+        '.tiptap.ProseMirror.aie-content, .ProseMirror[role="textbox"].aie-content'
+      );
+      if (!title || !editor) throw new Error('OSCHINA 编辑器仍未就绪');
+      return true;
+    },
+    { timeoutMs: 30_000, intervalMs: 300 }
+  );
+  if (result.recoveredLegacyRuntime === true) {
+    await report({
+      status: 'running',
+      stage: 'openEntry',
+      devDetails: { recoveredLegacyRuntime: true }
+    });
+  }
+}
+
 async function executeOschinaEditorCommand(
   command: OschinaEditorCommand,
   html = '',
@@ -478,13 +514,16 @@ async function executeOschinaEditorCommandViaPageBridge(
         reject(new Error('OSCHINA page bridge returned an invalid result'));
       }
     };
-    const timeout = window.setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      cleanup();
-      bridge.remove();
-      reject(new Error('OSCHINA page bridge command timed out'));
-    }, 8000);
+    const timeout = window.setTimeout(
+      () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        bridge.remove();
+        reject(new Error('OSCHINA page bridge command timed out'));
+      },
+      command === 'ensure-editor' ? 45_000 : 8000
+    );
 
     bridge.addEventListener(OSCHINA_PAGE_BRIDGE_RESULT_EVENT, finish, { once: true });
     poll = window.setInterval(finish, 25);
@@ -999,6 +1038,7 @@ async function runFlow(job: AnyJob): Promise<void> {
     }
   }
 
+  await ensureOschinaEditorReady();
   await stageFillTitle(job.article.title);
   await stageFillContent(job.article.contentHtml, job.article.sourceUrl || '');
   if (job.action === 'draft') {

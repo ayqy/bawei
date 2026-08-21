@@ -4,18 +4,106 @@
 
   const commandEvent = 'bawei:oschina-editor-command';
   const resultEvent = 'bawei:oschina-editor-result';
+  const editorSelector =
+    '.tiptap.ProseMirror.aie-content, .ProseMirror[role="textbox"].aie-content';
+  const titleSelector =
+    'input.title-input[placeholder="请输入文章标题"], input[name="title"], input[placeholder*="文章标题"]';
+  const findEditorRoot = () => document.querySelector(editorSelector);
   const complete = (requestId, result) => {
     bridge.setAttribute('data-bawei-result-id', String(requestId || ''));
     bridge.setAttribute('data-bawei-result', JSON.stringify(result));
     bridge.dispatchEvent(new Event(resultEvent));
   };
 
+  const loadScriptWithoutCors = (id, src) =>
+    new Promise((resolve, reject) => {
+      const url = String(src || '').trim();
+      if (!url) {
+        reject(new Error('oschina-legacy-polyfill-url-empty'));
+        return;
+      }
+      let script = document.getElementById(id);
+      if (script?.dataset.baweiLoaded === '1') {
+        resolve();
+        return;
+      }
+      if (!script) {
+        script = document.createElement('script');
+        script.id = id;
+        script.src = new URL(url, location.href).href;
+        script.async = false;
+        script.dataset.baweiOschinaRecovery = '1';
+        document.head.appendChild(script);
+      }
+      script.removeAttribute('crossorigin');
+      const timeout = setTimeout(() => {
+        reject(new Error('oschina-legacy-polyfill-load-timeout'));
+      }, 20000);
+      script.addEventListener(
+        'load',
+        () => {
+          clearTimeout(timeout);
+          script.dataset.baweiLoaded = '1';
+          resolve();
+        },
+        { once: true }
+      );
+      script.addEventListener(
+        'error',
+        () => {
+          clearTimeout(timeout);
+          reject(new Error('oschina-legacy-polyfill-load-failed'));
+        },
+        { once: true }
+      );
+    });
+
+  const waitForEditorRuntime = async (timeoutMs = 30000) => {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const root = findEditorRoot();
+      const title = document.querySelector(titleSelector);
+      if (root?.editor?.commands && title) return root;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    throw new Error('oschina-editor-runtime-not-ready');
+  };
+
+  const recoverLegacyEditorRuntime = async () => {
+    const existing = findEditorRoot();
+    if (existing?.editor?.commands && document.querySelector(titleSelector)) return existing;
+
+    const legacyPolyfill = document.getElementById('vite-legacy-polyfill');
+    const legacyEntry = document.getElementById('vite-legacy-entry');
+    const polyfillSrc = legacyPolyfill?.getAttribute('src') || legacyPolyfill?.src || '';
+    const entrySrc = legacyEntry?.getAttribute('data-src') || '';
+    if (!polyfillSrc || !entrySrc) {
+      throw new Error('oschina-legacy-loader-markers-not-found');
+    }
+
+    if (!globalThis.System || typeof globalThis.System.import !== 'function') {
+      await loadScriptWithoutCors('bawei-oschina-legacy-polyfill-recovery', polyfillSrc);
+    }
+    if (!globalThis.System || typeof globalThis.System.import !== 'function') {
+      throw new Error('oschina-system-loader-unavailable-after-recovery');
+    }
+
+    if (bridge.dataset.baweiLegacyEntryImported !== '1') {
+      bridge.dataset.baweiLegacyEntryImported = '1';
+      try {
+        await globalThis.System.import(new URL(entrySrc, location.href).href);
+      } catch (error) {
+        bridge.dataset.baweiLegacyEntryImported = '0';
+        throw error;
+      }
+    }
+    return await waitForEditorRuntime();
+  };
+
   const completeSuccess = (payload) => {
     setTimeout(() => {
       try {
-        const currentRoot = document.querySelector(
-          '.tiptap.ProseMirror.aie-content, .ProseMirror[role="textbox"].aie-content'
-        );
+        const currentRoot = findEditorRoot();
         if (!currentRoot) {
           complete(payload.requestId, {
             ok: false,
@@ -42,9 +130,28 @@
   const runCommand = (payload, attempt = 0) => {
     let beforeHtml = '';
     try {
-      const root = document.querySelector(
-        '.tiptap.ProseMirror.aie-content, .ProseMirror[role="textbox"].aie-content'
-      );
+      if (payload.command === 'ensure-editor') {
+        recoverLegacyEditorRuntime()
+          .then((root) => {
+            complete(payload.requestId, {
+              ok: true,
+              command: payload.command,
+              recoveredLegacyRuntime: bridge.dataset.baweiLegacyEntryImported === '1',
+              finalHtmlLength: String(root?.innerHTML || '').length,
+              finalTextLength: String(root?.innerText || root?.textContent || '').length,
+              imageCount: root?.querySelectorAll('img').length || 0
+            });
+          })
+          .catch((error) => {
+            complete(payload.requestId, {
+              ok: false,
+              error: error instanceof Error ? error.message : String(error)
+            });
+          });
+        return;
+      }
+
+      const root = findEditorRoot();
       const editor = root && root.editor;
       const commands = editor && editor.commands;
       if (!root || !commands) {
@@ -163,9 +270,7 @@
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (/mismatched transaction/i.test(message)) {
-        const currentRoot = document.querySelector(
-          '.tiptap.ProseMirror.aie-content, .ProseMirror[role="textbox"].aie-content'
-        );
+        const currentRoot = findEditorRoot();
         const afterHtml = String(currentRoot?.innerHTML || '');
         if (
           (payload.command === 'insert-html' || payload.command === 'replace-html') &&

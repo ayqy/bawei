@@ -1,10 +1,21 @@
 # live-publish 已验证失败路径与成功经验
 
-更新时间：2026-08-17（Asia/Shanghai）
+更新时间：2026-08-21（Asia/Shanghai）
 
 ## 目标
 
 记录真实站点发布过程中已经验证过的失败路径、低收益路径和稳定成功经验，避免后续在同一类问题上重复消耗。
+
+## 2026-08-21 六渠道定点修复
+
+- 防重边界：CSDN、腾讯云、博客园、墨问已确认发布或提交成功，本轮不再进入编辑/投稿流程；只处理 OSCHINA、人人都是产品经理、少数派、百家号、今日头条、飞书。
+- 少数派：复用 `/write`、`/my` 或 `/whoops` 标签页且目标 URL 未变化时，`chrome.tabs.update()` 不会生成新文档，旧内容脚本拿不到刚绑定的任务上下文。后台现在会在上下文绑定后显式 `chrome.tabs.reload()`。
+- OSCHINA：空白写作页的直接根因是平台 `vite-legacy-polyfill` 带 `crossorigin`，但 CDN 响应缺少 CORS 头，继而出现 `System is not defined`。页面桥接现在会无 CORS 补载同一 polyfill，调用页面 `vite-legacy-entry[data-src]` 指定的 `System.import()`，并等待标题和 Tiptap 实例同时就绪。
+- 人人都是产品经理：TinyMCE 4 的异步图片上传会把新图回填到当前选中图。当前链路每次只在空编辑器上传一张并收集 `image.woshipm.com` 地址，最后同步 iframe 正文 DOM 与 `#post_content` 隐藏字段并原子重建完整图文；重试保留带 `pid` 的既有草稿地址，避免创建同标题副本。
+- 百家号：DOM 仍可能保存 `http://` 图片地址，而 Chromium `currentSrc` 会自动升级成 `https://`。验收仅统一 HTTP/HTTPS 协议，图片数量、顺序、主机、路径、查询参数和片段仍保持严格比较；后台同时保留现有编辑稿 URL。
+- 今日头条：带 `pgc_id` 的现有草稿继续原址复用；正式投稿必须分别点击一次“预览并发布”和一次“确认发布”。最终确认后作品列表仍找不到标题会记为 `failed`，不再用 `submitted_not_indexed` 假报 `pending_review`。
+- 飞书：新任务先在固定目录按完整标题复用现有文档，禁止重建同名副本；空文档从 `.page-block.root-block[data-content-editable-root=true]` 创建首个正文块。可信剪贴板恢复也先判断正文块是否存在，不再在创建正文块之前等待旧选择器超时。
+- 回归门：类型检查、ESLint、V3 单元测试、后台串行集成、发布核心测试、十渠道未登录/草稿/发布全量 E2E、腾讯云退回语义和十渠道严格串行 E2E 全部通过；离线夹具额外断言 OSCHINA legacy 恢复、飞书不调用创建接口、人人都是产品经理图文顺序与托管域名、百家号新版 AI 声明，以及头条预览/确认各一次。
 
 ## 2026-08-17 终态口径纠正
 

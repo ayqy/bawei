@@ -803,6 +803,7 @@ async function stageSubmitPublish(): Promise<void> {
 
   // Some dialogs require one or more confirm clicks (e.g. "不投放广告" warning).
   const deadline = Date.now() + 28_000;
+  let finalConfirmationClicked = false;
   console.log('[V2][toutiao] clicked publish, waiting for confirm dialogs…');
   while (Date.now() < deadline) {
     await new Promise((r) => setTimeout(r, 900));
@@ -818,14 +819,24 @@ async function stageSubmitPublish(): Promise<void> {
       // ignore
     }
 
-    const confirm =
-      pickVisible('确定') || pickVisible('确认发布') || pickVisible('确认') || pickVisible('发布');
+    const confirm = finalConfirmationClicked
+      ? null
+      : pickVisible('确认发布') ||
+        pickVisible('确定') ||
+        pickVisible('确认') ||
+        pickVisible('发布');
     if (confirm) {
       const disabled =
         (confirm instanceof HTMLButtonElement && confirm.disabled) ||
         (confirm.getAttribute('aria-disabled') || '').toLowerCase() === 'true' ||
         confirm.hasAttribute('disabled');
       if (!disabled) {
+        // “预览并发布”会把编辑页切换到预览态，再显示独立的“确认发布”。
+        // 不得把仍留在底部的首个按钮当作最终确认反复点击。
+        if (confirm === btn) {
+          await new Promise((r) => setTimeout(r, 300));
+          continue;
+        }
         console.log('[V2][toutiao] click confirm:', norm(confirm.textContent || ''));
         try {
           confirm.click();
@@ -836,15 +847,23 @@ async function stageSubmitPublish(): Promise<void> {
             // ignore
           }
         }
+        finalConfirmationClicked = true;
       }
     }
 
     const text = document.body?.innerText || '';
-    if (text.includes('发布成功') || text.includes('已发布') || text.includes('审核中')) break;
+    if (
+      finalConfirmationClicked &&
+      (text.includes('发布成功') || text.includes('已发布') || text.includes('审核中'))
+    )
+      break;
+  }
+  if (!finalConfirmationClicked) {
+    throw new Error('今日头条未进入预览态或未触发最终“确认发布”');
   }
 }
 
-async function stageConfirmSuccess(): Promise<void> {
+async function stageConfirmSuccess(): Promise<boolean> {
   currentStage = 'confirmSuccess';
   await report({
     status: 'running',
@@ -864,13 +883,14 @@ async function stageConfirmSuccess(): Promise<void> {
       html.includes('发布失败')
     ) {
       await report({
-        status: 'waiting_user',
-        stage: 'waitingUser',
+        status: 'failed',
+        stage: 'confirmSuccess',
         userMessage: getMessage('v2MsgToutiaoSavePublishFailedSaveFailed'),
         userSuggestion: getMessage('v2SugToutiaoHandleRequiredFieldsThenContinueVerify')
       });
-      return;
+      return false;
     }
+    if (!isEditorPage()) return true;
     await new Promise((r) => setTimeout(r, 300));
   }
 
@@ -878,9 +898,14 @@ async function stageConfirmSuccess(): Promise<void> {
   const deadline = Date.now() + 12_000;
   while (Date.now() < deadline) {
     const text = document.body?.innerText || '';
-    if (text.includes('发布成功') || text.includes('已发布') || text.includes('审核中')) return;
+    if (text.includes('发布成功') || text.includes('已发布') || text.includes('审核中'))
+      return true;
+    if (!isEditorPage()) return true;
     await new Promise((r) => setTimeout(r, 400));
   }
+  // The final confirmation was clicked; the works list remains the authoritative
+  // acceptance surface. A missing title there is treated as failed below, never pending.
+  return true;
 }
 
 async function runEditorFlow(job: AnyJob): Promise<void> {
@@ -915,7 +940,8 @@ async function runEditorFlow(job: AnyJob): Promise<void> {
   }
 
   await stageSubmitPublish();
-  await stageConfirmSuccess();
+  const confirmed = await stageConfirmSuccess();
+  if (!confirmed) return;
 
   await report({
     status: 'running',
@@ -1023,14 +1049,15 @@ async function verifyFromList(job: AnyJob): Promise<void> {
 
     sessionStorage.removeItem(key);
     await report({
-      status: 'pending_review',
-      stage: 'done',
+      status: 'failed',
+      stage: 'confirmSuccess',
       userMessage: getMessage('v2MsgVerifyFailedListStillNoTitleMaybeReviewOrFailed'),
+      userSuggestion: getMessage('v2SugCheckLoginOrDomThenRetry'),
       devDetails: summarizeVerifyDetails({
         listUrl: location.href,
         managementUrl: location.href,
         listVisible: false,
-        reviewStatus: 'submitted_not_indexed'
+        reviewStatus: 'title_not_found_after_publish_confirmation'
       })
     });
     return;

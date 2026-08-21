@@ -15,6 +15,9 @@ import type { ChannelId, ChannelRuntimeState, PublishJob } from '../shared/v2-ty
 const CHANNEL_ID: ChannelId = 'woshipm';
 
 type AnyJob = Pick<PublishJob, 'jobId' | 'action' | 'article' | 'stoppedAt'>;
+type WoshipmContentToken =
+  | { kind: 'html'; html: string }
+  | { kind: 'image'; src: string; alt?: string };
 
 let currentJob: AnyJob | null = null;
 let currentStage: ChannelRuntimeState['stage'] = 'init';
@@ -130,6 +133,156 @@ async function stageFillTitle(title: string): Promise<void> {
   simulateType(input, title);
 }
 
+function resolveWoshipmEditorRoot(fallback?: HTMLElement | null): HTMLElement | null {
+  const iframe = document.querySelector<HTMLIFrameElement>('iframe');
+  return (
+    (iframe?.contentDocument?.body as HTMLElement | null) ||
+    (fallback?.isConnected ? fallback : null)
+  );
+}
+
+async function setWoshipmEditorContent(
+  html: string,
+  fallback?: HTMLElement | null
+): Promise<Record<string, unknown>> {
+  const content = String(html || '').trim();
+  if (!content) throw new Error('人人都是产品经理正文写入内容为空');
+  const editorRoot = resolveWoshipmEditorRoot(fallback);
+  if (!editorRoot) throw new Error('人人都是产品经理正文编辑器不可用');
+
+  editorRoot.innerHTML = content;
+  for (const type of ['input', 'change']) {
+    editorRoot.dispatchEvent(new Event(type, { bubbles: true, composed: true }));
+  }
+  const textarea = document.querySelector<HTMLTextAreaElement>(
+    'textarea#post_content, textarea[name="post_content"]'
+  );
+  if (textarea) {
+    textarea.value = content;
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    textarea.dispatchEvent(new Event('change', { bubbles: true }));
+  }
+  await new Promise((resolve) => setTimeout(resolve, 180));
+
+  const finalRoot = resolveWoshipmEditorRoot(editorRoot);
+  const finalHtml = String(finalRoot?.innerHTML || '');
+  if (!finalRoot || !finalHtml.trim()) {
+    throw new Error('人人都是产品经理正文 DOM 原子写入未生效');
+  }
+  return {
+    ok: true,
+    finalHtml,
+    finalHtmlLength: finalHtml.length,
+    finalTextLength: String(finalRoot.innerText || finalRoot.textContent || '').length,
+    imageUrls: Array.from(finalRoot.querySelectorAll<HTMLImageElement>('img')).map((image) =>
+      String(image.currentSrc || image.getAttribute('src') || '').trim()
+    ),
+    method: 'isolated-world-dom-and-textarea'
+  };
+}
+
+async function fillWoshipmTinyMceByTokens(
+  tokens: WoshipmContentToken[],
+  initialEditor: HTMLElement
+): Promise<void> {
+  const escapeAttribute = (value: string): string =>
+    String(value || '')
+      .replace(/&/g, '&amp;')
+      .replace(/"/g, '&quot;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
+  const imageTokens = tokens.filter(
+    (token): token is Extract<WoshipmContentToken, { kind: 'image' }> => token?.kind === 'image'
+  );
+  const hostedImageUrls: string[] = [];
+
+  // TinyMCE 4 的站点上传器会把新图片回填到“当前选中图片”。因此每次只在一个
+  // 空白编辑器里上传一张并收集平台 URL，最后再原子重建完整图文，避免后上传的
+  // 图片覆盖前一张或破坏相邻段落。
+  for (let index = 0; index < imageTokens.length; index += 1) {
+    const token = imageTokens[index];
+    await setWoshipmEditorContent('<p><br></p>', initialEditor);
+    const editorRoot = resolveWoshipmEditorRoot(initialEditor);
+    if (!editorRoot) throw new Error('人人都是产品经理正文编辑器在逐图上传时不可用');
+
+    await report({
+      status: 'running',
+      stage: 'fillContent',
+      userMessage: getMessage('v3MsgUploadingImageProgress', [
+        String(index + 1),
+        String(imageTokens.length)
+      ])
+    });
+    await insertImageAtCursor({
+      jobId: currentJob?.jobId || '',
+      imageUrl: token.src,
+      editorRoot
+    });
+
+    const hostedUrl = await waitForPlatformHostedImageUrl(
+      () => {
+        const liveRoot = resolveWoshipmEditorRoot(editorRoot);
+        const sources = Array.from(liveRoot?.querySelectorAll<HTMLImageElement>('img') || [])
+          .map((image) => String(image.currentSrc || image.getAttribute('src') || '').trim())
+          .filter(Boolean);
+        return sources.find((source) => isPlatformHostedImageUrl(source, token.src)) || '';
+      },
+      token.src,
+      120_000
+    );
+    hostedImageUrls.push(hostedUrl);
+  }
+
+  let imageIndex = 0;
+  const finalHtml = tokens
+    .map((token) => {
+      if (!token) return '';
+      if (token.kind === 'html') return String(token.html || '');
+      const hostedUrl = hostedImageUrls[imageIndex++] || '';
+      if (!hostedUrl) throw new Error('人人都是产品经理平台图片地址缺失');
+      return `<p><img src="${escapeAttribute(hostedUrl)}" alt="${escapeAttribute(token.alt || '')}"></p>`;
+    })
+    .join('');
+  if (!finalHtml.trim()) throw new Error('人人都是产品经理最终正文为空');
+  await setWoshipmEditorContent(finalHtml, initialEditor);
+
+  await retryUntil(
+    async () => {
+      const editorRoot = resolveWoshipmEditorRoot(initialEditor);
+      if (!editorRoot) throw new Error('等待人人都是产品经理正文编辑器恢复');
+      const observedImages = Array.from(editorRoot.querySelectorAll<HTMLImageElement>('img')).map(
+        (image) => String(image.currentSrc || image.getAttribute('src') || '').trim()
+      );
+      if (
+        observedImages.length !== hostedImageUrls.length ||
+        hostedImageUrls.some((url, index) => observedImages[index] !== url)
+      ) {
+        throw new Error(
+          `人人都是产品经理图片顺序未稳定：${observedImages.length}/${hostedImageUrls.length}`
+        );
+      }
+      const expectedText = tokens
+        .filter((token) => token?.kind === 'html')
+        .map((token) =>
+          htmlToPlainTextSafe((token as Extract<WoshipmContentToken, { kind: 'html' }>).html)
+        )
+        .join('')
+        .replace(/\s+/g, '');
+      const observedText = String(editorRoot.innerText || editorRoot.textContent || '').replace(
+        /\s+/g,
+        ''
+      );
+      if (expectedText && observedText !== expectedText) {
+        throw new Error(
+          `人人都是产品经理正文结构未稳定：${observedText.length}/${expectedText.length}`
+        );
+      }
+      return true;
+    },
+    { timeoutMs: 15_000, intervalMs: 300 }
+  );
+}
+
 async function stageFillContent(contentHtml: string, sourceUrl: string): Promise<void> {
   currentStage = 'fillContent';
   await report({
@@ -183,19 +336,7 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
 
   if (!existingOk) {
     try {
-      await fillEditorByTokens({
-        jobId: currentJob?.jobId || '',
-        tokens,
-        editorRoot,
-        writeMode: 'html',
-        onImageProgress: async (current, total) => {
-          await report({
-            status: 'running',
-            stage: 'fillContent',
-            userMessage: getMessage('v3MsgUploadingImageProgress', [String(current), String(total)])
-          });
-        }
-      });
+      await fillWoshipmTinyMceByTokens(tokens as WoshipmContentToken[], editorRoot);
     } catch (e) {
       await report({
         status: 'waiting_user',

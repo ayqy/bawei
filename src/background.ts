@@ -258,6 +258,20 @@ function targetChannelEntryUrl(
   ) {
     return existingUrl;
   }
+  if (
+    channelId === 'woshipm' &&
+    existingUrl &&
+    /^https:\/\/www\.woshipm\.com\/writing\?(?=[^#]*\bpid=\d+)/i.test(existingUrl)
+  ) {
+    return existingUrl;
+  }
+  if (
+    channelId === 'baijiahao' &&
+    existingUrl &&
+    /^https:\/\/baijiahao\.baidu\.com\/builder\/rc\/edit(?:[/?#]|$)/i.test(existingUrl)
+  ) {
+    return existingUrl;
+  }
   return configuredUrl;
 }
 
@@ -294,10 +308,19 @@ async function openOrReuseChannelTab(
       if (options.active && keep.windowId != null) {
         await chrome.windows.update(keep.windowId, { focused: true }).catch(() => {});
       }
-      return await chrome.tabs.update(keep.id, {
-        url: targetChannelEntryUrl(channelId, url, keep.url),
+      const targetUrl = targetChannelEntryUrl(channelId, url, keep.url);
+      const updated = await chrome.tabs.update(keep.id, {
+        url: targetUrl,
         active: options.active
       });
+      // chrome.tabs.update() does not start a new document when the URL is byte-for-byte
+      // unchanged. The reused tab's old content script therefore cannot see the job context
+      // that was just bound in beforeNavigate(), which leaves the serial queue at openEntry.
+      if (keep.url === targetUrl) {
+        await chrome.tabs.reload(keep.id);
+        return await chrome.tabs.get(keep.id);
+      }
+      return updated;
     }
   } catch {
     // ignore and fallback create
