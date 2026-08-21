@@ -73,6 +73,7 @@ CHROME_PROFILE_DIR="$HOME/.bawei-live-profile" BOOTSTRAP_PROFILE=0 npm run publi
 - 只发部分渠道：`LIVE_PUBLISH_CHANNELS=csdn,cnblogs`
 - 改为保存草稿：`LIVE_PUBLISH_ACTION=draft`
 - 重置旧进度文件中的指定渠道：`LIVE_PUBLISH_FORCE_CHANNELS=csdn,cnblogs`（不会绕过正式发布台账）
+- 人工安全验证完成后恢复原稿：`LIVE_PUBLISH_RESUME_WAITING_USER_CHANNELS=baijiahao`。只允许指定渠道的同内容 `waiting_user` 记录重新进入发布队列；不会绕过 `success`、`pending_review` 或 `rejected` 防重。必须先在保留的渠道页面完成平台官方验证，再运行此开关；不要用它重发验证码。
 - 关闭后退出浏览器：`KEEP_BROWSER_OPEN=0`
 
 真实回归必须显式保持当前现场：`LIVE_PUBLISH_REQUIRE_EXISTING_CHROME=1`、`BOOTSTRAP_PROFILE=0`，并使用同一个 `CHROME_PROFILE_DIR`。不要在登录完成后再次执行会重启浏览器的 `live:open`。

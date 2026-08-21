@@ -33,6 +33,15 @@ try {
     getLedgerDecision({ ledger, channelId: 'baijiahao', contentHash: 'phone' }).action,
     'wait_user',
   );
+  assert.equal(
+    getLedgerDecision({
+      ledger,
+      channelId: 'baijiahao',
+      contentHash: 'phone',
+      resumeWaitingUser: true,
+    }).action,
+    'resume_waiting_user',
+  );
   upsertPublicationOutcome(ledger, {
     channelId: 'toutiao',
     contentHash: 'stale',

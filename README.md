@@ -40,6 +40,7 @@ bawei 是一款专为内容同步发布设计的浏览器插件：打开微信�
    - `success` 只表示文章详情页可在无 Cookie 的匿名浏览器中访问，且标题、正文锚点和平台托管图片通过验收
    - `pending_review`、`rejected`、`waiting_user`、`failed`、`not_logged_in` 分开记录，不再把点击投稿按钮或得到候选链接当成成功
    - 发布台账按“渠道 + 内容哈希”防重：公开成功、待审、退回和待人工验证内容都不会重复投稿；待审内容只复核公开状态
+   - 平台人工安全验证完成后，可用 `LIVE_PUBLISH_RESUME_WAITING_USER_CHANNELS=<channel>` 只恢复指定 `waiting_user` 原稿；公开、待审和退回记录仍不可重投
 
 ## 如何使用
 
@@ -125,6 +126,7 @@ bawei 是一款专为内容同步发布设计的浏览器插件：打开微信�
     - 如果已经在某次真测里完成了登录，可把当前会话的专用 profile 路径记录到独立文件（例如 `artifacts/live-publish/reuse-profile.env`），后续直接 `source` 该文件再执行命令，避免手填路径时切错 profile
   - 若确实要从你日常 Chrome 导入一次登录态，可显式设置 `BOOTSTRAP_PROFILE=1`；脚本默认只在目标 profile 未初始化时引导一次，如需强制再次覆盖可再加 `BOOTSTRAP_PROFILE_REFRESH=1`
   - `LIVE_PUBLISH_FORCE_CHANNELS` 只重置旧进度文件，不能绕过正式发布台账；已公开、待审、退回或待人工验证的同内容仍禁止重投
+  - 完成平台官方人工安全验证后，可用 `LIVE_PUBLISH_RESUME_WAITING_USER_CHANNELS=baijiahao` 恢复同内容原稿；该开关只解除指定渠道的 `waiting_user` 冻结，不会绕过公开、待审或退回防重，也不得用于自动重发验证码
   - 历史失败路径简表见 `docs/live-publish-failure-paths.md`
 - 本地 Markdown 一键串行发布到默认 10 个渠道：`npm run publish:markdown -- /path/to/article.md`
   - 命令会先构建扩展，再逐个聚焦渠道并执行正式发布；人人都是产品经理正式投稿必须提供 `bawei:variant woshipm` 专用变体

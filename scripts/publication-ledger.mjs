@@ -47,13 +47,25 @@ export function getPublicationEntry(ledger, channelId, contentHash) {
   return ledger.entries[publicationLedgerKey(channelId, contentHash)] || null;
 }
 
-export function getLedgerDecision({ ledger, channelId, contentHash }) {
+export function getLedgerDecision({
+  ledger,
+  channelId,
+  contentHash,
+  resumeWaitingUser = false,
+}) {
   const entry = getPublicationEntry(ledger, channelId, contentHash);
   if (!entry) return { action: 'submit', entry: null, reason: 'new-content' };
   if (entry.status === 'success') return { action: 'skip_success', entry, reason: 'already-public' };
   if (entry.status === 'pending_review') return { action: 'verify_pending', entry, reason: 'submitted-awaiting-review' };
   if (entry.status === 'rejected') return { action: 'skip_rejected', entry, reason: 'content-hash-rejected' };
   if (entry.status === 'waiting_user') {
+    if (resumeWaitingUser) {
+      return {
+        action: 'resume_waiting_user',
+        entry,
+        reason: 'human-verification-completed',
+      };
+    }
     return { action: 'wait_user', entry, reason: 'human-verification-required' };
   }
   return { action: 'submit', entry, reason: 'retry-technical-failure' };

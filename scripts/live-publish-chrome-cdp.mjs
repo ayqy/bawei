@@ -22,6 +22,9 @@ const LIVE_PUBLISH_CHANNELS_RAW = String(process.env.LIVE_PUBLISH_CHANNELS || ''
 const LIVE_PUBLISH_FORCE_CHANNELS_RAW = String(
   process.env.LIVE_PUBLISH_FORCE_CHANNELS || ''
 ).trim();
+const LIVE_PUBLISH_RESUME_WAITING_USER_CHANNELS_RAW = String(
+  process.env.LIVE_PUBLISH_RESUME_WAITING_USER_CHANNELS || ''
+).trim();
 const LIVE_PUBLISH_REQUIRE_EXISTING_CHROME =
   String(process.env.LIVE_PUBLISH_REQUIRE_EXISTING_CHROME || '1') === '1';
 const LIVE_PUBLISH_PRESERVE_EXISTING_PAGES =
@@ -75,6 +78,9 @@ function parseLivePublishAction(raw) {
 
 const ACTIVE_CHANNELS = parseActiveChannels(LIVE_PUBLISH_CHANNELS_RAW);
 const FORCE_RERUN_CHANNELS = parseOptionalChannels(LIVE_PUBLISH_FORCE_CHANNELS_RAW);
+const RESUME_WAITING_USER_CHANNELS = parseOptionalChannels(
+  LIVE_PUBLISH_RESUME_WAITING_USER_CHANNELS_RAW
+);
 const LIVE_PUBLISH_ACTION = parseLivePublishAction(LIVE_PUBLISH_ACTION_RAW);
 const LIVE_ACTION_LABEL = LIVE_PUBLISH_ACTION === 'draft' ? 'draft' : 'publish';
 const LIVE_ACTION_TEXT = LIVE_PUBLISH_ACTION === 'draft' ? '草稿' : '发布';
@@ -3337,7 +3343,8 @@ async function runPublishOnce(articleUrl, options) {
         const decision = getLedgerDecision({
           ledger,
           channelId,
-          contentHash: channelRun.contentHash
+          contentHash: channelRun.contentHash,
+          resumeWaitingUser: RESUME_WAITING_USER_CHANNELS.includes(channelId)
         });
         if (decision.action === 'skip_success') {
           updateChannelProgress(
