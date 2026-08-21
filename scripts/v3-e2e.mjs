@@ -1039,6 +1039,71 @@ async function setSelectedChannelCheckboxes(page, wantedIds) {
   }
 }
 
+function isReusableChannelPage(channelId, pageUrl) {
+  if (channelId === 'oschina') {
+    return /^https:\/\/my\.oschina\.net\/u\/[^/]+\/blog\/(?:ai-)?write(?:[/?#]|$)/i.test(pageUrl);
+  }
+  if (channelId === 'sspai') {
+    return /^https:\/\/sspai\.com\/(?:write(?:[/?#]|$)|my(?:[/?#]|$)|whoops(?:[/?#]|$))/i.test(
+      pageUrl
+    );
+  }
+  const configured = new URL(CHANNEL_ENTRY_URLS[channelId]);
+  return pageUrl.startsWith(`${configured.origin}${configured.pathname}`);
+}
+
+async function waitForCreatedOrReusedChannelPage(
+  context,
+  wechatPage,
+  channelId,
+  baselinePages,
+  timeoutMs = 30_000
+) {
+  try {
+    await wechatPage.waitForFunction(
+      () => {
+        const raw = document.querySelector('#bawei-v2-runtime-state')?.textContent || '';
+        if (!raw.trim()) return false;
+        try {
+          return Boolean(JSON.parse(raw)?.currentJobId);
+        } catch {
+          return false;
+        }
+      },
+      null,
+      { timeout: timeoutMs }
+    );
+  } catch (error) {
+    const runtime = await wechatPage
+      .locator('#bawei-v2-runtime-state')
+      .textContent()
+      .catch(() => '');
+    throw new Error(
+      `等待任务启动确认超时：channel=${channelId} runtime=${runtime || 'missing'} cause=${
+        error instanceof Error ? error.message : String(error)
+      }`
+    );
+  }
+
+  const pageWaitStartedAt = Date.now();
+  while (Date.now() - pageWaitStartedAt < timeoutMs) {
+    const pages = context.pages().filter((page) => page !== wechatPage && !page.isClosed());
+    // The source mirror receives currentJobId only after the background has bound the tab to the
+    // new job. It is therefore safe to accept the same reusable URL contract as production here.
+    const reused = pages.find((page) => isReusableChannelPage(channelId, page.url()));
+    if (reused) return reused;
+    const created = pages.find((page) => !baselinePages.has(page));
+    if (created) return created;
+    await wechatPage.waitForTimeout(100);
+  }
+
+  throw new Error(
+    `等待渠道 Tab 超时：channel=${channelId} pages=${JSON.stringify(
+      context.pages().map((page) => page.url())
+    )}`
+  );
+}
+
 async function startJobAndWaitChannelTab(context, wechatPage, { channelId, action }) {
   const openFocus = pickOpenFocusChannel(channelId);
   // 诊断区在 job 未启动前是隐藏的，selectOption 会因为不可见而超时；用 evaluate 直接写入值并触发 change。
@@ -1053,9 +1118,14 @@ async function startJobAndWaitChannelTab(context, wechatPage, { channelId, actio
   );
   await setChannelCheckboxes(wechatPage, channelId);
 
-  const pagePromise = context.waitForEvent('page', { timeout: 15_000 });
+  const baselinePages = new Set(context.pages());
   await wechatPage.click('#bawei-v2-start');
-  const channelPage = await pagePromise;
+  const channelPage = await waitForCreatedOrReusedChannelPage(
+    context,
+    wechatPage,
+    channelId,
+    baselinePages
+  );
   // chrome.tabs.create 打开的页面可能在 Playwright attach 之前就已开始导航，导致 context.route 未能接管首个 document 请求；
   // 这里用 Playwright 主动再跳转一次，确保进入我们的离线 mock 页面。
   // 使用唯一查询参数强制产生一次新 document 导航；对刚由 chrome.tabs.create 打开的相同 URL
@@ -2309,7 +2379,12 @@ async function main() {
         const createdPages = context
           .pages()
           .filter((page) => page !== wechatPage && !baselinePages.has(page));
-        assert(createdPages.length === index + 1, `串行第 ${index + 1} 步不应预开后续渠道 Tab`);
+        assert(
+          createdPages.length === index + 1,
+          `串行第 ${index + 1} 步不应预开后续渠道 Tab：expected=${index + 1} actual=${
+            createdPages.length
+          } urls=${JSON.stringify(createdPages.map((page) => page.url()))}`
+        );
 
         const nextPagePromise =
           index + 1 < ALL_CHANNELS.length
