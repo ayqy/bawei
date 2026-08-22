@@ -1,0 +1,23 @@
+{
+  "ok": true,
+  "action": "dry_run",
+  "externalMutation": false,
+  "product": "bawei",
+  "version": "1.0.4",
+  "package": {
+    "path": "plugin-1.0.4.zip",
+    "sha256": "b37f0e818f4fa14c2fde745a5c165e60db72176fc6aeec26289545e29bb3bdc9"
+  },
+  "publishRequest": {
+    "publishType": "DEFAULT_PUBLISH",
+    "skipReview": false,
+    "blockOnWarnings": true
+  },
+  "credentials": {
+    "extensionId": true,
+    "clientId": true,
+    "clientSecret": true,
+    "refreshToken": true
+  },
+  "checkedAt": "2026-08-22T22:08:25.856Z"
+}
