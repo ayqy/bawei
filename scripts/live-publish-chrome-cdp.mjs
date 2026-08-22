@@ -2670,6 +2670,9 @@ function feishuEvidenceMatchesArticle(evidence, article) {
 }
 
 async function findFeishuRecoveryPage(context, article) {
+  const expectedTitle = String(article?.title || '').trim();
+  const expectedSourceUrl = String(article?.sourceUrl || '').trim();
+  const expectedAnchors = expectedFeishuTextAnchors(article?.contentHtml || '');
   const deadline = Date.now() + 30_000;
   while (Date.now() < deadline) {
     const candidates = context
@@ -2677,14 +2680,26 @@ async function findFeishuRecoveryPage(context, article) {
       .slice()
       .reverse()
       .filter((page) => /^https:\/\/wuxinxuexi\.feishu\.cn\/docx\//i.test(page.url()));
+    const uniqueCandidates = new Map();
     for (const page of candidates) {
+      if (!uniqueCandidates.has(page.url())) uniqueCandidates.set(page.url(), page);
       const bodyText = await page
         .locator('body')
         .innerText()
         .catch(() => '');
-      if (!article?.title || bodyText.includes(article.title) || candidates.length === 1)
+      if (!expectedTitle || bodyText.includes(expectedTitle)) return page;
+
+      // Recovery is specifically responsible for repairing partially written documents. The
+      // title may already have been replaced by the appended source link, so title-only lookup
+      // can never find that page when other Feishu documents are open. Prefer content anchors,
+      // then the source URL that was appended to the same target document.
+      const matchedAnchors = expectedAnchors.filter((anchor) => bodyText.includes(anchor)).length;
+      if (matchedAnchors > 0 || (expectedSourceUrl && bodyText.includes(expectedSourceUrl))) {
         return page;
+      }
     }
+    // Duplicate tabs for the same document must not make an otherwise unambiguous recovery fail.
+    if (uniqueCandidates.size === 1) return uniqueCandidates.values().next().value;
     await sleep(500);
   }
   throw new Error('飞书可信粘贴恢复未找到本次 docx 页面');
@@ -2700,10 +2715,17 @@ async function restoreFeishuTitleTrusted(page, title) {
     .replace(/\s+/g, ' ')
     .trim();
   const titleLineCount = await editor.locator('.ace-line').count();
-  if (current === String(title || '').trim() && titleLineCount === 1) return;
+  if (current === String(title || '').trim() && titleLineCount === 1) return false;
   await editor.click();
-  await page.keyboard.press('Meta+A');
+  await editor.evaluate((element) => {
+    const selection = window.getSelection();
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  });
   await page.keyboard.insertText(String(title || '').trim());
+  return true;
 }
 
 async function pasteFeishuArticleTrusted(context, page, article) {
@@ -2790,8 +2812,15 @@ async function ensureFeishuAnonymousSharingTrusted(page) {
     .last();
   await internetOption.waitFor({ state: 'visible', timeout: 30_000 });
   await internetOption.click();
-  const confirmDialog = page.getByRole('dialog').filter({ hasText: /互联网上获得链接的人/ });
-  if (await confirmDialog.isVisible().catch(() => false)) {
+  const confirmDialog = page
+    .locator('[role="dialog"], .ud__dialog__wrap')
+    .filter({ hasText: /互联网(?:上)?获得链接的人/ })
+    .last();
+  const confirmVisible = await confirmDialog
+    .waitFor({ state: 'visible', timeout: 5000 })
+    .then(() => true)
+    .catch(() => false);
+  if (confirmVisible) {
     await confirmDialog.getByRole('button', { name: '确认', exact: true }).click();
   }
   await page.waitForFunction(
@@ -2849,6 +2878,11 @@ async function recoverFeishuWithTrustedClipboard({ context, bridge, jobId, chann
   await page.reload({ waitUntil: 'domcontentloaded', timeout: 120_000 }).catch(() => {});
   await page.waitForTimeout(2500);
 
+  // Title corruption is one of the states this recovery path must repair. Fix it before using
+  // the combined title/body/image predicate; otherwise complete content can never become `ok`
+  // and the later title repair remains unreachable.
+  let didMutateDocument = await restoreFeishuTitleTrusted(page, channelRun.article.title);
+  await page.waitForTimeout(600);
   let evidence = await collectFeishuVirtualEvidence(page);
   let match = feishuEvidenceMatchesArticle(evidence, channelRun.article);
   if (!match.ok) {
@@ -2861,6 +2895,12 @@ async function recoverFeishuWithTrustedClipboard({ context, bridge, jobId, chann
     page.on('response', onResponse);
     try {
       await pasteFeishuArticleTrusted(context, page, channelRun.article);
+      didMutateDocument = true;
+      // Feishu's second Meta+A can transiently widen selection from the body block to the whole
+      // document. Reassert the title after the trusted paste before evaluating the combined
+      // title/body/image predicate.
+      didMutateDocument =
+        (await restoreFeishuTitleTrusted(page, channelRun.article.title)) || didMutateDocument;
       const deadline = Date.now() + 180_000;
       while (Date.now() < deadline) {
         await page.waitForTimeout(1800);
@@ -2870,7 +2910,7 @@ async function recoverFeishuWithTrustedClipboard({ context, bridge, jobId, chann
       }
       if (!match.ok) {
         throw new Error(
-          `飞书可信粘贴未完整落库：images=${evidence.imageCount}/${match.expectedImages} missing=${match.missingAnchors.length} upload=${uploadSignals.prepare}/${uploadSignals.finish}`
+          `飞书可信粘贴未完整落库：title=${evidence.title === channelRun.article.title} images=${evidence.imageCount}/${match.expectedImages} missing=${match.missingAnchors.length} upload=${uploadSignals.prepare}/${uploadSignals.finish}`
         );
       }
     } finally {
@@ -2878,20 +2918,45 @@ async function recoverFeishuWithTrustedClipboard({ context, bridge, jobId, chann
     }
   }
 
-  await restoreFeishuTitleTrusted(page, channelRun.article.title);
-  await page.waitForFunction(
-    () =>
-      Array.from(document.querySelectorAll('.note-title__time')).some((node) => {
-        const text = String(node.textContent || '').trim();
-        return !!text && !text.includes('保存中');
-      }),
-    null,
-    { timeout: 90_000 }
-  );
+  didMutateDocument =
+    (await restoreFeishuTitleTrusted(page, channelRun.article.title)) || didMutateDocument;
+  if (didMutateDocument) {
+    await page.waitForFunction(
+      () => {
+        const texts = Array.from(document.querySelectorAll('.note-title__time'))
+          .map((node) => String(node.textContent || '').replace(/\s+/g, ' ').trim())
+          .filter(Boolean);
+        return (
+          !texts.some((text) => text.includes('保存中')) &&
+          texts.some(
+            (text) =>
+              /已经?保存到云端|已保存至云端|保存成功/.test(text) ||
+              /最近修改:\s*(刚刚|1\s*分钟前)/.test(text)
+          )
+        );
+      },
+      null,
+      { timeout: 90_000 }
+    );
+  }
 
-  evidence = await collectFeishuVirtualEvidence(page);
-  match = feishuEvidenceMatchesArticle(evidence, channelRun.article);
-  if (!match.ok) throw new Error('飞书登录态最终验收未通过');
+  // A local editor snapshot is not sufficient proof: stale duplicate tabs and Feishu's virtual
+  // editor can briefly show the new blocks before cloud persistence finishes. Reload and require
+  // the same title, text anchors and image count from the server-backed document.
+  await page.waitForTimeout(2500);
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 120_000 });
+  const persistenceDeadline = Date.now() + 60_000;
+  do {
+    await page.waitForTimeout(1500);
+    evidence = await collectFeishuVirtualEvidence(page);
+    match = feishuEvidenceMatchesArticle(evidence, channelRun.article);
+    if (match.ok) break;
+  } while (Date.now() < persistenceDeadline);
+  if (!match.ok) {
+    throw new Error(
+      `飞书云端持久化验收未通过：title=${evidence.title === channelRun.article.title} images=${evidence.imageCount}/${match.expectedImages} missing=${match.missingAnchors.length}`
+    );
+  }
   const documentUrl = page.url();
   const isPublishing = LIVE_PUBLISH_ACTION === 'publish';
   let anonymousEvidence;

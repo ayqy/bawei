@@ -236,6 +236,13 @@ function targetChannelEntryUrl(
   existingUrl?: string
 ): string {
   if (
+    channelId === 'feishu-docs' &&
+    existingUrl &&
+    /^https:\/\/wuxinxuexi\.feishu\.cn\/docx\//i.test(existingUrl)
+  ) {
+    return existingUrl;
+  }
+  if (
     channelId === 'oschina' &&
     existingUrl &&
     /^https:\/\/my\.oschina\.net\/u\/[^/]+\/blog\/(?:ai-)?write(?:[/?#]|$)/i.test(existingUrl)
@@ -277,16 +284,30 @@ function targetChannelEntryUrl(
 
 async function openOrReuseChannelTab(
   channelId: ChannelId,
-  options: { active: boolean; beforeNavigate?: (tabId: number) => void }
+  options: {
+    active: boolean;
+    beforeNavigate?: (tabId: number) => void;
+    preferredTitle?: string;
+  }
 ): Promise<chrome.tabs.Tab> {
   const url = CHANNEL_ENTRY_URLS[channelId];
   const prefix = urlPrefix(url);
   try {
     const tabs = await chrome.tabs.query({});
-    const matches = tabs.filter(
+    let matches = tabs.filter(
       (t) =>
         t.id && typeof t.url === 'string' && isReusableChannelEntryUrl(channelId, t.url, prefix)
     );
+    if (channelId === 'feishu-docs' && options.preferredTitle) {
+      const preferredDocTabs = tabs.filter(
+        (tab) =>
+          tab.id &&
+          typeof tab.url === 'string' &&
+          /^https:\/\/wuxinxuexi\.feishu\.cn\/docx\//i.test(tab.url) &&
+          String(tab.title || '').includes(options.preferredTitle || '')
+      );
+      if (preferredDocTabs.length) matches = preferredDocTabs;
+    }
     const sorted = matches
       .slice()
       .sort(
@@ -456,6 +477,7 @@ async function advanceSerialJob(jobId: string): Promise<void> {
     try {
       const tab = await openOrReuseChannelTab(channelId, {
         active: true,
+        preferredTitle: job.article.title,
         beforeNavigate: (tabId) => {
           tabIdToContext.set(tabId, { jobId, channelId });
         }

@@ -373,4 +373,54 @@ assert.ok(
   '人人都是产品经理复用同一草稿时必须刷新内容脚本'
 );
 
+const feishuTargetTitle = '飞书目标文档复用测试';
+const staleFeishuTab = {
+  id: nextTabId++,
+  windowId: 7,
+  url: 'https://wuxinxuexi.feishu.cn/docx/e2e_stale_doc',
+  title: '另一篇文档 - 飞书云文档',
+  active: false,
+  status: 'complete',
+  lastAccessed: Date.now() + 1000
+};
+const targetFeishuTab = {
+  id: nextTabId++,
+  windowId: 7,
+  url: 'https://wuxinxuexi.feishu.cn/docx/e2e_target_doc',
+  title: `${feishuTargetTitle} - 飞书云文档`,
+  active: false,
+  status: 'complete',
+  lastAccessed: Date.now()
+};
+tabs.set(staleFeishuTab.id, staleFeishuTab);
+tabs.set(targetFeishuTab.id, targetFeishuTab);
+const feishuReuseOperationsStart = operations.length;
+const feishuReuseStart = await dispatch({
+  type: 'V2_START_JOB',
+  action: 'publish',
+  focusChannel: 'feishu-docs',
+  channels: ['feishu-docs'],
+  article: {
+    title: feishuTargetTitle,
+    contentHtml: '<p>飞书目标正文</p>',
+    sourceUrl: 'https://example.com/feishu-existing-doc'
+  }
+});
+assert.equal(feishuReuseStart.success, true);
+const feishuReuseOperations = operations.slice(feishuReuseOperationsStart);
+assert.ok(
+  feishuReuseOperations.some(
+    (item) =>
+      item.kind === 'update' &&
+      item.tabId === targetFeishuTab.id &&
+      item.url === targetFeishuTab.url
+  ),
+  '飞书重试必须优先复用标题匹配的既有文档'
+);
+assert.ok(
+  feishuReuseOperations.some((item) => item.kind === 'reload' && item.tabId === targetFeishuTab.id),
+  '飞书复用目标文档时必须刷新内容脚本'
+);
+assert.ok(tabs.has(staleFeishuTab.id), '飞书不得误关标题不匹配的其他文档');
+
 console.log('✅ background serial integration test passed');

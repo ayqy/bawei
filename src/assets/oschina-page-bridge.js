@@ -8,6 +8,8 @@
     '.tiptap.ProseMirror.aie-content, .ProseMirror[role="textbox"].aie-content';
   const titleSelector =
     'input.title-input[placeholder="请输入文章标题"], input[name="title"], input[placeholder*="文章标题"]';
+  const publishedBlogsEndpoint =
+    'https://apiv1.oschina.net/oschinapi/user/osc/myDynamic?pageNum=1&pageSize=30';
   const findEditorRoot = () => document.querySelector(editorSelector);
   const complete = (requestId, result) => {
     bridge.setAttribute('data-bawei-result-id', String(requestId || ''));
@@ -64,6 +66,12 @@
       const root = findEditorRoot();
       const title = document.querySelector(titleSelector);
       if (root?.editor?.commands && title) return root;
+      const profilePath = location.pathname.match(/^\/u\/[^/]+\/?$/)?.[0] || '';
+      if (profilePath) {
+        return {
+          redirectUrl: `${location.origin}${profilePath.replace(/\/$/, '')}/blog/ai-write`
+        };
+      }
       await new Promise((resolve) => setTimeout(resolve, 200));
     }
     throw new Error('oschina-editor-runtime-not-ready');
@@ -72,6 +80,12 @@
   const recoverLegacyEditorRuntime = async () => {
     const existing = findEditorRoot();
     if (existing?.editor?.commands && document.querySelector(titleSelector)) return existing;
+
+    // The generic /u/<id> profile is a navigation waypoint, not a broken editor runtime. Resolve
+    // its canonical write URL before looking for legacy loader markers that do not exist there.
+    if (/^\/u\/[^/]+\/?$/.test(location.pathname)) {
+      return await waitForEditorRuntime(1000);
+    }
 
     const legacyPolyfill = document.getElementById('vite-legacy-polyfill');
     const legacyEntry = document.getElementById('vite-legacy-entry');
@@ -98,6 +112,39 @@
       }
     }
     return await waitForEditorRuntime();
+  };
+
+  const findPublishedBlogByExactTitle = async (expectedTitle) => {
+    const title = String(expectedTitle || '').trim();
+    if (!title) throw new Error('oschina-published-blog-title-empty');
+    const response = await fetch(publishedBlogsEndpoint, {
+      credentials: 'include',
+      cache: 'no-store',
+      headers: { accept: 'application/json' }
+    });
+    if (!response.ok) {
+      throw new Error(`oschina-published-blog-api-http-${response.status}`);
+    }
+    const payload = await response.json();
+    const entries = Array.isArray(payload?.result?.list) ? payload.result.list : [];
+    const match = entries.find(
+      (entry) =>
+        Number(entry?.objType) === 3 &&
+        String(entry?.title || '').trim() === title &&
+        Number.isSafeInteger(Number(entry?.objId)) &&
+        Number(entry?.objId) > 0
+    );
+    if (!match) return null;
+    const objId = Number(match.objId);
+    const createdBy = Number(match.createdBy || match.userVo?.id || 0);
+    if (!Number.isSafeInteger(createdBy) || createdBy <= 0) {
+      throw new Error('oschina-published-blog-owner-invalid');
+    }
+    return {
+      objId,
+      state: Number.isFinite(Number(match.state)) ? Number(match.state) : null,
+      candidatePublicUrl: `${location.origin}/u/${createdBy}/blog/${objId}`
+    };
   };
 
   const completeSuccess = (payload) => {
@@ -130,9 +177,38 @@
   const runCommand = (payload, attempt = 0) => {
     let beforeHtml = '';
     try {
+      if (payload.command === 'find-published-blog') {
+        findPublishedBlogByExactTitle(payload.title)
+          .then((match) => {
+            complete(payload.requestId, {
+              ok: true,
+              command: payload.command,
+              found: !!match,
+              ...(match || {})
+            });
+          })
+          .catch((error) => {
+            complete(payload.requestId, {
+              ok: false,
+              error: error instanceof Error ? error.message : String(error)
+            });
+          });
+        return;
+      }
+
       if (payload.command === 'ensure-editor') {
         recoverLegacyEditorRuntime()
-          .then((root) => {
+          .then((recovery) => {
+            if (recovery?.redirectUrl) {
+              complete(payload.requestId, {
+                ok: true,
+                command: payload.command,
+                redirectUrl: recovery.redirectUrl,
+                recoveredLegacyRuntime: bridge.dataset.baweiLegacyEntryImported === '1'
+              });
+              return;
+            }
+            const root = recovery;
             complete(payload.requestId, {
               ok: true,
               command: payload.command,

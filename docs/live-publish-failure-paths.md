@@ -1,10 +1,18 @@
 # live-publish 已验证失败路径与成功经验
 
-更新时间：2026-08-21（Asia/Shanghai）
+更新时间：2026-08-22（Asia/Shanghai）
 
 ## 目标
 
 记录真实站点发布过程中已经验证过的失败路径、低收益路径和稳定成功经验，避免后续在同一类问题上重复消耗。
+
+## 2026-08-22 飞书与 OSCHINA 验收恢复
+
+- 防重边界：已经公开、提交审核、明确退回或等待人工验证的同内容保持冻结；修验收逻辑时不得借机再次投稿。
+- OSCHINA：文章提交后，个人空间新版列表可能不再渲染文章链接，按标题搜索 DOM 会产生“列表未定位”假阴性。登录态页面可调用 `https://apiv1.oschina.net/oschinapi/user/osc/myDynamic?pageNum=1&pageSize=30`；现在先按完整标题精确匹配博客项并用 `objId` 构造详情页，DOM 列表探测仅作为接口不可用时的兜底。通用 `/u/<id>` 个人空间也会直接切到规范 `/u/<id>/blog/ai-write`。
+- OSCHINA 图片：编辑器中残留的 `blob:`、`data:`、localhost、图片代理、扩展地址或微信原始 `qpic/qlogo` 地址都不是 OSCHINA 托管图，不能满足“平台托管图片”门槛。
+- 飞书：同时打开多个 docx 时，后台先按标签标题复用目标文档；标题已被正文或原文链接覆盖时，可信恢复再按正文锚点和来源 URL 定位。标题必须先于综合证据修复，正文写入后重新断言标题，等待云端保存后刷新同一 URL 并再次聚合虚拟块。分享确认同时兼容 `[role=dialog]` 和新版 `.ud__dialog__wrap`。
+- 百家号：人工验证只能用于当前正确稿件。若验证弹层下仍是旧稿，必须先取消旧弹层，再用相同 Markdown 恢复标题、正文、图片和封面后提交；平台为新提交重新下发的滑块仍只能由账号本人完成，自动化不得求解或绕过。
 
 ## 2026-08-21 六渠道定点修复
 
@@ -125,66 +133,77 @@
    - 调试剩余问题时，应优先使用 `LIVE_PUBLISH_CHANNELS=...` 只跑目标渠道。
 
 10. **稳定版 Chrome + 克隆 profile 适合做 DOM 探针，不等于可替代真实插件现场**
-   - 本轮尝试用 `PW_EXECUTABLE_PATH=/Applications/Google Chrome.app/...` + 克隆 profile 跑 `mcp-live-publish`，微信公众号页面上的扩展面板仍未稳定注入。
-   - 这条路径适合做站点登录态 / DOM 取样，不足以替代“当前真实已登录浏览器 + 已加载插件”的完整回归现场。
+
+- 本轮尝试用 `PW_EXECUTABLE_PATH=/Applications/Google Chrome.app/...` + 克隆 profile 跑 `mcp-live-publish`，微信公众号页面上的扩展面板仍未稳定注入。
+- 这条路径适合做站点登录态 / DOM 取样，不足以替代“当前真实已登录浏览器 + 已加载插件”的完整回归现场。
 
 11. **先取证当前用户态 Chrome，别把“我以为已登录”当成事实**
-   - 2026-03-29 本轮直接读取了用户当前 `Google Chrome` 的真实标签页，结果与 DevTools 会话完全一致：`cnblogs` 是登录页、`baijiahao` 是登录页、`toutiao` 是登录页、`feishu-docs` 是登录页，`oschina`/`woshipm` 则停在带明显登录入口的首页。
-   - 对上述 6 个标签页执行浏览器内刷新后，URL 仍保持原状态，没有自动回到各自编辑页；因此本轮阻塞点确定是“当前浏览器会话未登录”，不是“页面陈旧未刷新”。
-   - 结论是：继续调代码前，必须先用真实页面 URL / DOM 取证确认登录态；否则会把“登录丢失”误判成“发布逻辑失效”。
+
+- 2026-03-29 本轮直接读取了用户当前 `Google Chrome` 的真实标签页，结果与 DevTools 会话完全一致：`cnblogs` 是登录页、`baijiahao` 是登录页、`toutiao` 是登录页、`feishu-docs` 是登录页，`oschina`/`woshipm` 则停在带明显登录入口的首页。
+- 对上述 6 个标签页执行浏览器内刷新后，URL 仍保持原状态，没有自动回到各自编辑页；因此本轮阻塞点确定是“当前浏览器会话未登录”，不是“页面陈旧未刷新”。
+- 结论是：继续调代码前，必须先用真实页面 URL / DOM 取证确认登录态；否则会把“登录丢失”误判成“发布逻辑失效”。
 
 12. **Cookie 存在 ≠ 渠道仍然已登录**
-   - 2026-03-29 本轮把用户真实 `Default` profile 按白名单克隆到独立 CFT 会话后重新审计：`cnblogs` / `baijiahao` / `feishu-docs` 虽然在源 profile 中能查到目标站点相关 cookie，但实际仍分别落到 `signin/login` 页面。
-   - 结论是：不要把“cookie 文件里有域名记录”当成登录成功；是否可发文必须以真实编辑页 URL/DOM 为准。
+
+- 2026-03-29 本轮把用户真实 `Default` profile 按白名单克隆到独立 CFT 会话后重新审计：`cnblogs` / `baijiahao` / `feishu-docs` 虽然在源 profile 中能查到目标站点相关 cookie，但实际仍分别落到 `signin/login` 页面。
+- 结论是：不要把“cookie 文件里有域名记录”当成登录成功；是否可发文必须以真实编辑页 URL/DOM 为准。
 
 13. **想要“登录一次长期复用”，必须登录到专用发布 profile 本身**
-   - 最稳做法不是把登录态寄希望于日常 Chrome 或 profile 克隆，而是固定一个专用 `CHROME_PROFILE_DIR`，在这份 profile 打开的发布浏览器里完成一次登录，之后所有 `live:open / live:publish` 都复用这同一目录。
-   - 脚本现已改为默认 `BOOTSTRAP_PROFILE=0`；即默认不再覆盖目标 profile。只有显式设置 `BOOTSTRAP_PROFILE=1` 时，才会从日常 Chrome 导入一次登录态；如确需再次覆盖，再额外设置 `BOOTSTRAP_PROFILE_REFRESH=1`。
+
+- 最稳做法不是把登录态寄希望于日常 Chrome 或 profile 克隆，而是固定一个专用 `CHROME_PROFILE_DIR`，在这份 profile 打开的发布浏览器里完成一次登录，之后所有 `live:open / live:publish` 都复用这同一目录。
+- 脚本现已改为默认 `BOOTSTRAP_PROFILE=0`；即默认不再覆盖目标 profile。只有显式设置 `BOOTSTRAP_PROFILE=1` 时，才会从日常 Chrome 导入一次登录态；如确需再次覆盖，再额外设置 `BOOTSTRAP_PROFILE_REFRESH=1`。
 
 14. **`LIVE_PUBLISH_REQUIRE_EXISTING_CHROME=1` 必须只复用，不得擅自重启**
-   - 2026-03-30 已修正并验证：当用户要求复用当前已登录浏览器会话时，`connectOverCDP` 失败会直接报错，不再偷偷重启浏览器。
-   - 这条约束很关键；否则即使 profile 没被覆盖，也会打断用户现场和扩展 worker 状态。
-   - 2026-04-01 再次踩坑确认：**只要在真实已登录现场误跑了不带 `LIVE_PUBLISH_REQUIRE_EXISTING_CHROME=1` 的 `open/publish`，脚本就可能进入 `forceRestart` 分支，直接替换掉用户当前会话。**
-   - 同理，**真测期间不得临时切换到新的 `CHROME_PROFILE_DIR`**；新 profile 天然不带当前登录态，会把“登录丢失”误判成“渠道逻辑失效”。
-   - 执行纪律必须明确为：
-     - 真测/回归前，先确认当前 `CDP_PORT` 对应的就是用户正在使用的那份已登录浏览器；
-     - 真测期间只允许 `LIVE_PUBLISH_REQUIRE_EXISTING_CHROME=1` 的复用式命令；
-     - 若目的是“打开所有渠道让用户手动登录”，也必须在**同一份长期复用的专用 profile**里操作，后续发布继续复用这同一实例，不能另起一份新 profile。
+
+- 2026-03-30 已修正并验证：当用户要求复用当前已登录浏览器会话时，`connectOverCDP` 失败会直接报错，不再偷偷重启浏览器。
+- 这条约束很关键；否则即使 profile 没被覆盖，也会打断用户现场和扩展 worker 状态。
+- 2026-04-01 再次踩坑确认：**只要在真实已登录现场误跑了不带 `LIVE_PUBLISH_REQUIRE_EXISTING_CHROME=1` 的 `open/publish`，脚本就可能进入 `forceRestart` 分支，直接替换掉用户当前会话。**
+- 同理，**真测期间不得临时切换到新的 `CHROME_PROFILE_DIR`**；新 profile 天然不带当前登录态，会把“登录丢失”误判成“渠道逻辑失效”。
+- 执行纪律必须明确为：
+  - 真测/回归前，先确认当前 `CDP_PORT` 对应的就是用户正在使用的那份已登录浏览器；
+  - 真测期间只允许 `LIVE_PUBLISH_REQUIRE_EXISTING_CHROME=1` 的复用式命令；
+  - 若目的是“打开所有渠道让用户手动登录”，也必须在**同一份长期复用的专用 profile**里操作，后续发布继续复用这同一实例，不能另起一份新 profile。
 
 15. **正文 fidelity 要纳入所有剩余渠道的固定回归项**
-   - 2026-03-30 本轮新增的共性检查项：`段落是否粘连`、`正文图片是否丢失`、`是否出现多余的前导符号（如 }）`。
-   - 不能只验“有无原文链接”或“发布按钮是否可点”；还要同时核对编辑器落地态和最终详情页的正文结构。
-   - 后续处理剩余渠道时，正文至少要检查：标题、段落、图片、原文链接四项。
-   - 若站点侧点击发布时报出选择器/HTML 语法类错误（例如 `Syntax error, unrecognized expression: }<h1 ...`），应优先回查编辑器 DOM 是否混入了非法前导字符或脏富文本片段，而不是继续重试发布按钮。
+
+- 2026-03-30 本轮新增的共性检查项：`段落是否粘连`、`正文图片是否丢失`、`是否出现多余的前导符号（如 }）`。
+- 不能只验“有无原文链接”或“发布按钮是否可点”；还要同时核对编辑器落地态和最终详情页的正文结构。
+- 后续处理剩余渠道时，正文至少要检查：标题、段落、图片、原文链接四项。
+- 若站点侧点击发布时报出选择器/HTML 语法类错误（例如 `Syntax error, unrecognized expression: }<h1 ...`），应优先回查编辑器 DOM 是否混入了非法前导字符或脏富文本片段，而不是继续重试发布按钮。
 
 16. **CFT 的 `live:open` 只打开渠道页，不会自动唤醒微信页面板**
-   - 2026-03-30 本轮已确认：即使 CFT 进程命令行已经带上 `--load-extension=dist`，如果这次会话里只打开了各渠道编辑页、没有在同一会话里真正进入目标微信公众号文章页，那么 `chrome-extension://.../src/background.js` 的 worker 可能不会出现在 CDP target 列表里，用户也会误以为“测试版浏览器没加载插件”。
-   - 修复方式不是覆盖 profile，而是**复用同一份已登录 profile 重启 CFT**，然后在该会话里显式打开/刷新目标微信文章页，让 `wechat-content` 真实注入一次。
-   - 因此做插件 UI 真测时，检查顺序应改成：
-     1. 用固定 `CHROME_PROFILE_DIR` 启动/重启 CFT；
-     2. 打开目标微信文章页；
-     3. 再确认右上角悬浮入口与 `chrome-extension://.../src/background.js` worker 是否出现；
-     4. 之后才进入草稿 / 发布真测。
+
+- 2026-03-30 本轮已确认：即使 CFT 进程命令行已经带上 `--load-extension=dist`，如果这次会话里只打开了各渠道编辑页、没有在同一会话里真正进入目标微信公众号文章页，那么 `chrome-extension://.../src/background.js` 的 worker 可能不会出现在 CDP target 列表里，用户也会误以为“测试版浏览器没加载插件”。
+- 修复方式不是覆盖 profile，而是**复用同一份已登录 profile 重启 CFT**，然后在该会话里显式打开/刷新目标微信文章页，让 `wechat-content` 真实注入一次。
+- 因此做插件 UI 真测时，检查顺序应改成：
+  1.  用固定 `CHROME_PROFILE_DIR` 启动/重启 CFT；
+  2.  打开目标微信文章页；
+  3.  再确认右上角悬浮入口与 `chrome-extension://.../src/background.js` worker 是否出现；
+  4.  之后才进入草稿 / 发布真测。
 
 17. **微信页图片代理改写不能对同值属性反复 `setAttribute`**
-   - 2026-03-30 本轮新增确认：`wechat-content` 在文章图上做代理 URL 改写时，如果对已经是目标值的 `src/data-src/...` 继续重复 `setAttribute`，会反复触发自己监听的 `MutationObserver(attributes)`。
-   - 结果表现为：微信文章页控制台能看到内容脚本初始化成功，但随后页面主线程被持续属性变更拖慢，`page.evaluate`、`chrome.tabs.sendMessage`、面板探针都会超时，看起来像“插件 UI 没注入”或“content script 不响应”。
-   - 修复原则：只有在属性值确实变化时才写回；`srcset` 同理，避免自触发的属性抖动循环。
+
+- 2026-03-30 本轮新增确认：`wechat-content` 在文章图上做代理 URL 改写时，如果对已经是目标值的 `src/data-src/...` 继续重复 `setAttribute`，会反复触发自己监听的 `MutationObserver(attributes)`。
+- 结果表现为：微信文章页控制台能看到内容脚本初始化成功，但随后页面主线程被持续属性变更拖慢，`page.evaluate`、`chrome.tabs.sendMessage`、面板探针都会超时，看起来像“插件 UI 没注入”或“content script 不响应”。
+- 修复原则：只有在属性值确实变化时才写回；`srcset` 同理，避免自触发的属性抖动循环。
 
 18. **“当前浏览器已加载新代码”不能想当然**
-   - 2026-03-31 本轮再次确认：即使 `dist/src/content/wechat-content.js` 已包含新按钮和新逻辑，当前 Chrome for Testing 会话里的微信文章页仍可能继续跑旧 content script。
-   - 直接表现为：页面上仍只有旧版 `#bawei-v2-panel`，没有 `#bawei-v2-check-login`，而 `verify-wechat-ui.cjs` 会报 `未找到检查登录按钮`。
-   - 这类问题不能靠读源码判断已生效；必须把“扩展 reload + 微信文章页刷新后重新取样 DOM”纳入真实回归步骤。
+
+- 2026-03-31 本轮再次确认：即使 `dist/src/content/wechat-content.js` 已包含新按钮和新逻辑，当前 Chrome for Testing 会话里的微信文章页仍可能继续跑旧 content script。
+- 直接表现为：页面上仍只有旧版 `#bawei-v2-panel`，没有 `#bawei-v2-check-login`，而 `verify-wechat-ui.cjs` 会报 `未找到检查登录按钮`。
+- 这类问题不能靠读源码判断已生效；必须把“扩展 reload + 微信文章页刷新后重新取样 DOM”纳入真实回归步骤。
 
 19. **草稿与发布的正文填充链路必须共用**
-   - 2026-03-31 复核后确认：大多数渠道当前都是 `stageFillTitle -> stageFillContent` 之后，才在末尾分叉到 `saveDraft` 或 `submitPublish`；也就是正文写入链路本来就应被 draft / publish 共用。
-   - 因此凡是发生在 `stageFillContent` 的问题——例如段落粘连、图片缺失、原文链接落点错误——原则上都不应只修 `draft` 或只修 `publish`，否则另一条链路会继续带病。
-   - 真正允许分叉的阶段只应是：最终保存/发布按钮、发布前附加必填项、以及详情页/列表页验收。
+
+- 2026-03-31 复核后确认：大多数渠道当前都是 `stageFillTitle -> stageFillContent` 之后，才在末尾分叉到 `saveDraft` 或 `submitPublish`；也就是正文写入链路本来就应被 draft / publish 共用。
+- 因此凡是发生在 `stageFillContent` 的问题——例如段落粘连、图片缺失、原文链接落点错误——原则上都不应只修 `draft` 或只修 `publish`，否则另一条链路会继续带病。
+- 真正允许分叉的阶段只应是：最终保存/发布按钮、发布前附加必填项、以及详情页/列表页验收。
 
 20. **微信公众号 payload 的 `contentTokens` 颗粒度过粗，会把所有渠道一起带偏**
-   - 2026-03-31 新确认的共性根因：微信侧 `buildArticlePayload()` 之前用默认 `buildRichContentTokens()` 生成 `contentTokens`，没有开启 `htmlMode='raw' + splitBlocks=true`。
-   - 结果是：下游渠道即使复用了同一套 `contentTokens`，拿到的也只是粗粒度大段文本，天然更容易出现“段落被压成几大块”的问题。
-   - 修复原则：优先在微信源头把 `contentTokens` 拆成保留块级结构的 token，再让各渠道共享这一份结构化输入；不要每个渠道各自继续消费粗粒度 token。
+
+- 2026-03-31 新确认的共性根因：微信侧 `buildArticlePayload()` 之前用默认 `buildRichContentTokens()` 生成 `contentTokens`，没有开启 `htmlMode='raw' + splitBlocks=true`。
+- 结果是：下游渠道即使复用了同一套 `contentTokens`，拿到的也只是粗粒度大段文本，天然更容易出现“段落被压成几大块”的问题。
+- 修复原则：优先在微信源头把 `contentTokens` 拆成保留块级结构的 token，再让各渠道共享这一份结构化输入；不要每个渠道各自继续消费粗粒度 token。
 
 ## 观测依据
 

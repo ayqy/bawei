@@ -409,7 +409,7 @@ function buildOschinaLandingHtml() {
   return pageTemplate({ title: 'OSCHINA 入口', body });
 }
 
-function buildOschinaWriteHtml({ action, title, detailUrl }) {
+function buildOschinaWriteHtml({ action, title, detailUrl, publishRedirectUrl = detailUrl }) {
   const body = `
     <h1>OSCHINA 写作页（E2E）</h1>
     <div class="bar">
@@ -426,6 +426,7 @@ function buildOschinaWriteHtml({ action, title, detailUrl }) {
   const script = `
     const ACTION = ${JSON.stringify(action)};
     const DETAIL_URL = ${JSON.stringify(detailUrl)};
+    const PUBLISH_REDIRECT_URL = ${JSON.stringify(publishRedirectUrl)};
     const editorRoot = document.querySelector('.tiptap.ProseMirror.aie-content');
     editorRoot.__baweiCommandVersion = 0;
     editorRoot.editor = {
@@ -541,7 +542,7 @@ function buildOschinaWriteHtml({ action, title, detailUrl }) {
     document.querySelector('#oschina-confirm')?.addEventListener('click', () => {
       try { sessionStorage.setItem('__bawei_e2e_oschina_final_html', editorRoot.innerHTML); } catch {}
       try { document.querySelector('#oschina-status').textContent = '发布成功'; } catch {}
-      location.href = DETAIL_URL;
+      location.href = PUBLISH_REDIRECT_URL;
     });
   `;
   return pageTemplate({ title: `${title} - OSCHINA 写作`, body, script });
@@ -1593,6 +1594,33 @@ async function main() {
       }
 
       // OSCHINA
+      if (u.hostname === 'apiv1.oschina.net' && u.pathname === '/oschinapi/user/osc/myDynamic') {
+        currentRun.oschinaDynamicApiCount = Number(currentRun.oschinaDynamicApiCount || 0) + 1;
+        await route.fulfill({
+          status: 200,
+          headers: {
+            'content-type': 'application/json; charset=utf-8',
+            'access-control-allow-origin': 'https://my.oschina.net',
+            'access-control-allow-credentials': 'true'
+          },
+          body: JSON.stringify({
+            success: true,
+            result: {
+              list: [
+                {
+                  objId: 9002,
+                  objType: 3,
+                  createdBy: 4581386,
+                  title: `${title}（相似旧稿）`,
+                  state: 1
+                },
+                { objId: 9001, objType: 3, createdBy: 4581386, title, state: 1 }
+              ]
+            }
+          })
+        });
+        return;
+      }
       if (u.hostname === 'www.oschina.net' && u.pathname.startsWith('/blog/write')) {
         if (action === 'not_logged_in') {
           await route.fulfill({
@@ -1619,18 +1647,30 @@ async function main() {
             });
             return;
           }
-          const detailUrl = `https://my.oschina.net/u/e2e/blog/${runId}`;
+          const detailUrl = 'https://my.oschina.net/u/4581386/blog/9001';
+          const publishRedirectUrl = 'https://my.oschina.net/u/4581386?tab=newest';
           await route.fulfill({
             status: 200,
             headers: { 'content-type': 'text/html; charset=utf-8' },
-            body: buildOschinaWriteHtml({ action, title, sourceUrl, detailUrl })
+            body: buildOschinaWriteHtml({ action, title, detailUrl, publishRedirectUrl })
+          });
+          return;
+        }
+        if (/\/blog\/\d+/.test(u.pathname)) {
+          await route.fulfill({
+            status: 200,
+            headers: { 'content-type': 'text/html; charset=utf-8' },
+            body: buildDetailHtml({ title, sourceUrl })
           });
           return;
         }
         await route.fulfill({
           status: 200,
           headers: { 'content-type': 'text/html; charset=utf-8' },
-          body: buildDetailHtml({ title, sourceUrl })
+          body: pageTemplate({
+            title: 'OSCHINA 个人空间',
+            body: '<h1>OSCHINA 个人空间（E2E）</h1>'
+          })
         });
         return;
       }
@@ -2257,6 +2297,12 @@ async function main() {
         );
       }
       if (channelId === 'oschina') {
+        if (action === 'publish') {
+          assert(
+            Number(currentRun?.oschinaDynamicApiCount || 0) >= 1,
+            'OSCHINA 发布后未通过 myDynamic 接口解析精确标题'
+          );
+        }
         const oschinaSnapshot = await channelPage.evaluate(() => {
           const html = sessionStorage.getItem('__bawei_e2e_oschina_final_html') || '';
           const root = document.createElement('div');

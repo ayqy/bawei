@@ -21,6 +21,7 @@ type OschinaContentToken =
   | { kind: 'image'; src: string; alt?: string };
 type OschinaEditorCommand =
   | 'ensure-editor'
+  | 'find-published-blog'
   | 'reset'
   | 'insert-html'
   | 'replace-html'
@@ -376,6 +377,21 @@ async function ensureOschinaEditorReady(): Promise<void> {
     userMessage: getMessage('v2MsgEnteredEditorPage')
   });
   const result = await executeOschinaEditorCommand('ensure-editor');
+  const redirectUrl = String(result.redirectUrl || '').trim();
+  if (redirectUrl && redirectUrl !== location.href) {
+    await report({
+      status: 'running',
+      stage: 'openEntry',
+      userMessage: getMessage('v2MsgOschinaSpaceMigrationSwitchToWritePage'),
+      devDetails: {
+        from: location.href,
+        to: redirectUrl,
+        reason: 'recovered-runtime-profile-route'
+      }
+    });
+    location.href = redirectUrl;
+    throw new Error('__BAWEI_V2_STOPPED__');
+  }
   await retryUntil(
     async () => {
       const title = document.querySelector<HTMLInputElement>(
@@ -401,16 +417,17 @@ async function ensureOschinaEditorReady(): Promise<void> {
 async function executeOschinaEditorCommand(
   command: OschinaEditorCommand,
   html = '',
-  imageFile?: OschinaImageFilePayload
+  imageFile?: OschinaImageFilePayload,
+  title = ''
 ): Promise<Record<string, unknown>> {
   let result: Record<string, unknown>;
   try {
-    result = await executeOschinaEditorCommandViaPageBridge(command, html, imageFile);
+    result = await executeOschinaEditorCommandViaPageBridge(command, html, imageFile, title);
   } catch (bridgeError) {
     const response = (await chrome.runtime.sendMessage({
       type: V3_EXECUTE_MAIN_WORLD,
       action: 'oschina-editor-command',
-      payload: { command, html, imageFile }
+      payload: { command, html, imageFile, title }
     })) as { success?: boolean; result?: unknown; error?: string };
     if (!response?.success) {
       const bridgeReason = bridgeError instanceof Error ? bridgeError.message : String(bridgeError);
@@ -474,7 +491,8 @@ async function ensureOschinaPageBridge(): Promise<HTMLElement> {
 async function executeOschinaEditorCommandViaPageBridge(
   command: OschinaEditorCommand,
   html = '',
-  imageFile?: OschinaImageFilePayload
+  imageFile?: OschinaImageFilePayload,
+  title = ''
 ): Promise<Record<string, unknown>> {
   const bridge = await ensureOschinaPageBridge();
   const requestId = (() => {
@@ -488,7 +506,8 @@ async function executeOschinaEditorCommandViaPageBridge(
     requestId,
     command,
     html,
-    imageFile
+    imageFile,
+    title
   });
 
   return new Promise((resolve, reject) => {
@@ -522,7 +541,7 @@ async function executeOschinaEditorCommandViaPageBridge(
         bridge.remove();
         reject(new Error('OSCHINA page bridge command timed out'));
       },
-      command === 'ensure-editor' ? 45_000 : 8000
+      command === 'ensure-editor' ? 45_000 : command === 'find-published-blog' ? 15_000 : 8000
     );
 
     bridge.addEventListener(OSCHINA_PAGE_BRIDGE_RESULT_EVENT, finish, { once: true });
@@ -531,6 +550,32 @@ async function executeOschinaEditorCommandViaPageBridge(
     bridge.setAttribute('data-bawei-request', encodedPayload);
     bridge.dispatchEvent(new Event(OSCHINA_PAGE_BRIDGE_COMMAND_EVENT));
   });
+}
+
+async function findPublishedBlogByExactTitle(
+  title: string
+): Promise<{ candidatePublicUrl: string; objId: number; state: number | null } | null> {
+  try {
+    const result = await executeOschinaEditorCommand('find-published-blog', '', undefined, title);
+    if (result.found !== true) return null;
+    const candidatePublicUrl = String(result.candidatePublicUrl || '').trim();
+    const objId = Number(result.objId);
+    if (
+      !Number.isSafeInteger(objId) ||
+      !/^https:\/\/my\.oschina\.net\/u\/[^/]+\/blog\/\d+$/i.test(candidatePublicUrl)
+    ) {
+      return null;
+    }
+    return {
+      candidatePublicUrl,
+      objId,
+      state: Number.isFinite(Number(result.state)) ? Number(result.state) : null
+    };
+  } catch {
+    // The authenticated API is the durable primary path. Keep the existing DOM-list probe as a
+    // compatibility fallback when the endpoint is temporarily unavailable.
+    return null;
+  }
 }
 
 async function fillOschinaProseMirrorByTokens(
@@ -644,6 +689,22 @@ async function fillOschinaProseMirrorByTokens(
   }
 }
 
+function isOschinaHostedImageUrl(rawUrl: string): boolean {
+  const value = String(rawUrl || '').trim();
+  if (!isPlatformHostedImageUrl(value)) return false;
+  try {
+    const host = new URL(value).hostname.toLowerCase();
+    return (
+      host !== 'qpic.cn' &&
+      !host.endsWith('.qpic.cn') &&
+      host !== 'qlogo.cn' &&
+      !host.endsWith('.qlogo.cn')
+    );
+  } catch {
+    return false;
+  }
+}
+
 async function stageFillContent(contentHtml: string, sourceUrl: string): Promise<void> {
   currentStage = 'fillContent';
   await report({
@@ -712,9 +773,7 @@ async function stageFillContent(contentHtml: string, sourceUrl: string): Promise
     (expectedImages === 0 ||
       Array.from(editorRoot.querySelectorAll<HTMLImageElement>('img')).filter((img) => {
         const src = String(img.getAttribute('src') || '').trim();
-        if (!src) return false;
-        if (src.startsWith('blob:') || src.startsWith('data:')) return true;
-        return !src.includes('qpic.cn') && !src.includes('qlogo.cn');
+        return isOschinaHostedImageUrl(src);
       }).length >= expectedImages);
 
   if (!existingOk) {
@@ -1111,6 +1170,27 @@ async function bootstrap(): Promise<void> {
       }
 
       const isDetailPage = /\/blog\/\d+/.test(location.pathname);
+
+      if (currentJob.action === 'publish' && !isDetailPage) {
+        const publishedBlog = await findPublishedBlogByExactTitle(currentJob.article.title);
+        if (publishedBlog && publishedBlog.candidatePublicUrl !== location.href) {
+          await report({
+            status: 'running',
+            stage: 'confirmSuccess',
+            userMessage: getMessage('v2MsgVerifyMatchedTokenByKeywordOpeningDetail'),
+            devDetails: summarizeVerifyDetails({
+              listUrl: location.href,
+              publishedUrl: publishedBlog.candidatePublicUrl,
+              candidatePublicUrl: publishedBlog.candidatePublicUrl,
+              verificationSource: 'myDynamic-exact-title',
+              objId: publishedBlog.objId,
+              state: publishedBlog.state
+            })
+          });
+          location.href = publishedBlog.candidatePublicUrl;
+          return;
+        }
+      }
 
       // detail page: 先等正文加载，再验原文链接；避免 document_end 过早回退
       if (isDetailPage) {
