@@ -1,0 +1,26 @@
+{
+  "ok": true,
+  "action": "status",
+  "externalMutation": false,
+  "product": "bawei",
+  "version": "1.0.4",
+  "status": {
+    "itemId": "epgindgpaoemkikhhpbhigjcfgcnhkff",
+    "name": "publishers/301e74b1-6567-4278-a30a-74b31afa142c/items/epgindgpaoemkikhhpbhigjcfgcnhkff",
+    "lastAsyncUploadState": null,
+    "submitted": {
+      "state": "PENDING_REVIEW",
+      "versions": [
+        "1.0.4"
+      ]
+    },
+    "published": {
+      "state": "PUBLISHED",
+      "versions": [
+        "1.0.3"
+      ]
+    }
+  },
+  "targetTerminalState": "pending_review",
+  "checkedAt": "2026-08-22T22:23:37.919Z"
+}
