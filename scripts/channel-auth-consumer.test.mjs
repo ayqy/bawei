@@ -16,7 +16,8 @@ import {
   channelProxyMode,
   directChromiumArgs,
   isExplicitDirectChromiumCommand,
-  PROXY_REQUIRED_CHANNELS
+  PROXY_REQUIRED_CHANNELS,
+  requiredChannelProxyUrl
 } from './channel-network-policy.mjs';
 
 const KEY = Buffer.from(Array.from({ length: 32 }, (_, index) => index));
@@ -39,6 +40,13 @@ assert.equal(
   isExplicitDirectChromiumCommand('/path/chrome --proxy-server=http://127.0.0.1:7890'),
   false
 );
+assert.equal(
+  requiredChannelProxyUrl('cws', ['', 'http://127.0.0.1:7890']),
+  'http://127.0.0.1:7890'
+);
+assert.throws(() => requiredChannelProxyUrl('cws', []), /必须配置网络代理/);
+assert.throws(() => requiredChannelProxyUrl('cws', ['socks5://127.0.0.1:7890']), /代理 URL 非法/);
+assert.throws(() => requiredChannelProxyUrl('sspai', ['http://127.0.0.1:7890']), /禁止使用代理/);
 for (const browserEntry of [
   'channel-auth-probe.mjs',
   'live-publish-chrome-cdp.mjs',

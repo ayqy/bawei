@@ -7,6 +7,7 @@ import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import { ProxyAgent, setGlobalDispatcher } from 'undici';
 import { resolveChannelAuth } from './channel-auth-consumer.mjs';
+import { requiredChannelProxyUrl } from './channel-network-policy.mjs';
 
 const PRODUCT_NAME = 'bawei';
 const API_ROOT = 'https://chromewebstore.googleapis.com';
@@ -58,24 +59,21 @@ function parseCliOptions(): CliOptions {
   if (evidenceDir === '') throw new Error('--evidence-dir 必须提供目录');
   return {
     dryRun: args.includes('--dry-run'),
-    statusOnly: args.includes('--status'),
+    statusOnly: args.includes('--status') || args.includes('--status-only'),
     evidenceDir
   };
 }
 
 function setupProxy(): void {
-  const proxyUrl =
-    process.env.CWS_PROXY ||
-    process.env.HTTPS_PROXY ||
-    process.env.https_proxy ||
-    process.env.HTTP_PROXY ||
-    process.env.http_proxy ||
-    process.env.ALL_PROXY ||
-    process.env.all_proxy;
-  if (!proxyUrl) {
-    console.log('[CWS] 未启用代理');
-    return;
-  }
+  const proxyUrl = requiredChannelProxyUrl('cws', [
+    process.env.CWS_PROXY,
+    process.env.HTTPS_PROXY,
+    process.env.https_proxy,
+    process.env.HTTP_PROXY,
+    process.env.http_proxy,
+    process.env.ALL_PROXY,
+    process.env.all_proxy
+  ]);
   setGlobalDispatcher(new ProxyAgent(proxyUrl));
   console.log('[CWS] 已启用代理（地址已隐藏）');
 }

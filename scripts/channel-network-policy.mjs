@@ -25,3 +25,23 @@ export function directChromiumArgs(channels) {
 export function isExplicitDirectChromiumCommand(command) {
   return /(?:^|\s)--no-proxy-server(?:\s|$)/.test(String(command || ''));
 }
+
+export function requiredChannelProxyUrl(channel, candidates) {
+  if (channelProxyMode(channel) !== 'required_proxy') {
+    throw new Error(`${channel} 渠道禁止使用代理`);
+  }
+  const proxyUrl = (Array.isArray(candidates) ? candidates : [])
+    .map((value) => String(value || '').trim())
+    .find(Boolean);
+  if (!proxyUrl) throw new Error(`${channel} 渠道必须配置网络代理`);
+  let parsed;
+  try {
+    parsed = new URL(proxyUrl);
+  } catch {
+    throw new Error(`${channel} 渠道代理 URL 非法`);
+  }
+  if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname) {
+    throw new Error(`${channel} 渠道代理 URL 非法`);
+  }
+  return proxyUrl;
+}
