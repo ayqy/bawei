@@ -4,23 +4,25 @@
 
 当前发布目标：
 
-- Publisher ID：`301e74b1-6567-4278-a30a-74b31afa142c`
+- Publisher ID：由本机或部署环境的 `CWS_PUBLISHER_ID` 提供，仓库不绑定账号专属默认值
 - 扩展 ID：由 `CWS_EXTENSION_ID` 提供
 - 正常发布方式：审核通过后自动公开
 - API v2 请求固定为 `publishType: DEFAULT_PUBLISH`、`skipReview: false`、`blockOnWarnings: true`
 
 ## 凭据
 
-在根目录 `.env` 中配置以下变量，禁止提交该文件或在日志中打印变量值：
+本机优先从中立 `cws.oauth2` AES-256-GCM 状态读取 OAuth；Bawei 不 import 或定位其获取项目。根目录 `.env` 只保存扩展 ID、可选 Publisher ID 和代理，权限必须是 `0600`：
 
 ```bash
 CWS_EXTENSION_ID=abcdefghijklmnopabcdefghijklmnop
-CWS_CLIENT_ID=1234567890-example.apps.googleusercontent.com
-CWS_CLIENT_SECRET=GOCSPX-example
-CWS_REFRESH_TOKEN=1//example
-# 可选；默认使用脚本内绑定的 Publisher ID
-CWS_PUBLISHER_ID=301e74b1-6567-4278-a30a-74b31afa142c
+CWS_PUBLISHER_ID=00000000-0000-4000-8000-000000000000
 ```
+
+既有本机 `.env` 的三个 OAuth 值应由独立 `channel-auth` 获取端先调用官方 token 端点和 `fetchStatus` 校验扩展身份，成功后加密迁移并原子清空源秘密。Publisher ID 和扩展 ID 是必需的目标配置但不是认证凭据。GitHub Actions 等没有 macOS Keychain 的受控环境仍可通过仓库/环境 Secret 注入 `CWS_CLIENT_ID`、`CWS_CLIENT_SECRET`、`CWS_REFRESH_TOKEN`；这是官方 OAuth 的 CI 传输方式，不允许写入仓库文件。
+
+网络边界只允许 CWS 和 X 使用代理。此脚本是 CWS 专用进程，必须从 `CWS_PROXY`（优先）或兼容代理环境取得代理；Bawei 十个内容渠道的浏览器运行时全部显式直连。不要把 CWS 代理变量注入通用内容发布浏览器；X 的代理由独立 COO 项目单独维护。
+
+密文中的 access token 到期但 refresh token 仍有效时，CWS 适配器会先调用官方 token 端点刷新，再执行目标扩展身份回读；不会降级读取已清空的本机 OAuth 明文。
 
 OAuth 客户端必须启用 Chrome Web Store API，并授权 `https://www.googleapis.com/auth/chromewebstore`。如 OAuth 应用仍处于 Testing，refresh token 可能按 Google 当前策略较快失效；以 Google Cloud Console 的实时状态和官方说明为准。
 

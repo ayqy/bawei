@@ -5,6 +5,8 @@ import process from 'node:process';
 import { execFileSync } from 'node:child_process';
 import { chromium } from 'playwright';
 import sharp from 'sharp';
+import { resolveAndApplyBrowserAuth, summarizeChannelAuth } from './channel-auth-consumer.mjs';
+import { directChromiumArgs } from './channel-network-policy.mjs';
 
 const RUN_ID = new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-');
 const ARTIFACTS_DIR = path.resolve(process.cwd(), 'artifacts/mowen-image-paste');
@@ -12,8 +14,14 @@ const LOG_PATH = path.join(ARTIFACTS_DIR, `paste-probe-${RUN_ID}.ndjson`);
 const SCREENSHOT_PATH = path.join(ARTIFACTS_DIR, `paste-probe-${RUN_ID}.png`);
 const IMAGE_DIR = path.join(ARTIFACTS_DIR, 'images');
 
-const USER_DATA_DIR = path.resolve(process.cwd(), process.env.CHROME_PROFILE_DIR || 'artifacts/chrome-cdp-live-profile-v8');
-const KEEP_BROWSER_OPEN = String(process.env.KEEP_BROWSER_OPEN || '1') !== '0';
+const USER_DATA_DIR = path.resolve(
+  process.cwd(),
+  process.env.CHROME_RUNTIME_DIR ||
+    process.env.CHROME_PROFILE_DIR ||
+    'artifacts/chrome-cdp-runtime-profile-v1'
+);
+const KEEP_BROWSER_OPEN =
+  String(process.env.KEEP_BROWSER_OPEN || (process.stdout.isTTY ? '1' : '0')) !== '0';
 const CFT_BINARY = String(process.env.CFT_BINARY || '').trim() || null;
 
 const IMAGE_URL = String(process.env.IMAGE_URL || '').trim();
@@ -58,15 +66,23 @@ function resolveCftBinary() {
   for (const dirName of chromiumDirs) {
     const base = path.join(cacheRoot, dirName);
     const candidates = [
-      path.join(base, 'chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'),
-      path.join(base, 'chrome-mac/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'),
+      path.join(
+        base,
+        'chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'
+      ),
+      path.join(
+        base,
+        'chrome-mac/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'
+      )
     ];
     for (const candidate of candidates) {
       if (fs.existsSync(candidate)) return candidate;
     }
   }
 
-  throw new Error('未找到 Chrome for Testing 可执行文件，请先执行 `npx playwright install chromium`');
+  throw new Error(
+    '未找到 Chrome for Testing 可执行文件，请先执行 `npx playwright install chromium`'
+  );
 }
 
 async function fetchAsPngFile() {
@@ -90,7 +106,7 @@ async function fetchAsPngFile() {
 
   const outPath = path.join(IMAGE_DIR, `generated-${RUN_ID}.png`);
   await sharp({
-    create: { width: 320, height: 200, channels: 3, background: { r: 255, g: 120, b: 60 } },
+    create: { width: 320, height: 200, channels: 3, background: { r: 255, g: 120, b: 60 } }
   })
     .png()
     .toFile(outPath);
@@ -101,7 +117,10 @@ function copyPngToClipboard(pngPath) {
   const abs = path.resolve(pngPath);
   const script = `set the clipboard to (read (POSIX file \"${abs.replaceAll('\"', '\\\\\"')}\") as «class PNGf»)`;
   execFileSync('osascript', ['-e', script], { stdio: 'ignore' });
-  const info = String(execFileSync('osascript', ['-e', 'clipboard info'], { stdio: ['ignore', 'pipe', 'ignore'] }) || '').trim();
+  const info = String(
+    execFileSync('osascript', ['-e', 'clipboard info'], { stdio: ['ignore', 'pipe', 'ignore'] }) ||
+      ''
+  ).trim();
   return info;
 }
 
@@ -122,7 +141,13 @@ function pickHeaders(headers) {
     const key = String(k || '').toLowerCase();
     if (!key) continue;
     if (key === 'cookie' || key === 'authorization' || key === 'proxy-authorization') continue;
-    if (key === 'user-agent' || key === 'referer' || key === 'origin' || key === 'content-type' || key.startsWith('x-')) {
+    if (
+      key === 'user-agent' ||
+      key === 'referer' ||
+      key === 'origin' ||
+      key === 'content-type' ||
+      key.startsWith('x-')
+    ) {
       out[key] = String(v || '').slice(0, 1200);
     }
   }
@@ -206,16 +231,25 @@ async function pasteAndWaitUploaded(page) {
     return {
       imgCount: root ? root.querySelectorAll('img').length : 0,
       figureCount: root ? root.querySelectorAll('figure').length : 0,
-      htmlSnippet: String(root?.innerHTML || '').slice(0, 800),
+      htmlSnippet: String(root?.innerHTML || '').slice(0, 800)
     };
   });
   appendLog({ ts: nowIso(), kind: 'before', ...before });
 
-  const waitPrepare = page.waitForResponse((res) => res.url().includes('/api/file/v1/upload/prepare') && res.status() === 200, {
-    timeout: 120_000,
-  });
-  const waitUpload = page.waitForResponse((res) => res.url().includes('priv-sdn.mowen.cn/') && res.status() === 200, { timeout: 120_000 });
-  const waitDraft = page.waitForResponse((res) => res.url().includes('/api/note/wxa/v1/note/draft') && res.status() === 200, { timeout: 120_000 });
+  const waitPrepare = page.waitForResponse(
+    (res) => res.url().includes('/api/file/v1/upload/prepare') && res.status() === 200,
+    {
+      timeout: 120_000
+    }
+  );
+  const waitUpload = page.waitForResponse(
+    (res) => res.url().includes('priv-sdn.mowen.cn/') && res.status() === 200,
+    { timeout: 120_000 }
+  );
+  const waitDraft = page.waitForResponse(
+    (res) => res.url().includes('/api/note/wxa/v1/note/draft') && res.status() === 200,
+    { timeout: 120_000 }
+  );
 
   await page.keyboard.press('Meta+V');
 
@@ -228,7 +262,7 @@ async function pasteAndWaitUploaded(page) {
     return {
       imgCount: root.querySelectorAll('img').length,
       figureCount: root.querySelectorAll('figure').length,
-      htmlSnippet: String(root.innerHTML || '').slice(0, 1200),
+      htmlSnippet: String(root.innerHTML || '').slice(0, 1200)
     };
   });
 
@@ -237,7 +271,7 @@ async function pasteAndWaitUploaded(page) {
     uploadStatus: uploadRes.status(),
     draftStatus: draftRes.status(),
     uploadSnippet: String(uploadText || '').slice(0, 800),
-    after,
+    after
   };
   appendLog({ ts: nowIso(), kind: 'after', ...result });
   return result;
@@ -270,8 +304,11 @@ async function main() {
       '--no-first-run',
       '--no-default-browser-check',
       '--no-sandbox',
-    ],
+      ...directChromiumArgs(['mowen'])
+    ]
   });
+  const auth = await resolveAndApplyBrowserAuth(context, ['mowen']);
+  console.log(`[channel-auth] ${JSON.stringify(summarizeChannelAuth(auth.get('mowen')))}`);
 
   try {
     const page = await context.newPage();
@@ -287,7 +324,7 @@ async function main() {
           method: req.method(),
           headers: pickHeaders(req.headers()),
           postDataSnippet: String(req.postData() || '').slice(0, 1200),
-          page: page.url(),
+          page: page.url()
         });
       } catch {
         // ignore
@@ -300,7 +337,11 @@ async function main() {
         if (!shouldLogUrl(url)) return;
         const status = res.status();
         let bodySnippet = '';
-        if (url.includes('/api/file/v1/upload/prepare') || url.includes('priv-sdn.mowen.cn') || url.includes('/oss/upload/callback')) {
+        if (
+          url.includes('/api/file/v1/upload/prepare') ||
+          url.includes('priv-sdn.mowen.cn') ||
+          url.includes('/oss/upload/callback')
+        ) {
           bodySnippet = String(await res.text().catch(() => '')).slice(0, 2000);
         }
         appendLog({
@@ -311,7 +352,7 @@ async function main() {
           method: res.request().method(),
           headers: pickHeaders(res.headers()),
           bodySnippet,
-          page: page.url(),
+          page: page.url()
         });
       } catch {
         // ignore
@@ -319,7 +360,10 @@ async function main() {
     });
 
     console.log('[paste-probe] 打开墨问编辑器...');
-    await page.goto('https://note.mowen.cn/editor', { waitUntil: 'domcontentloaded', timeout: 180_000 });
+    await page.goto('https://note.mowen.cn/editor', {
+      waitUntil: 'domcontentloaded',
+      timeout: 180_000
+    });
     await waitForEditorReady(page);
 
     console.log('[paste-probe] 清空编辑器并粘贴图片...');
@@ -333,7 +377,12 @@ async function main() {
       console.log(`[paste-probe] screenshot -> ${SCREENSHOT_PATH}`);
     }
 
-    if (!after || after.prepareStatus !== 200 || after.uploadStatus !== 200 || after.draftStatus !== 200) {
+    if (
+      !after ||
+      after.prepareStatus !== 200 ||
+      after.uploadStatus !== 200 ||
+      after.draftStatus !== 200
+    ) {
       throw new Error(`图片粘贴/上传未通过：${JSON.stringify(after || {})}`);
     }
 

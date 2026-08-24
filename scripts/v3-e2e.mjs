@@ -2,6 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import process from 'node:process';
 import { chromium } from 'playwright';
+import { directChromiumArgs } from './channel-network-policy.mjs';
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -1339,7 +1340,8 @@ async function main() {
       `--disable-extensions-except=${distDir}`,
       `--load-extension=${distDir}`,
       '--no-first-run',
-      '--no-default-browser-check'
+      '--no-default-browser-check',
+      ...directChromiumArgs(ALL_CHANNELS)
     ]
   });
 

@@ -2,23 +2,26 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import process from 'node:process';
-import { execSync, spawn } from 'node:child_process';
+import { execSync } from 'node:child_process';
 import { chromium } from 'playwright';
 import sharp from 'sharp';
+import { resolveAndApplyBrowserAuth, summarizeChannelAuth } from './channel-auth-consumer.mjs';
+import { directChromiumArgs } from './channel-network-policy.mjs';
 
 const ARTIFACTS_DIR = path.resolve(process.cwd(), 'artifacts/mowen-image-upload');
 const RUN_ID = new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-');
 const LOG_PATH = path.join(ARTIFACTS_DIR, `probe-${RUN_ID}.ndjson`);
 const SCREENSHOT_PATH = path.join(ARTIFACTS_DIR, `probe-${RUN_ID}.png`);
 
-const USER_DATA_DIR = path.resolve(process.cwd(), process.env.CHROME_PROFILE_DIR || 'artifacts/chrome-cdp-live-profile-v8');
-const KEEP_BROWSER_OPEN = String(process.env.KEEP_BROWSER_OPEN || '1') !== '0';
-const BOOTSTRAP_PROFILE = String(process.env.BOOTSTRAP_PROFILE || '1') !== '0';
-const SANITIZE_PROFILE = String(process.env.SANITIZE_PROFILE || '1') !== '0';
-const PROFILE_BOOTSTRAP_MARK = '.bootstrap-from-chrome.done';
-const BOOTSTRAP_SOURCE_DIR = path.resolve(
-  process.env.SOURCE_CHROME_USER_DATA_DIR || path.join(os.homedir(), 'Library/Application Support/Google/Chrome')
+const USER_DATA_DIR = path.resolve(
+  process.cwd(),
+  process.env.CHROME_RUNTIME_DIR ||
+    process.env.CHROME_PROFILE_DIR ||
+    'artifacts/chrome-cdp-runtime-profile-v1'
 );
+const KEEP_BROWSER_OPEN =
+  String(process.env.KEEP_BROWSER_OPEN || (process.stdout.isTTY ? '1' : '0')) !== '0';
+const BOOTSTRAP_PROFILE = String(process.env.BOOTSTRAP_PROFILE || '0') !== '0';
 
 function nowIso() {
   return new Date().toISOString();
@@ -54,15 +57,23 @@ function resolveCftBinary() {
   for (const dirName of chromiumDirs) {
     const base = path.join(cacheRoot, dirName);
     const candidates = [
-      path.join(base, 'chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'),
-      path.join(base, 'chrome-mac/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'),
+      path.join(
+        base,
+        'chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'
+      ),
+      path.join(
+        base,
+        'chrome-mac/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'
+      )
     ];
     for (const candidate of candidates) {
       if (fs.existsSync(candidate)) return candidate;
     }
   }
 
-  throw new Error('未找到 Chrome for Testing 可执行文件，请先执行 `npx playwright install chromium`');
+  throw new Error(
+    '未找到 Chrome for Testing 可执行文件，请先执行 `npx playwright install chromium`'
+  );
 }
 
 function cleanChromeSingletonLocks(userDataDir) {
@@ -75,85 +86,11 @@ function cleanChromeSingletonLocks(userDataDir) {
   }
 }
 
-function profileCopyFilter(src, sourceRoot) {
-  const rel = path.relative(sourceRoot, src);
-  if (!rel || rel === '.') return true;
-  const normalized = rel.replaceAll('\\', '/');
-
-  if (normalized === 'Default') return true;
-
-  const allowPrefixes = [
-    'Default/Cookies',
-    'Default/Cookies-journal',
-    'Default/Network',
-    'Default/Local Storage',
-    'Default/IndexedDB',
-    'Default/Session Storage',
-    'Default/Storage',
-    'Default/Shared Storage',
-    'Default/WebStorage',
-    'Default/Service Worker/Database',
-    'Default/Service Worker/ScriptCache',
-  ];
-
-  if (allowPrefixes.some((prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`))) {
-    return true;
-  }
-
-  const allowFiles = new Set([
-    'Default/Web Data',
-    'Default/Web Data-journal',
-    'Default/Login Data',
-    'Default/Login Data-journal',
-  ]);
-
-  return allowFiles.has(normalized);
-}
-
-function sanitizeProfileStartupState(userDataDir) {
-  const defaultDir = path.join(userDataDir, 'Default');
-  if (!fs.existsSync(defaultDir)) return;
-
-  try {
-    fs.rmSync(path.join(defaultDir, 'Sessions'), { recursive: true, force: true });
-  } catch {
-    // ignore
-  }
-
-  for (const file of ['Current Session', 'Current Tabs', 'Last Session', 'Last Tabs']) {
-    try {
-      fs.rmSync(path.join(defaultDir, file), { force: true });
-    } catch {
-      // ignore
-    }
-  }
-}
-
 function maybeBootstrapProfileFromChrome(userDataDir) {
   if (!BOOTSTRAP_PROFILE) return;
-  const markFile = path.join(userDataDir, PROFILE_BOOTSTRAP_MARK);
-  if (fs.existsSync(markFile)) return;
-
-  if (!fs.existsSync(BOOTSTRAP_SOURCE_DIR)) {
-    console.log(`[profile-bootstrap] 跳过：未找到源目录 ${BOOTSTRAP_SOURCE_DIR}`);
-    return;
-  }
-
-  fs.mkdirSync(userDataDir, { recursive: true });
-  console.log(`[profile-bootstrap] 首次引导登录态：${BOOTSTRAP_SOURCE_DIR} -> ${userDataDir}`);
-
-  fs.cpSync(BOOTSTRAP_SOURCE_DIR, userDataDir, {
-    recursive: true,
-    force: false,
-    errorOnExist: false,
-    dereference: true,
-    filter: (src) => profileCopyFilter(src, BOOTSTRAP_SOURCE_DIR),
-  });
-
-  cleanChromeSingletonLocks(userDataDir);
-  if (SANITIZE_PROFILE) sanitizeProfileStartupState(userDataDir);
-  fs.writeFileSync(markFile, `${nowIso()}\n`, 'utf8');
-  console.log('[profile-bootstrap] 完成');
+  throw new Error(
+    `已停用重型 Chrome profile 登录态复制（目标=${userDataDir}）；墨问没有已验证的轻量状态时必须人工扫码/短信强验证。`
+  );
 }
 
 function ensureArtifacts() {
@@ -167,7 +104,13 @@ function pickHeaders(headers) {
     const key = String(k || '').toLowerCase();
     if (!key) continue;
     if (key === 'cookie' || key === 'authorization' || key === 'proxy-authorization') continue;
-    if (key === 'user-agent' || key === 'referer' || key === 'origin' || key === 'content-type' || key.startsWith('x-')) {
+    if (
+      key === 'user-agent' ||
+      key === 'referer' ||
+      key === 'origin' ||
+      key === 'content-type' ||
+      key.startsWith('x-')
+    ) {
       out[key] = String(v || '').slice(0, 1200);
     }
   }
@@ -187,7 +130,7 @@ function shouldLogUrl(url) {
 
 async function buildTestPngBase64() {
   const buf = await sharp({
-    create: { width: 280, height: 180, channels: 3, background: { r: 240, g: 90, b: 50 } },
+    create: { width: 280, height: 180, channels: 3, background: { r: 240, g: 90, b: 50 } }
   })
     .png()
     .toBuffer();
@@ -199,18 +142,22 @@ async function runProbe(page, pngBase64) {
     {
       name: 'prepare:fileSize-only + upload:x:file_name=File.name',
       prepare: (fileSize) => ({ appSource: 1, bizSource: 6, params: { fileSize } }),
-      xFileName: (file) => file.name,
+      xFileName: (file) => file.name
     },
     {
       name: 'prepare:fileSize+fileName+mimeType + upload:x:file_name=File.name',
-      prepare: (fileSize, fileName, mimeType) => ({ appSource: 1, bizSource: 6, params: { fileSize, fileName, mimeType } }),
-      xFileName: (file) => file.name,
+      prepare: (fileSize, fileName, mimeType) => ({
+        appSource: 1,
+        bizSource: 6,
+        params: { fileSize, fileName, mimeType }
+      }),
+      xFileName: (file) => file.name
     },
     {
       name: 'prepare:fileSize-only + upload:x:file_name=encodeURIComponent(File.name)',
       prepare: (fileSize) => ({ appSource: 1, bizSource: 6, params: { fileSize } }),
-      xFileName: (file) => encodeURIComponent(file.name),
-    },
+      xFileName: (file) => encodeURIComponent(file.name)
+    }
   ];
 
   for (const variant of variants) {
@@ -229,23 +176,33 @@ async function runProbe(page, pngBase64) {
         const payloadVariants = [
           {
             prepare: (fileSize) => ({ appSource: 1, bizSource: 6, params: { fileSize } }),
-            xFileName: (file) => file.name,
+            xFileName: (file) => file.name
           },
           {
-            prepare: (fileSize, fileName, mimeType) => ({ appSource: 1, bizSource: 6, params: { fileSize, fileName, mimeType } }),
-            xFileName: (file) => file.name,
+            prepare: (fileSize, fileName, mimeType) => ({
+              appSource: 1,
+              bizSource: 6,
+              params: { fileSize, fileName, mimeType }
+            }),
+            xFileName: (file) => file.name
           },
           {
             prepare: (fileSize) => ({ appSource: 1, bizSource: 6, params: { fileSize } }),
-            xFileName: (file) => encodeURIComponent(file.name),
-          },
+            xFileName: (file) => encodeURIComponent(file.name)
+          }
         ];
 
         const variant = payloadVariants[variantIndex];
         if (!variant) throw new Error(`unknown variantIndex: ${variantIndex}`);
 
         const editor = document.querySelector('.ProseMirror[contenteditable=\"true\"]');
-        if (!editor) return { ok: false, stage: 'precheck', error: '未找到 .ProseMirror 编辑器（可能未登录/未打开编辑器）', url: location.href };
+        if (!editor)
+          return {
+            ok: false,
+            stage: 'precheck',
+            error: '未找到 .ProseMirror 编辑器（可能未登录/未打开编辑器）',
+            url: location.href
+          };
         editor.focus();
 
         const bytes = decode(pngBase64);
@@ -258,9 +215,9 @@ async function runProbe(page, pngBase64) {
           credentials: 'include',
           headers: {
             'content-type': 'application/json',
-            'x-mo-ver-wxa': '1.69.3',
+            'x-mo-ver-wxa': '1.69.3'
           },
-          body: JSON.stringify(prepareBody),
+          body: JSON.stringify(prepareBody)
         });
         const prepareText = await prepareRes.text();
         let prepareJson = null;
@@ -276,11 +233,12 @@ async function runProbe(page, pngBase64) {
             stage: 'prepare',
             url: location.href,
             prepareStatus: prepareRes.status,
-            prepareText: prepareText.slice(0, 1200),
+            prepareText: prepareText.slice(0, 1200)
           };
         }
         const endpoint = String(form.endpoint || '').trim();
-        if (!endpoint) return { ok: false, stage: 'prepare', error: 'prepare 响应缺少 endpoint', form };
+        if (!endpoint)
+          return { ok: false, stage: 'prepare', error: 'prepare 响应缺少 endpoint', form };
 
         const fd = new FormData();
         for (const [k, v] of Object.entries(form)) {
@@ -314,18 +272,20 @@ async function runProbe(page, pngBase64) {
             callbackPresent: Boolean(form.callback),
             x_file_id: String(form['x:file_id'] || ''),
             x_file_uid: String(form['x:file_uid'] || ''),
-            x_file_name: String(form['x:file_name'] || ''),
+            x_file_name: String(form['x:file_name'] || '')
           },
           uploadStatus: uploadRes.status,
           uploadText: uploadText.slice(0, 2000),
-          uploadJson,
+          uploadJson
         };
       },
       { pngBase64, variantName: variant.name, variantIndex: variants.indexOf(variant) }
     );
 
     appendLog({ ts: nowIso(), kind: 'result', variant: variant.name, result });
-    console.log(`[probe] ok=${result.ok} stage=${result.stage} uploadStatus=${result.uploadStatus ?? 'n/a'}`);
+    console.log(
+      `[probe] ok=${result.ok} stage=${result.stage} uploadStatus=${result.uploadStatus ?? 'n/a'}`
+    );
 
     if (result.ok) {
       console.log('[probe] ✅ upload ok');
@@ -354,13 +314,16 @@ async function main() {
     '--no-first-run',
     '--no-default-browser-check',
     '--no-sandbox',
+    ...directChromiumArgs(['mowen'])
   ];
 
   const context = await chromium.launchPersistentContext(USER_DATA_DIR, {
     headless: false,
     executablePath: cftBinary,
-    args,
+    args
   });
+  const auth = await resolveAndApplyBrowserAuth(context, ['mowen']);
+  console.log(`[channel-auth] ${JSON.stringify(summarizeChannelAuth(auth.get('mowen')))}`);
 
   let chromeProcess = null;
   try {
@@ -378,7 +341,7 @@ async function main() {
           method: req.method(),
           headers: pickHeaders(req.headers()),
           postDataSnippet: String(req.postData() || '').slice(0, 1200),
-          page: page.url(),
+          page: page.url()
         });
       } catch {
         // ignore
@@ -402,7 +365,7 @@ async function main() {
           method: res.request().method(),
           headers: pickHeaders(res.headers()),
           bodySnippet,
-          page: page.url(),
+          page: page.url()
         });
       } catch {
         // ignore
@@ -410,7 +373,10 @@ async function main() {
     });
 
     console.log('[probe] goto mowen editor...');
-    await page.goto('https://note.mowen.cn/editor', { waitUntil: 'domcontentloaded', timeout: 120_000 });
+    await page.goto('https://note.mowen.cn/editor', {
+      waitUntil: 'domcontentloaded',
+      timeout: 120_000
+    });
 
     const loginDeadline = Date.now() + 10 * 60_000;
     while (Date.now() < loginDeadline) {
@@ -455,4 +421,3 @@ main().catch((e) => {
   console.error('\n❌ mowen image upload probe failed:', e);
   process.exit(1);
 });
-

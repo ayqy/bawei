@@ -69,4 +69,5 @@
 - 断言：
   - 首轮登录审计会写入 `tmp/mcp-login-audit.json`（明确标记未登录渠道）
   - 发布进度持续写入 `tmp/mcp-publish-progress.json`（`success` 渠道不会重复发）
-  - 脚本重启后读取同一 profile 目录，已登录渠道状态应保持，不应整批掉线
+  - 脚本使用全新运行时重启后，已配置的中立加密最小状态仍可恢复；测试不得依赖旧 profile 中的隐式 Cookie
+  - Bawei 十渠道的 Chromium 参数必须包含 `--no-proxy-server`；策略表仅允许 `x/cws=required_proxy`，两者不得进入十渠道通用浏览器

@@ -6,6 +6,8 @@ import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { chromium } from 'playwright';
 import sharp from 'sharp';
+import { resolveAndApplyBrowserAuth, summarizeChannelAuth } from './channel-auth-consumer.mjs';
+import { directChromiumArgs } from './channel-network-policy.mjs';
 
 const RUN_ID = new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-');
 const ARTIFACTS_DIR = path.resolve(process.cwd(), 'artifacts/mowen-weixin-image-paste');
@@ -13,16 +15,26 @@ const LOG_PATH = path.join(ARTIFACTS_DIR, `weixin-image-paste-${RUN_ID}.ndjson`)
 const IMAGE_DIR = path.join(ARTIFACTS_DIR, 'images');
 const SCREENSHOT_DIR = path.join(ARTIFACTS_DIR, 'screenshots');
 
-const USER_DATA_DIR = path.resolve(process.cwd(), process.env.CHROME_PROFILE_DIR || 'artifacts/chrome-cdp-live-profile-v8');
-const KEEP_BROWSER_OPEN = String(process.env.KEEP_BROWSER_OPEN || '1') !== '0';
+const USER_DATA_DIR = path.resolve(
+  process.cwd(),
+  process.env.CHROME_RUNTIME_DIR ||
+    process.env.CHROME_PROFILE_DIR ||
+    'artifacts/chrome-cdp-runtime-profile-v1'
+);
+const KEEP_BROWSER_OPEN =
+  String(process.env.KEEP_BROWSER_OPEN || (process.stdout.isTTY ? '1' : '0')) !== '0';
 const CFT_BINARY = String(process.env.CFT_BINARY || '').trim() || null;
 
 const ARTICLE_URL =
-  String(process.env.ARTICLE_URL || '').trim() || 'https://mp.weixin.qq.com/s/3sSae4T0IeSsfM3dm5fByg';
+  String(process.env.ARTICLE_URL || '').trim() ||
+  'https://mp.weixin.qq.com/s/3sSae4T0IeSsfM3dm5fByg';
 const START_INDEX = Number.parseInt(String(process.env.START_INDEX || '0'), 10) || 0;
 const MAX_IMAGES = Number.parseInt(String(process.env.MAX_IMAGES || '0'), 10) || 0;
 const RETRIES = Math.max(1, Number.parseInt(String(process.env.RETRIES || '3'), 10) || 3);
-const POST_IMAGE_WAIT_MS = Math.max(0, Number.parseInt(String(process.env.POST_IMAGE_WAIT_MS || '5000'), 10) || 5000);
+const POST_IMAGE_WAIT_MS = Math.max(
+  0,
+  Number.parseInt(String(process.env.POST_IMAGE_WAIT_MS || '5000'), 10) || 5000
+);
 
 const SHOULD_INCLUDE_NON_MMBIZ = String(process.env.INCLUDE_NON_MMBIZ || '0') === '1';
 const USE_OS_PASTE_FALLBACK = String(process.env.USE_OS_PASTE_FALLBACK || '1') !== '0';
@@ -67,15 +79,23 @@ function resolveCftBinary() {
   for (const dirName of chromiumDirs) {
     const base = path.join(cacheRoot, dirName);
     const candidates = [
-      path.join(base, 'chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'),
-      path.join(base, 'chrome-mac/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'),
+      path.join(
+        base,
+        'chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'
+      ),
+      path.join(
+        base,
+        'chrome-mac/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'
+      )
     ];
     for (const candidate of candidates) {
       if (fs.existsSync(candidate)) return candidate;
     }
   }
 
-  throw new Error('未找到 Chrome for Testing 可执行文件，请先执行 `npx playwright install chromium`');
+  throw new Error(
+    '未找到 Chrome for Testing 可执行文件，请先执行 `npx playwright install chromium`'
+  );
 }
 
 function decodeHtmlAttributeValue(raw) {
@@ -172,7 +192,11 @@ function extractImageUrlsInOrder(html) {
 }
 
 function sha1Short(input) {
-  return crypto.createHash('sha1').update(String(input || '')).digest('hex').slice(0, 10);
+  return crypto
+    .createHash('sha1')
+    .update(String(input || ''))
+    .digest('hex')
+    .slice(0, 10);
 }
 
 async function downloadImageToPng(url, idx) {
@@ -190,7 +214,10 @@ function copyPngToClipboard(pngPath) {
   const abs = path.resolve(pngPath);
   const script = `set the clipboard to (read (POSIX file \"${abs.replaceAll('\"', '\\\\\"')}\") as «class PNGf»)`;
   execFileSync('osascript', ['-e', script], { stdio: 'ignore' });
-  const info = String(execFileSync('osascript', ['-e', 'clipboard info'], { stdio: ['ignore', 'pipe', 'ignore'] }) || '').trim();
+  const info = String(
+    execFileSync('osascript', ['-e', 'clipboard info'], { stdio: ['ignore', 'pipe', 'ignore'] }) ||
+      ''
+  ).trim();
   return info;
 }
 
@@ -199,7 +226,7 @@ function pasteByOsKeystroke(appName) {
   const script = [
     `tell application \"${appName}\" to activate`,
     'delay 0.15',
-    'tell application \"System Events\" to keystroke \"v\" using {command down}',
+    'tell application \"System Events\" to keystroke \"v\" using {command down}'
   ].join('\n');
   execFileSync('osascript', ['-e', script], { stdio: 'ignore' });
 }
@@ -287,10 +314,17 @@ async function pasteOneImageWithRetry(page, { idx, url, pngPath }) {
 
     await page.click(selector, { timeout: 30_000 });
 
-    const waitPrepare = page.waitForResponse((res) => res.url().includes('/api/file/v1/upload/prepare'), { timeout: 120_000 });
-    const waitUpload = page.waitForResponse((res) => res.url().includes('priv-sdn.mowen.cn/'), { timeout: 120_000 });
+    const waitPrepare = page.waitForResponse(
+      (res) => res.url().includes('/api/file/v1/upload/prepare'),
+      { timeout: 120_000 }
+    );
+    const waitUpload = page.waitForResponse((res) => res.url().includes('priv-sdn.mowen.cn/'), {
+      timeout: 120_000
+    });
     const waitDraft = page
-      .waitForResponse((res) => res.url().includes('/api/note/wxa/v1/note/draft'), { timeout: 120_000 })
+      .waitForResponse((res) => res.url().includes('/api/note/wxa/v1/note/draft'), {
+        timeout: 120_000
+      })
       .catch(() => null);
 
     let pasteError = null;
@@ -313,7 +347,7 @@ async function pasteOneImageWithRetry(page, { idx, url, pngPath }) {
     } catch (e) {
       const screenshotPath = path.join(
         SCREENSHOT_DIR,
-        `paste-failed-${RUN_ID}-img${String(idx).padStart(3, '0')}-attempt${attempt}.png`,
+        `paste-failed-${RUN_ID}-img${String(idx).padStart(3, '0')}-attempt${attempt}.png`
       );
       await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {});
       appendLog({
@@ -323,7 +357,7 @@ async function pasteOneImageWithRetry(page, { idx, url, pngPath }) {
         attempt,
         url,
         error: String(e || ''),
-        screenshotPath,
+        screenshotPath
       });
       await page.waitForTimeout(1200);
       continue;
@@ -347,18 +381,21 @@ async function pasteOneImageWithRetry(page, { idx, url, pngPath }) {
       prepare: { status: prepareStatus, url: prepareRes?.url?.() },
       upload: { status: uploadStatus, url: uploadRes?.url?.() },
       draft: { status: draftStatus, url: draftRes?.url?.() },
-      after,
+      after
     });
 
-    const ok = prepareStatus === 200 && uploadStatus === 200 && after.imgCount >= before.imgCount + 1;
+    const ok =
+      prepareStatus === 200 && uploadStatus === 200 && after.imgCount >= before.imgCount + 1;
     if (ok) {
-      console.log(`[weixin-image-paste] [${idx}] ✅ 上传成功（prepare=${prepareStatus} upload=${uploadStatus}）`);
+      console.log(
+        `[weixin-image-paste] [${idx}] ✅ 上传成功（prepare=${prepareStatus} upload=${uploadStatus}）`
+      );
       return { ok: true, attempt, prepareStatus, uploadStatus, draftStatus };
     }
 
     const screenshotPath = path.join(
       SCREENSHOT_DIR,
-      `paste-bad-${RUN_ID}-img${String(idx).padStart(3, '0')}-attempt${attempt}.png`,
+      `paste-bad-${RUN_ID}-img${String(idx).padStart(3, '0')}-attempt${attempt}.png`
     );
     await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {});
     appendLog({
@@ -372,7 +409,7 @@ async function pasteOneImageWithRetry(page, { idx, url, pngPath }) {
       draftStatus,
       before,
       after,
-      screenshotPath,
+      screenshotPath
     });
 
     await page.waitForTimeout(1200);
@@ -387,7 +424,15 @@ async function pasteOneImageWithRetry(page, { idx, url, pngPath }) {
 
 async function main() {
   ensureArtifacts();
-  appendLog({ ts: nowIso(), kind: 'start', ARTICLE_URL, START_INDEX, MAX_IMAGES, RETRIES, POST_IMAGE_WAIT_MS });
+  appendLog({
+    ts: nowIso(),
+    kind: 'start',
+    ARTICLE_URL,
+    START_INDEX,
+    MAX_IMAGES,
+    RETRIES,
+    POST_IMAGE_WAIT_MS
+  });
 
   console.log('[weixin-image-paste] 拉取微信文章 HTML（移动 UA）...');
   const html = await fetchWeixinArticleHtml(ARTICLE_URL);
@@ -396,7 +441,13 @@ async function main() {
   const urls = extractImageUrlsInOrder(html);
   const slice = urls.slice(START_INDEX, MAX_IMAGES > 0 ? START_INDEX + MAX_IMAGES : undefined);
   console.log(`[weixin-image-paste] 抽取图片：总计 ${urls.length}，本次处理 ${slice.length}`);
-  appendLog({ ts: nowIso(), kind: 'image_urls', total: urls.length, picked: slice.length, urls: slice });
+  appendLog({
+    ts: nowIso(),
+    kind: 'image_urls',
+    total: urls.length,
+    picked: slice.length,
+    urls: slice
+  });
 
   if (!slice.length) throw new Error('未抽取到可用图片 URL（可能被过滤规则排除）');
 
@@ -413,14 +464,20 @@ async function main() {
       '--no-first-run',
       '--no-default-browser-check',
       '--no-sandbox',
-    ],
+      ...directChromiumArgs(['mowen'])
+    ]
   });
+  const auth = await resolveAndApplyBrowserAuth(context, ['mowen']);
+  console.log(`[channel-auth] ${JSON.stringify(summarizeChannelAuth(auth.get('mowen')))}`);
 
   try {
     const page = await context.newPage();
 
     console.log('[weixin-image-paste] 打开墨问编辑器...');
-    await page.goto('https://note.mowen.cn/editor', { waitUntil: 'domcontentloaded', timeout: 180_000 });
+    await page.goto('https://note.mowen.cn/editor', {
+      waitUntil: 'domcontentloaded',
+      timeout: 180_000
+    });
     await waitForEditorReady(page);
 
     console.log('[weixin-image-paste] 清空编辑器...');
@@ -439,7 +496,8 @@ async function main() {
       if (!clipboardInfo.includes('PNGf')) throw new Error(`剪贴板未检测到 PNGf：${clipboardInfo}`);
 
       const result = await pasteOneImageWithRetry(page, { idx, url, pngPath });
-      if (!result.ok) throw new Error(`[${idx}] 图片多次粘贴/上传失败，已中断（见 artifacts 日志与截图）`);
+      if (!result.ok)
+        throw new Error(`[${idx}] 图片多次粘贴/上传失败，已中断（见 artifacts 日志与截图）`);
 
       appendLog({ ts: nowIso(), kind: 'post_image_wait', idx, waitMs: POST_IMAGE_WAIT_MS });
       await page.waitForTimeout(POST_IMAGE_WAIT_MS);
@@ -453,7 +511,9 @@ async function main() {
     if (!KEEP_BROWSER_OPEN) {
       await context.close().catch(() => {});
     } else {
-      console.log(`[weixin-image-paste] KEEP_BROWSER_OPEN=1，保留浏览器打开（profile=${USER_DATA_DIR}）`);
+      console.log(
+        `[weixin-image-paste] KEEP_BROWSER_OPEN=1，保留浏览器打开（profile=${USER_DATA_DIR}）`
+      );
     }
   }
 }

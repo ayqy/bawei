@@ -103,28 +103,27 @@ bawei 是一款专为内容同步发布设计的浏览器插件：打开微信�
 - 十渠道真实 Chrome 串行聚焦 E2E：`npm run test:serial:e2e`
 - 本地 Markdown 转换单元测试：`npm run test:markdown`
 - V3 离线可重复 E2E（10/10 渠道）：`npm run e2e:v3`
-- 导出登录态（用于复用已登录站点的 cookie / localStorage）：`npm run e2e:export-state`
+- 登录状态只读检查（不输出 Cookie/token/账号）：`npm run auth:status`
+- 旧的 `npm run e2e:export-state` 已安全停用：Bawei 不再生成全量明文 Cookie/localStorage 文件
 - V2 真实站点 E2E（依赖你的真实登录态/可能需要人工处理验证码等）：`npm run e2e:v2`（可选：`npm run e2e:v2 <channelId>`）
-- 真实站点两步发布（先打开渠道编辑页，再执行发布；复用同一浏览器，发布时不清理渠道 Tab）：
-  - Step1：`npm run live:open`（自动 `npm run build`，启动/重启 CDP Chrome，并打开渠道编辑页；可选仅打开指定渠道：`LIVE_PUBLISH_CHANNELS=sspai,mowen npm run live:open`）
-  - Step2：`npm run live:publish -- <微信文章URL>`（复用上一步浏览器执行单次发布；可选仅跑单渠道：`LIVE_PUBLISH_CHANNELS=sspai npm run live:publish -- <微信文章URL>`）
+- 真实站点发布默认自行启动轻量运行时浏览器，并在发布前按固定顺序解析认证：官方 API/OAuth（仅限当前动作有官方适配器）→ 加密最小浏览器状态 → Keychain 一次有界密码恢复 → 人工强验证。
+  - 默认状态根目录是 `~/Library/Application Support/channel-auth/v1`，可用 `CHANNEL_AUTH_HOME` 指向任何生成同一 v1 契约的目录；Bawei 不 import、也不硬编码 `login` 仓库路径。
+  - CSDN、腾讯云开发者社区、今日头条、少数派只注入已验证的最小 Cookie/localStorage 键；其余渠道没有有效基线时拒绝全量 Cookie 降级。
+  - `npm run live:open` 仅用于需要扫码、短信、验证码或风控确认时打开本轮运行时页面；完成后可用 `LIVE_PUBLISH_REQUIRE_EXISTING_CHROME=1 npm run live:publish -- <微信文章URL>` 继续同一现场。
+  - `npm run live:publish -- <微信文章URL>` 默认不要求预先启动专用浏览器；可选仅跑单渠道：`LIVE_PUBLISH_CHANNELS=sspai npm run live:publish -- <微信文章URL>`。
   - 如需在当前已登录浏览器上做页面内面板 UI 真测，可显式关闭后台直连并切换动作：
     - 草稿：`USE_BACKGROUND_DIRECT=0 LIVE_PUBLISH_ACTION=draft LIVE_PUBLISH_REQUIRE_EXISTING_CHROME=1 LIVE_PUBLISH_PRESERVE_EXISTING_PAGES=1 npm run live:publish -- <微信文章URL>`
     - 发布：`USE_BACKGROUND_DIRECT=0 LIVE_PUBLISH_ACTION=publish LIVE_PUBLISH_REQUIRE_EXISTING_CHROME=1 LIVE_PUBLISH_PRESERVE_EXISTING_PAGES=1 npm run live:publish -- <微信文章URL>`
     - 注意：执行 UI 真测前，要先在这次 CFT 会话里打开目标微信公众号文章页；仅执行 `live:open` 打开各渠道编辑页，不会自动让微信页内容脚本注入，右上角悬浮入口也不会出现。
 - 真实站点一键发布（单次运行，失败即结束，脚本退出但浏览器保留）：`npm run publish:live`
-  - 登录审计若判定 `not_logged_in` / 风控页，会立即标记失败并终止本轮
+  - 登录审计若判定 `not_logged_in` / `blocked_external`，非交互任务会立即标记失败并终止本轮，不会占住调度器等待人工
+  - 交互终端默认允许人工处理；可显式设 `WAIT_FOR_LOGIN=0` 快速失败或 `WAIT_FOR_LOGIN=1` 等待本轮强验证
   - 发布阶段若返回 `not_logged_in`，按阻塞错误立即失败停止，不再自动重试
   - 不再自动触发“继续/重试”，每次执行只跑一轮；如需再次尝试请手动重跑命令
-  - 默认使用 `artifacts/chrome-cdp-live-profile-v8` 持久化浏览器资料，避免每轮掉登录
-  - 默认不做跨浏览器登录态引导（如需导入可显式设置 `BOOTSTRAP_PROFILE=1`）
-  - 可通过 `CHROME_PROFILE_DIR=/abs/path` 指定固定 profile 目录，跨轮次复用
-  - 想做到“登录一次，后续一直复用”，推荐固定专用 profile，并始终关闭引导覆盖：
-    - 首次登录：`CHROME_PROFILE_DIR="$HOME/.bawei-live-profile" BOOTSTRAP_PROFILE=0 npm run live:open`
-    - 在打开的专用浏览器里把各渠道登录完；之后不要删除该目录，也不要切换到别的 `CHROME_PROFILE_DIR`
-    - 后续发布：`CHROME_PROFILE_DIR="$HOME/.bawei-live-profile" BOOTSTRAP_PROFILE=0 npm run live:publish -- <微信文章URL>`
-    - 如果已经在某次真测里完成了登录，可把当前会话的专用 profile 路径记录到独立文件（例如 `artifacts/live-publish/reuse-profile.env`），后续直接 `source` 该文件再执行命令，避免手填路径时切错 profile
-  - 若确实要从你日常 Chrome 导入一次登录态，可显式设置 `BOOTSTRAP_PROFILE=1`；脚本默认只在目标 profile 未初始化时引导一次，如需强制再次覆盖可再加 `BOOTSTRAP_PROFILE_REFRESH=1`
+  - 默认运行时目录为 `artifacts/chrome-cdp-runtime-profile-v1`；它只承载扩展进程和本轮页面，不再作为权威登录状态源。可用 `CHROME_RUNTIME_DIR=/abs/path` 覆盖；旧 `CHROME_PROFILE_DIR` 仅作运行目录兼容别名。
+  - 重型 profile 复制已删除；任何 `BOOTSTRAP_PROFILE=1` 都会 fail closed，不会从日常 Chrome 复制 Cookie、密码库或本地存储。
+  - Keychain 恢复项使用 `channel-auth.recovery.<channel>` / `credential-pair-v1`。脚本只在同时存在可见账号与密码框、且页面没有必须完成的验证码/2FA/风控时提交一次；普通登录页即使同时展示二维码备选入口也不误拦截，只有二维码是唯一入口时才转人工强验证。之后仍必须通过真实编辑页登录审计。
+  - 网络代理固定为“仅 X、CWS”：Bawei 当前十个内容渠道的所有 CFT/Playwright 入口都强制 `--no-proxy-server`，不会继承系统或 shell 代理；显式复用已有 CDP 浏览器时也会检查其进程启动参数，无法证明直连就拒绝复用。CWS 官方 OAuth/API 在独立发布进程中要求代理。X 由独立 COO 项目接入，不进入 Bawei 的通用直连浏览器。
   - `LIVE_PUBLISH_FORCE_CHANNELS` 只重置旧进度文件，不能绕过正式发布台账；已公开、待审、退回或待人工验证的同内容仍禁止重投
   - 完成平台官方人工安全验证后，可用 `LIVE_PUBLISH_RESUME_WAITING_USER_CHANNELS=baijiahao` 恢复同内容原稿；该开关只解除指定渠道的 `waiting_user` 冻结，不会绕过公开、待审或退回防重，也不得用于自动重发验证码
   - 历史失败路径简表见 `docs/live-publish-failure-paths.md`
@@ -136,7 +135,9 @@ bawei 是一款专为内容同步发布设计的浏览器插件：打开微信�
   - 支持只跑指定渠道：`LIVE_PUBLISH_CHANNELS=cnblogs,woshipm node scripts/mcp-live-publish.mjs <微信文章URL>`
   - 如需强制改用本机稳定版 Chrome，可加：`PW_EXECUTABLE_PATH="/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"`
   - 适合在“已成功渠道跳过、只盯剩余失败渠道”时做定点回归
-  - 注意：源 profile 里即使存在目标站点 cookie，也不代表渠道仍处于已登录可发文状态；最终仍以真实编辑页 URL/DOM 为准
+  - 该入口同样只消费中立加密状态；运行时目录中的旧 Cookie 不能代替真实编辑页 URL/DOM 与发布权限审计
+
+Chrome Web Store 发布也优先读取 `cws.oauth2` 中立密文；过期 access token 只要仍有 refresh token 就先走官方刷新，不会误降级。GitHub Actions 等没有 macOS Keychain 的受控环境可继续使用平台 Secret 注入。既有本机 `.env` 可由独立获取端先做官方 OAuth + 扩展身份探针，再迁移并清空秘密；Bawei 本地 `.env` 只保留 Publisher ID、扩展 ID、代理等非秘密运行配置，仓库不再绑定账号专属默认值。
 
 ## 渠道补充说明
 

@@ -3,6 +3,7 @@ import path from 'node:path';
 import process from 'node:process';
 import * as ts from 'typescript';
 import { chromium } from 'playwright';
+import { directChromiumArgs } from './channel-network-policy.mjs';
 
 function abs(p) {
   return path.resolve(process.cwd(), p);
@@ -438,7 +439,7 @@ function testFeishuBlankDocumentRecoveryContract() {
 }
 
 async function main() {
-  const browser = await chromium.launch({ headless: true });
+  const browser = await chromium.launch({ headless: true, args: directChromiumArgs([]) });
   const page = await browser.newPage();
   await page.goto('about:blank');
 

@@ -4,7 +4,7 @@ import process from 'node:process';
 import http from 'node:http';
 import os from 'node:os';
 import crypto from 'node:crypto';
-import { execSync, spawn } from 'node:child_process';
+import { execFileSync, execSync, spawn } from 'node:child_process';
 import { chromium } from 'playwright';
 import { prepareLocalMarkdown, validateWoshipmVariant } from './local-markdown.mjs';
 import { getChannelConfig, getChannelIds } from './channel-config.mjs';
@@ -15,6 +15,9 @@ import {
   upsertPublicationOutcome
 } from './publication-ledger.mjs';
 import { verifyPublicationAnonymously } from './publication-verifier.mjs';
+import { resolveAndApplyBrowserAuth, summarizeChannelAuth } from './channel-auth-consumer.mjs';
+import { attemptBoundedPasswordRecovery } from './channel-auth-browser-recovery.mjs';
+import { directChromiumArgs, isExplicitDirectChromiumCommand } from './channel-network-policy.mjs';
 
 const ALL_CHANNELS = getChannelIds();
 
@@ -26,7 +29,7 @@ const LIVE_PUBLISH_RESUME_WAITING_USER_CHANNELS_RAW = String(
   process.env.LIVE_PUBLISH_RESUME_WAITING_USER_CHANNELS || ''
 ).trim();
 const LIVE_PUBLISH_REQUIRE_EXISTING_CHROME =
-  String(process.env.LIVE_PUBLISH_REQUIRE_EXISTING_CHROME || '1') === '1';
+  String(process.env.LIVE_PUBLISH_REQUIRE_EXISTING_CHROME || '0') === '1';
 const LIVE_PUBLISH_PRESERVE_EXISTING_PAGES =
   String(process.env.LIVE_PUBLISH_PRESERVE_EXISTING_PAGES || '1') === '1';
 const LIVE_PUBLISH_SKIP_EXTENSION_REFRESH =
@@ -125,21 +128,14 @@ const NO_PROGRESS_TIMEOUT_MS = ACTIVE_CHANNELS.includes('sspai')
 const LOOP_INTERVAL_MS = 3000;
 const CHROME_CDP_PORT = Number(process.env.CDP_PORT || 52607);
 const DEFAULT_ARTICLE_URL = 'https://mp.weixin.qq.com/s/3sSae4T0IeSsfM3dm5fByg';
-const STORAGE_STATE_PATH = String(
-  process.env.STORAGE_STATE_PATH || 'artifacts/live-publish/mcp-storageState.json'
-).trim();
-const KEEP_BROWSER_OPEN = String(process.env.KEEP_BROWSER_OPEN || '1') !== '0';
-const WAIT_FOR_LOGIN = String(process.env.WAIT_FOR_LOGIN || '1') !== '0';
+const KEEP_BROWSER_OPEN =
+  String(process.env.KEEP_BROWSER_OPEN || (process.stdout.isTTY ? '1' : '0')) !== '0';
+const WAIT_FOR_LOGIN =
+  String(process.env.WAIT_FOR_LOGIN || (process.stdout.isTTY ? '1' : '0')) !== '0';
 const LOGIN_WAIT_TIMEOUT_MS = Number(process.env.LOGIN_WAIT_TIMEOUT_MS || 10 * 60_000);
 const USE_BACKGROUND_DIRECT = String(process.env.USE_BACKGROUND_DIRECT || '1') !== '0';
 const BOOTSTRAP_PROFILE = String(process.env.BOOTSTRAP_PROFILE || '0') !== '0';
-const BOOTSTRAP_PROFILE_REFRESH = String(process.env.BOOTSTRAP_PROFILE_REFRESH || '0') === '1';
 const SANITIZE_PROFILE = String(process.env.SANITIZE_PROFILE || '1') !== '0';
-const PROFILE_BOOTSTRAP_MARK = '.bootstrap-from-chrome.done';
-const BOOTSTRAP_SOURCE_DIR = path.resolve(
-  process.env.SOURCE_CHROME_USER_DATA_DIR ||
-    path.join(os.homedir(), 'Library/Application Support/Google/Chrome')
-);
 
 function safeJsonStringify(value) {
   try {
@@ -685,44 +681,6 @@ function cleanChromeSingletonLocks(userDataDir) {
   }
 }
 
-function profileCopyFilter(src, sourceRoot) {
-  const rel = path.relative(sourceRoot, src);
-  if (!rel || rel === '.') return true;
-  const normalized = rel.replaceAll('\\', '/');
-
-  // 仅引导站点登录态相关数据，避免把扩展/启动偏好复制进来导致 service worker 启动失败。
-  if (normalized === 'Default') return true;
-
-  const allowPrefixes = [
-    'Default/Cookies',
-    'Default/Cookies-journal',
-    'Default/Network',
-    'Default/Local Storage',
-    'Default/IndexedDB',
-    'Default/Session Storage',
-    'Default/Storage',
-    'Default/Shared Storage',
-    'Default/WebStorage',
-    'Default/Service Worker/Database',
-    'Default/Service Worker/ScriptCache'
-  ];
-
-  if (
-    allowPrefixes.some((prefix) => normalized === prefix || normalized.startsWith(`${prefix}/`))
-  ) {
-    return true;
-  }
-
-  const allowFiles = new Set([
-    'Default/Web Data',
-    'Default/Web Data-journal',
-    'Default/Login Data',
-    'Default/Login Data-journal'
-  ]);
-
-  return allowFiles.has(normalized);
-}
-
 function sanitizeProfileStartupState(userDataDir) {
   const defaultDir = path.join(userDataDir, 'Default');
   if (!fs.existsSync(defaultDir)) return;
@@ -781,34 +739,9 @@ function sanitizeProfileStartupState(userDataDir) {
 
 function maybeBootstrapProfileFromChrome(userDataDir) {
   if (!BOOTSTRAP_PROFILE) return;
-  const markFile = path.join(userDataDir, PROFILE_BOOTSTRAP_MARK);
-  if (!fs.existsSync(BOOTSTRAP_SOURCE_DIR)) {
-    console.log(`[profile-bootstrap] 跳过：未找到源目录 ${BOOTSTRAP_SOURCE_DIR}`);
-    return;
-  }
-
-  const firstSync = !fs.existsSync(markFile);
-  if (!firstSync && !BOOTSTRAP_PROFILE_REFRESH) {
-    console.log(`[profile-bootstrap] 跳过：目标 profile 已初始化，继续复用 ${userDataDir}`);
-    return;
-  }
-  fs.mkdirSync(userDataDir, { recursive: true });
-  console.log(
-    `[profile-bootstrap] ${firstSync ? '首次引导' : '刷新'}登录态：${BOOTSTRAP_SOURCE_DIR} -> ${userDataDir}`
+  throw new Error(
+    `已停用重型 Chrome profile 登录态复制（目标=${userDataDir}）。请使用 channel-auth 加密轻量状态，或在当前运行时浏览器完成人工强验证。`
   );
-
-  fs.cpSync(BOOTSTRAP_SOURCE_DIR, userDataDir, {
-    recursive: true,
-    force: true,
-    errorOnExist: false,
-    dereference: true,
-    filter: (src) => profileCopyFilter(src, BOOTSTRAP_SOURCE_DIR)
-  });
-
-  cleanChromeSingletonLocks(userDataDir);
-  sanitizeProfileStartupState(userDataDir);
-  fs.writeFileSync(markFile, `${nowIso()}\n`, 'utf8');
-  console.log(`[profile-bootstrap] ${firstSync ? '完成' : '已刷新'}`);
 }
 
 function normalizeBadge(badge) {
@@ -1003,116 +936,14 @@ function isBlockingRuntimeResult(status) {
   );
 }
 
-function normalizeSameSite(value) {
-  const raw = String(value || '').toLowerCase();
-  if (raw === 'lax') return 'Lax';
-  if (raw === 'strict') return 'Strict';
-  if (raw === 'none' || raw === 'no_restriction') return 'None';
-  return undefined;
-}
-
-async function maybeImportStorageState(context) {
-  const statePath = STORAGE_STATE_PATH ? abs(STORAGE_STATE_PATH) : '';
-  if (!statePath || !fs.existsSync(statePath)) return;
-
-  let parsed = null;
-  try {
-    parsed = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-  } catch {
-    return;
+async function prepareChannelAuthentication(context) {
+  const resolutions = await resolveAndApplyBrowserAuth(context, ACTIVE_CHANNELS);
+  for (const channelId of ACTIVE_CHANNELS) {
+    console.log(
+      `[channel-auth] ${JSON.stringify(summarizeChannelAuth(resolutions.get(channelId)))}`
+    );
   }
-
-  const rawCookies = Array.isArray(parsed?.cookies) ? parsed.cookies : [];
-  const nowSec = Math.floor(Date.now() / 1000);
-  const cookies = rawCookies
-    .map((cookie) => {
-      const name = String(cookie?.name || '').trim();
-      const value = String(cookie?.value || '');
-      const domain = String(cookie?.domain || '').trim();
-      const pathValue = String(cookie?.path || '/').trim() || '/';
-      if (!name || !domain) return null;
-
-      const out = {
-        name,
-        value,
-        domain,
-        path: pathValue,
-        httpOnly: !!cookie?.httpOnly,
-        secure: !!cookie?.secure
-      };
-
-      const expires = Number(cookie?.expires);
-      if (Number.isFinite(expires) && expires > nowSec + 30) {
-        out.expires = expires;
-      }
-      const sameSite = normalizeSameSite(cookie?.sameSite);
-      if (sameSite) out.sameSite = sameSite;
-      return out;
-    })
-    .filter(Boolean);
-
-  if (cookies.length) {
-    try {
-      await context.addCookies(cookies);
-      console.log(`[storage-state] cookies imported: ${cookies.length}`);
-    } catch (error) {
-      console.log(
-        `[storage-state] cookies import failed: ${error instanceof Error ? error.message : String(error)}`
-      );
-    }
-  }
-
-  const allowHosts = [
-    'mp.csdn.net',
-    'cloud.tencent.com',
-    'i.cnblogs.com',
-    'www.oschina.net',
-    'www.woshipm.com',
-    'note.mowen.cn',
-    'sspai.com',
-    'baijiahao.baidu.com',
-    'mp.toutiao.com',
-    'wuxinxuexi.feishu.cn',
-    'accounts.feishu.cn'
-  ];
-
-  const origins = Array.isArray(parsed?.origins) ? parsed.origins : [];
-  for (const originItem of origins) {
-    const origin = String(originItem?.origin || '').trim();
-    if (!origin) continue;
-    let host = '';
-    try {
-      host = new URL(origin).hostname;
-    } catch {
-      continue;
-    }
-    if (!allowHosts.includes(host)) continue;
-
-    const storageEntries = Array.isArray(originItem?.localStorage) ? originItem.localStorage : [];
-    if (!storageEntries.length) continue;
-
-    const page = await context.newPage();
-    try {
-      await gotoWithRetry(page, origin);
-      await page.evaluate((entries) => {
-        for (const item of entries || []) {
-          const key = String(item?.name || '');
-          if (!key) continue;
-          const value = String(item?.value || '');
-          try {
-            localStorage.setItem(key, value);
-          } catch {
-            // ignore
-          }
-        }
-      }, storageEntries);
-    } catch {
-      // ignore
-    } finally {
-      await page.close().catch(() => {});
-    }
-  }
-  console.log('[storage-state] origin localStorage import done');
+  return resolutions;
 }
 
 function killPortListeners(port) {
@@ -1130,6 +961,42 @@ function killPortListeners(port) {
     }
   } catch {
     // ignore
+  }
+}
+
+function assertExistingChromeUsesDirectNetwork(port) {
+  let listenerPids = [];
+  try {
+    listenerPids = String(
+      execFileSync('/usr/sbin/lsof', ['-nP', '-t', `-iTCP:${port}`, '-sTCP:LISTEN'], {
+        encoding: 'utf8',
+        timeout: 5000,
+        stdio: ['ignore', 'pipe', 'ignore']
+      })
+    )
+      .trim()
+      .split(/\s+/)
+      .filter((pid) => /^\d+$/.test(pid));
+  } catch {
+    listenerPids = [];
+  }
+
+  const explicitlyDirect = listenerPids.some((pid) => {
+    try {
+      const command = execFileSync('/bin/ps', ['-ww', '-p', pid, '-o', 'command='], {
+        encoding: 'utf8',
+        timeout: 5000,
+        stdio: ['ignore', 'pipe', 'ignore']
+      });
+      return isExplicitDirectChromiumCommand(command);
+    } catch {
+      return false;
+    }
+  });
+  if (!explicitlyDirect) {
+    throw new Error(
+      `拒绝复用端口 ${port} 的浏览器：无法确认其带 --no-proxy-server；除 X/CWS 外的渠道必须直连`
+    );
   }
 }
 
@@ -1264,6 +1131,7 @@ async function ensureChromeAndGetWs(params) {
   if (existingWs) {
     const ready = await waitBaweiExtensionReady(port, 3000);
     if (requireExisting) {
+      assertExistingChromeUsesDirectNetwork(port);
       if (!ready) {
         console.log(
           `[cdp] 警告：端口 ${port} 未检测到扩展 service_worker，继续复用并在 bridge 阶段拉起`
@@ -1302,6 +1170,7 @@ async function ensureChromeAndGetWs(params) {
     '--no-first-run',
     '--no-default-browser-check',
     '--no-sandbox',
+    ...directChromiumArgs(ACTIVE_CHANNELS),
     'about:blank'
   ];
 
@@ -2222,7 +2091,7 @@ async function inspectLoginStateOnPage(page, channelId) {
   return { status: 'logged_in', reason: 'entry-page-accessible', url };
 }
 
-async function auditLoginStatus(context, audit, auditPath) {
+async function auditLoginStatus(context, audit, auditPath, authResolutions) {
   const loginPages = new Map();
 
   for (const channelId of ACTIVE_CHANNELS) {
@@ -2241,7 +2110,31 @@ async function auditLoginStatus(context, audit, auditPath) {
         await sleep(2200);
       }
 
-      const result = await inspectLoginStateOnPage(page, channelId);
+      let result = await inspectLoginStateOnPage(page, channelId);
+      const authResolution = authResolutions?.get(channelId);
+      if (
+        result.status === 'not_logged_in' &&
+        authResolution?.status === 'recovery_present' &&
+        authResolution.selected === 'keychain_password'
+      ) {
+        const recovery = await attemptBoundedPasswordRecovery(page, channelId);
+        if (recovery.attempted) {
+          result = await inspectLoginStateOnPage(page, channelId);
+          if (result.status !== 'logged_in') {
+            result = {
+              ...result,
+              status: 'blocked_external',
+              reason: recovery.checkpoint
+            };
+          }
+        } else {
+          result = {
+            ...result,
+            status: 'blocked_external',
+            reason: recovery.checkpoint
+          };
+        }
+      }
       audit.channels[channelId] = {
         status: result.status,
         reason: result.reason,
@@ -2250,6 +2143,7 @@ async function auditLoginStatus(context, audit, auditPath) {
       };
       const needManual =
         result.status === 'not_logged_in' ||
+        result.status === 'blocked_external' ||
         (result.status === 'unknown' &&
           String(result.reason || '').includes('captcha-or-risk-page'));
       if (needManual) loginPages.set(channelId, page);
@@ -2838,7 +2732,10 @@ async function ensureFeishuAnonymousSharingTrusted(page) {
 }
 
 async function verifyFeishuAnonymouslyTrusted(url, article) {
-  const anonymousBrowser = await chromium.launch({ headless: true });
+  const anonymousBrowser = await chromium.launch({
+    headless: true,
+    args: directChromiumArgs(['feishu-docs'])
+  });
   try {
     const context = await anonymousBrowser.newContext();
     const initialCookieCount = (await context.cookies()).length;
@@ -2924,7 +2821,11 @@ async function recoverFeishuWithTrustedClipboard({ context, bridge, jobId, chann
     await page.waitForFunction(
       () => {
         const texts = Array.from(document.querySelectorAll('.note-title__time'))
-          .map((node) => String(node.textContent || '').replace(/\s+/g, ' ').trim())
+          .map((node) =>
+            String(node.textContent || '')
+              .replace(/\s+/g, ' ')
+              .trim()
+          )
           .filter(Boolean);
         return (
           !texts.some((text) => text.includes('保存中')) &&
@@ -3159,7 +3060,11 @@ async function runOpenChannelEditors() {
   runBuildOrThrow();
 
   const distDir = abs('dist');
-  const userDataDir = abs(process.env.CHROME_PROFILE_DIR || 'artifacts/chrome-cdp-live-profile-v8');
+  const userDataDir = abs(
+    process.env.CHROME_RUNTIME_DIR ||
+      process.env.CHROME_PROFILE_DIR ||
+      'artifacts/chrome-cdp-runtime-profile-v1'
+  );
 
   const cdp = await ensureChromeAndGetWs({
     port: CHROME_CDP_PORT,
@@ -3176,6 +3081,7 @@ async function runOpenChannelEditors() {
     const context = browser.contexts()[0];
     if (!context) throw new Error('CDP context 不存在');
     installContextDialogAutoDismiss(context, 'open');
+    await prepareChannelAuthentication(context);
     await openChannelEditorTabs(context);
     console.log(
       '[open] 完成：请在浏览器里完成登录/验证码，然后执行：npm run live:publish -- <微信文章URL>'
@@ -3199,7 +3105,11 @@ async function runPublishOnce(articleUrl, options) {
   const progressPath = abs('artifacts/live-publish/mcp-publish-progress.json');
   const auditPath = abs('artifacts/live-publish/mcp-login-audit.json');
   const ledgerPath = abs('artifacts/live-publish/publication-ledger.json');
-  const userDataDir = abs(process.env.CHROME_PROFILE_DIR || 'artifacts/chrome-cdp-live-profile-v8');
+  const userDataDir = abs(
+    process.env.CHROME_RUNTIME_DIR ||
+      process.env.CHROME_PROFILE_DIR ||
+      'artifacts/chrome-cdp-runtime-profile-v1'
+  );
 
   if (!fs.existsSync(path.join(distDir, 'manifest.json'))) {
     throw new Error(`未找到扩展产物：${path.join(distDir, 'manifest.json')}（请先 npm run build）`);
@@ -3480,7 +3390,7 @@ async function runPublishOnce(articleUrl, options) {
       saveProgress(progressPath, progress);
     }
 
-    await maybeImportStorageState(context);
+    const authResolutions = await prepareChannelAuthentication(context);
 
     if (extensionRefreshedInExistingChrome) {
       const channelsNeedingFreshScripts = ACTIVE_CHANNELS.filter(
@@ -3490,7 +3400,7 @@ async function runPublishOnce(articleUrl, options) {
     }
 
     console.log('[main] start login audit...');
-    const loginPages = await auditLoginStatus(context, audit, auditPath);
+    const loginPages = await auditLoginStatus(context, audit, auditPath, authResolutions);
     console.log('[main] login audit done');
 
     const blockedByLogin = [];
@@ -3506,6 +3416,7 @@ async function runPublishOnce(articleUrl, options) {
       const auditReason = String(audit.channels[channelId]?.reason || '');
       if (
         auditStatus === 'not_logged_in' ||
+        auditStatus === 'blocked_external' ||
         (auditStatus === 'unknown' && auditReason.includes('captcha-or-risk-page'))
       ) {
         blockedByLogin.push(channelId);

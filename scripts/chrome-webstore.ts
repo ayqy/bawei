@@ -6,9 +6,9 @@ import { execFileSync } from 'node:child_process';
 import * as fs from 'node:fs/promises';
 import path from 'node:path';
 import { ProxyAgent, setGlobalDispatcher } from 'undici';
+import { resolveChannelAuth } from './channel-auth-consumer.mjs';
 
 const PRODUCT_NAME = 'bawei';
-const DEFAULT_PUBLISHER_ID = '301e74b1-6567-4278-a30a-74b31afa142c';
 const API_ROOT = 'https://chromewebstore.googleapis.com';
 const TOKEN_URL = 'https://oauth2.googleapis.com/token';
 const EXPECTED_PUBLISH_TYPE = 'DEFAULT_PUBLISH';
@@ -39,6 +39,13 @@ type ReleaseIdentity = {
   itemName: string;
 };
 
+type CwsOAuthCredentials = {
+  clientId: string;
+  clientSecret: string;
+  refreshToken: string;
+  source: 'channel_auth' | 'process_environment';
+};
+
 function parseCliOptions(): CliOptions {
   const args = process.argv.slice(2);
   const valueAfter = (flag: string): string | null => {
@@ -52,7 +59,7 @@ function parseCliOptions(): CliOptions {
   return {
     dryRun: args.includes('--dry-run'),
     statusOnly: args.includes('--status'),
-    evidenceDir,
+    evidenceDir
   };
 }
 
@@ -79,22 +86,57 @@ function requiredEnv(name: string): string {
   return value;
 }
 
+function resolveCwsOAuthCredentials(): CwsOAuthCredentials {
+  const neutral = resolveChannelAuth('cws', {
+    supportedOfficialKinds: ['oauth2'],
+    allowBrowserState: false,
+    allowExpiredRefreshableOAuth: true
+  });
+  if (neutral.status === 'ready' && neutral.selected === 'oauth2') {
+    if (!neutral.state) throw new Error('CWS channel-auth 状态缺少明文契约');
+    const payload = neutral.state.payload as Record<string, unknown>;
+    const tokenUrl = String(payload.token_url || '').trim();
+    const clientId = String(payload.client_id || '').trim();
+    const clientSecret = String(payload.client_secret || '').trim();
+    const refreshToken = String(payload.refresh_token || '').trim();
+    if (tokenUrl !== TOKEN_URL) throw new Error('CWS OAuth token_url 与固定官方端点不匹配');
+    if (!clientId || !clientSecret || !refreshToken) {
+      throw new Error('CWS channel-auth OAuth 刷新凭据不完整');
+    }
+    return { clientId, clientSecret, refreshToken, source: 'channel_auth' };
+  }
+
+  // GitHub Actions 等无 macOS Keychain 的环境仍可用平台 Secret 注入官方 OAuth。
+  const clientId = String(process.env.CWS_CLIENT_ID || '').trim();
+  const clientSecret = String(process.env.CWS_CLIENT_SECRET || '').trim();
+  const refreshToken = String(process.env.CWS_REFRESH_TOKEN || '').trim();
+  if (clientId && clientSecret && refreshToken) {
+    return { clientId, clientSecret, refreshToken, source: 'process_environment' };
+  }
+  throw new Error(
+    'CWS 官方 OAuth 不可用：请提供 channel-auth cws.oauth2 状态，或在受控 CI 中注入 CWS OAuth Secret'
+  );
+}
+
 function resolveIdentity(): ReleaseIdentity {
-  const publisherId = String(process.env.CWS_PUBLISHER_ID || DEFAULT_PUBLISHER_ID).trim();
+  const publisherId = requiredEnv('CWS_PUBLISHER_ID');
   const itemId = requiredEnv('CWS_EXTENSION_ID');
   if (!/^[0-9a-f-]{36}$/i.test(publisherId)) throw new Error('CWS_PUBLISHER_ID 格式非法');
   if (!/^[a-p]{32}$/.test(itemId)) throw new Error('CWS_EXTENSION_ID 格式非法');
   return {
     publisherId,
     itemId,
-    itemName: `publishers/${publisherId}/items/${itemId}`,
+    itemName: `publishers/${publisherId}/items/${itemId}`
   };
 }
 
 function redact(value: string): string {
   return value
     .replace(/Bearer\s+[A-Za-z0-9._~+/-]+/gi, 'Bearer [REDACTED]')
-    .replace(/(access_token|refresh_token|client_secret|authorization)(["'=:\s]+)[^\s,"'}]+/gi, '$1$2[REDACTED]');
+    .replace(
+      /(access_token|refresh_token|client_secret|authorization)(["'=:\s]+)[^\s,"'}]+/gi,
+      '$1$2[REDACTED]'
+    );
 }
 
 async function responsePayload(response: Response): Promise<Record<string, unknown>> {
@@ -110,29 +152,46 @@ async function responsePayload(response: Response): Promise<Record<string, unkno
   }
 }
 
+async function safeFetch(url: string, init?: RequestInit): Promise<Response> {
+  try {
+    return await fetch(url, init);
+  } catch (error: unknown) {
+    const cause =
+      error && typeof error === 'object' && 'cause' in error
+        ? (error.cause as { code?: unknown } | undefined)
+        : undefined;
+    const code = typeof cause?.code === 'string' ? cause.code : 'network_error';
+    throw new Error(`CWS 网络请求失败：${code}`);
+  }
+}
+
 async function requestJson(url: string, init: RequestInit): Promise<Record<string, unknown>> {
-  const response = await fetch(url, init);
+  const response = await safeFetch(url, init);
   const payload = await responsePayload(response);
   if (!response.ok) {
-    const apiError = payload.error && typeof payload.error === 'object' ? (payload.error as Record<string, unknown>) : {};
+    const apiError =
+      payload.error && typeof payload.error === 'object'
+        ? (payload.error as Record<string, unknown>)
+        : {};
     const status = typeof apiError.status === 'string' ? apiError.status : 'unknown';
-    const message = typeof apiError.message === 'string' ? redact(apiError.message) : 'request failed';
+    const message =
+      typeof apiError.message === 'string' ? redact(apiError.message) : 'request failed';
     throw new Error(`CWS API HTTP ${response.status} ${status}: ${message}`);
   }
   return payload;
 }
 
-async function fetchAccessToken(): Promise<string> {
+async function fetchAccessToken(credentials: CwsOAuthCredentials): Promise<string> {
   const body = new URLSearchParams({
-    client_id: requiredEnv('CWS_CLIENT_ID'),
-    client_secret: requiredEnv('CWS_CLIENT_SECRET'),
-    refresh_token: requiredEnv('CWS_REFRESH_TOKEN'),
-    grant_type: 'refresh_token',
+    client_id: credentials.clientId,
+    client_secret: credentials.clientSecret,
+    refresh_token: credentials.refreshToken,
+    grant_type: 'refresh_token'
   });
-  const response = await fetch(TOKEN_URL, {
+  const response = await safeFetch(TOKEN_URL, {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
-    body,
+    body
   });
   const payload = await responsePayload(response);
   const token = typeof payload.access_token === 'string' ? payload.access_token : '';
@@ -159,13 +218,16 @@ export function buildPublishRequest(): {
   return {
     publishType: EXPECTED_PUBLISH_TYPE,
     skipReview: false,
-    blockOnWarnings: true,
+    blockOnWarnings: true
   };
 }
 
-export async function fetchStatus(identity: ReleaseIdentity, accessToken: string): Promise<CwsStatus> {
+export async function fetchStatus(
+  identity: ReleaseIdentity,
+  accessToken: string
+): Promise<CwsStatus> {
   const payload = (await requestJson(v2ActionUrl(identity, 'fetchStatus'), {
-    headers: { authorization: `Bearer ${accessToken}` },
+    headers: { authorization: `Bearer ${accessToken}` }
   })) as CwsStatus;
   if (payload.itemId !== identity.itemId || payload.name !== identity.itemName) {
     throw new Error('CWS fetchStatus 返回的发布者或扩展身份不匹配');
@@ -183,20 +245,23 @@ export async function upload(
     method: 'POST',
     headers: {
       authorization: `Bearer ${accessToken}`,
-      'content-type': 'application/octet-stream',
+      'content-type': 'application/octet-stream'
     },
-    body: bytes as unknown as BodyInit,
+    body: bytes as unknown as BodyInit
   });
 }
 
-export async function publish(identity: ReleaseIdentity, accessToken: string): Promise<Record<string, unknown>> {
+export async function publish(
+  identity: ReleaseIdentity,
+  accessToken: string
+): Promise<Record<string, unknown>> {
   const payload = await requestJson(v2ActionUrl(identity, 'publish'), {
     method: 'POST',
     headers: {
       authorization: `Bearer ${accessToken}`,
-      'content-type': 'application/json',
+      'content-type': 'application/json'
     },
-    body: JSON.stringify(buildPublishRequest()),
+    body: JSON.stringify(buildPublishRequest())
   });
   if (payload.itemId !== identity.itemId || payload.name !== identity.itemName) {
     throw new Error('CWS publish 返回的发布者或扩展身份不匹配');
@@ -212,21 +277,23 @@ function revisionVersions(revision: RevisionStatus | undefined): string[] {
 
 function sanitizeStatus(status: CwsStatus): Record<string, unknown> {
   return {
-    itemId: status.itemId || null,
-    name: status.name || null,
+    identityVerified: Boolean(status.itemId && status.name),
     lastAsyncUploadState: status.lastAsyncUploadState || null,
     submitted: {
       state: status.submittedItemRevisionStatus?.state || null,
-      versions: revisionVersions(status.submittedItemRevisionStatus),
+      versions: revisionVersions(status.submittedItemRevisionStatus)
     },
     published: {
       state: status.publishedItemRevisionStatus?.state || null,
-      versions: revisionVersions(status.publishedItemRevisionStatus),
-    },
+      versions: revisionVersions(status.publishedItemRevisionStatus)
+    }
   };
 }
 
-function targetTerminalState(status: CwsStatus, version: string): 'public' | 'pending_review' | null {
+function targetTerminalState(
+  status: CwsStatus,
+  version: string
+): 'public' | 'pending_review' | null {
   if (
     status.publishedItemRevisionStatus?.state === 'PUBLISHED' &&
     revisionVersions(status.publishedItemRevisionStatus).includes(version)
@@ -234,7 +301,9 @@ function targetTerminalState(status: CwsStatus, version: string): 'public' | 'pe
     return 'public';
   }
   if (
-    ['PENDING_REVIEW', 'SUBMITTED'].includes(String(status.submittedItemRevisionStatus?.state || '')) &&
+    ['PENDING_REVIEW', 'SUBMITTED'].includes(
+      String(status.submittedItemRevisionStatus?.state || '')
+    ) &&
     revisionVersions(status.submittedItemRevisionStatus).includes(version)
   ) {
     return 'pending_review';
@@ -279,7 +348,9 @@ async function pollSubmitted(
 }
 
 async function sha256(filePath: string): Promise<string> {
-  return createHash('sha256').update(await fs.readFile(filePath)).digest('hex');
+  return createHash('sha256')
+    .update(await fs.readFile(filePath))
+    .digest('hex');
 }
 
 async function readJson(filePath: string): Promise<Record<string, unknown>> {
@@ -294,7 +365,9 @@ async function preparePackage(): Promise<{ version: string; zipFilePath: string;
   const packageJson = await readJson(packagePath);
   const version = String(manifest.version || '');
   if (!version || packageJson.version !== version) {
-    throw new Error(`版本不一致：manifest=${version || 'missing'} package=${String(packageJson.version || 'missing')}`);
+    throw new Error(
+      `版本不一致：manifest=${version || 'missing'} package=${String(packageJson.version || 'missing')}`
+    );
   }
 
   console.log('[CWS] 构建生产扩展');
@@ -308,7 +381,7 @@ async function preparePackage(): Promise<{ version: string; zipFilePath: string;
   await fs.rm(zipFilePath, { force: true });
   execFileSync('zip', ['-q', '-r', zipFilePath, '.'], {
     cwd: path.join(root, 'dist'),
-    stdio: 'inherit',
+    stdio: 'inherit'
   });
   return { version, zipFilePath, sha256: await sha256(zipFilePath) };
 }
@@ -330,19 +403,25 @@ async function writeEvidence(
   payload: Record<string, unknown>
 ): Promise<string> {
   const evidenceDir = path.resolve(options.evidenceDir || path.join('artifacts', 'cws', version));
-  await fs.mkdir(evidenceDir, { recursive: true });
+  await fs.mkdir(evidenceDir, { recursive: true, mode: 0o700 });
+  await fs.chmod(evidenceDir, 0o700);
   const output = path.join(evidenceDir, filename);
-  await fs.writeFile(output, `${JSON.stringify(payload, null, 2)}\n`, 'utf8');
+  await fs.writeFile(output, `${JSON.stringify(payload, null, 2)}\n`, {
+    encoding: 'utf8',
+    mode: 0o600
+  });
+  await fs.chmod(output, 0o600);
   return output;
 }
 
 async function main(): Promise<void> {
   const options = parseCliOptions();
   const identity = resolveIdentity();
+  const oauthCredentials = resolveCwsOAuthCredentials();
 
   if (options.statusOnly) {
     setupProxy();
-    const accessToken = await fetchAccessToken();
+    const accessToken = await fetchAccessToken(oauthCredentials);
     const status = await fetchStatus(identity, accessToken);
     const version = String((await readJson(path.resolve('manifest.json'))).version || 'unknown');
     const evidence = {
@@ -353,7 +432,7 @@ async function main(): Promise<void> {
       version,
       status: sanitizeStatus(status),
       targetTerminalState: targetTerminalState(status, version),
-      checkedAt: new Date().toISOString(),
+      checkedAt: new Date().toISOString()
     };
     const output = await writeEvidence(options, version, 'cws-status.json', evidence);
     console.log(JSON.stringify({ ...evidence, evidence: output }, null, 2));
@@ -366,9 +445,9 @@ async function main(): Promise<void> {
     version: prepared.version,
     package: {
       path: path.basename(prepared.zipFilePath),
-      sha256: prepared.sha256,
+      sha256: prepared.sha256
     },
-    publishRequest: buildPublishRequest(),
+    publishRequest: buildPublishRequest()
   };
 
   if (options.dryRun) {
@@ -379,11 +458,10 @@ async function main(): Promise<void> {
       ...common,
       credentials: {
         extensionId: Boolean(process.env.CWS_EXTENSION_ID),
-        clientId: Boolean(process.env.CWS_CLIENT_ID),
-        clientSecret: Boolean(process.env.CWS_CLIENT_SECRET),
-        refreshToken: Boolean(process.env.CWS_REFRESH_TOKEN),
+        oauthReady: true,
+        source: oauthCredentials.source
       },
-      checkedAt: new Date().toISOString(),
+      checkedAt: new Date().toISOString()
     };
     const output = await writeEvidence(options, prepared.version, 'cws-dry-run.json', evidence);
     console.log(JSON.stringify({ ...evidence, evidence: output }, null, 2));
@@ -392,7 +470,7 @@ async function main(): Promise<void> {
 
   assertSubmitPhase(prepared.version);
   setupProxy();
-  const accessToken = await fetchAccessToken();
+  const accessToken = await fetchAccessToken(oauthCredentials);
   const before = await fetchStatus(identity, accessToken);
   const existingTerminal = targetTerminalState(before, prepared.version);
   if (existingTerminal) {
@@ -406,7 +484,7 @@ async function main(): Promise<void> {
       after: sanitizeStatus(before),
       terminalState: existingTerminal,
       automaticPublishAfterApproval: true,
-      completedAt: new Date().toISOString(),
+      completedAt: new Date().toISOString()
     };
     const output = await writeEvidence(options, prepared.version, 'cws-submit.json', evidence);
     console.log(JSON.stringify({ ...evidence, evidence: output }, null, 2));
@@ -433,20 +511,20 @@ async function main(): Promise<void> {
     before: sanitizeStatus(before),
     upload: {
       state: typeof uploadResponse.uploadState === 'string' ? uploadResponse.uploadState : null,
-      itemIdMatches: uploadResponse.itemId === identity.itemId,
+      itemIdMatches: uploadResponse.itemId === identity.itemId
     },
     afterUpload: sanitizeStatus(afterUpload),
     submission: {
       state: typeof publishResponse.state === 'string' ? publishResponse.state : null,
       itemIdMatches: publishResponse.itemId === identity.itemId,
       publishType: EXPECTED_PUBLISH_TYPE,
-      skipReview: false,
+      skipReview: false
     },
     after: sanitizeStatus(after),
     terminalState,
     automaticPublishAfterApproval: true,
     publicReleaseTriggered: terminalState === 'public',
-    completedAt: new Date().toISOString(),
+    completedAt: new Date().toISOString()
   };
   const output = await writeEvidence(options, prepared.version, 'cws-submit.json', evidence);
   console.log(JSON.stringify({ ...evidence, evidence: output }, null, 2));

@@ -1,7 +1,10 @@
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import process from 'node:process';
 import { chromium } from 'playwright';
+import { resolveAndApplyBrowserAuth, summarizeChannelAuth } from './channel-auth-consumer.mjs';
+import { directChromiumArgs } from './channel-network-policy.mjs';
 
 function sleep(ms) {
   return new Promise((r) => setTimeout(r, ms));
@@ -25,35 +28,6 @@ async function gotoWithRetry(page, url) {
     }
   }
   throw lastErr || new Error(`goto failed: ${url}`);
-}
-
-async function applyStorageState(context, state) {
-  if (state?.cookies?.length) {
-    await context.addCookies(state.cookies);
-  }
-
-  const origins = Array.isArray(state?.origins)
-    ? state.origins.filter((o) => o?.origin && Array.isArray(o.localStorage) && o.localStorage.length > 0)
-    : [];
-
-  // 用 addInitScript 在首次进入各站点时写入 localStorage，避免启动时先打开一堆 origin 页面
-  if (origins.length) {
-    await context.addInitScript((allOrigins) => {
-      try {
-        const hit = allOrigins.find((o) => o.origin === location.origin);
-        if (!hit) return;
-        for (const it of hit.localStorage || []) {
-          try {
-            localStorage.setItem(it.name, it.value);
-          } catch {
-            // ignore
-          }
-        }
-      } catch {
-        // ignore
-      }
-    }, origins);
-  }
 }
 
 async function getPanelStatus(page) {
@@ -142,7 +116,7 @@ const ALL_CHANNELS = [
   'sspai',
   'baijiahao',
   'toutiao',
-  'feishu-docs',
+  'feishu-docs'
 ];
 
 // 已验收通过：后续不要重复跑（通过一个就把它加到这里）
@@ -157,7 +131,7 @@ const PASSED_CHANNELS = new Set([
   'woshipm',
   'feishu-docs',
   'toutiao',
-  'baijiahao',
+  'baijiahao'
 ]);
 
 // 暂缓验证（目前无）
@@ -166,20 +140,13 @@ const DEFERRED_CHANNELS = new Set(['sspai']);
 
 async function main() {
   const distDir = abs('dist');
-  const statePath = abs('tmp/mcp-storageState.json');
-  const profileDir = abs('tmp/pw-profile-v2-e2e');
 
   if (!fs.existsSync(path.join(distDir, 'manifest.json'))) {
     throw new Error(`未找到扩展产物：${path.join(distDir, 'manifest.json')}`);
   }
-  if (!fs.existsSync(statePath)) {
-    throw new Error(`未找到登录态文件：${statePath}`);
-  }
-
-  const state = JSON.parse(fs.readFileSync(statePath, 'utf8'));
-
   const forceChannelArg = String(process.argv[2] || '').trim();
-  const forceChannel = forceChannelArg && ALL_CHANNELS.includes(forceChannelArg) ? forceChannelArg : '';
+  const forceChannel =
+    forceChannelArg && ALL_CHANNELS.includes(forceChannelArg) ? forceChannelArg : '';
 
   if (forceChannelArg && !forceChannel) {
     throw new Error(`未知渠道参数：${forceChannelArg}（可选：${ALL_CHANNELS.join(', ')}）`);
@@ -214,20 +181,27 @@ async function main() {
     console.log('[强制单渠道运行] 将忽略 PASSED/DEFERRED，仅测试：', forceChannel);
   }
 
-  // Reuse profile directory to keep site sessions (e.g. WeChat captcha cookies) across retries.
-  // This dramatically reduces the chance of being stuck on WeChat captcha page on every run.
-
-  const context = await chromium.launchPersistentContext(profileDir, {
+  // 运行时目录只承载本轮扩展进程；认证源始终是中立密文或本轮人工强验证。
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'bawei-v2-runtime-'));
+  const cleanupRuntime = () => fs.rmSync(runtimeDir, { recursive: true, force: true });
+  process.once('exit', cleanupRuntime);
+  const context = await chromium.launchPersistentContext(runtimeDir, {
     headless: false,
     args: [
       `--disable-extensions-except=${distDir}`,
       `--load-extension=${distDir}`,
       '--no-first-run',
       '--no-default-browser-check',
-    ],
+      ...directChromiumArgs(channelsToRun)
+    ]
   });
 
-  await applyStorageState(context, state);
+  const authResolutions = await resolveAndApplyBrowserAuth(context, channelsToRun);
+  for (const channel of channelsToRun) {
+    console.log(
+      `[channel-auth] ${JSON.stringify(summarizeChannelAuth(authResolutions.get(channel)))}`
+    );
+  }
 
   const wechatUrl = 'https://mp.weixin.qq.com/s/3F0lbpS9PJYMY7V0QjI0YA';
 
@@ -248,8 +222,16 @@ async function main() {
             const body = req.postData() || '';
             const params = new URLSearchParams(body);
             const title =
-              params.get('title') || params.get('article_title') || params.get('articleTitle') || params.get('pgc_title') || '';
-            const content = params.get('content') || params.get('article_content') || params.get('articleContent') || '';
+              params.get('title') ||
+              params.get('article_title') ||
+              params.get('articleTitle') ||
+              params.get('pgc_title') ||
+              '';
+            const content =
+              params.get('content') ||
+              params.get('article_content') ||
+              params.get('articleContent') ||
+              '';
             const coverType = params.get('cover_type') || params.get('coverType') || '';
             const coverUri = params.get('cover_uri') || params.get('coverUri') || '';
             const pgcFeedCovers = params.get('pgc_feed_covers') || '';
@@ -295,11 +277,18 @@ async function main() {
                 pgcFeedCoversLen: pgcFeedCovers.length,
                 pgcFeedCoversSnippet: pgcFeedCovers.slice(0, 120),
                 draftFormDataLen: draftFormData.length,
-                draftFormKeys: draftObj && typeof draftObj === 'object' ? Object.keys(draftObj).slice(0, 30) : [],
+                draftFormKeys:
+                  draftObj && typeof draftObj === 'object'
+                    ? Object.keys(draftObj).slice(0, 30)
+                    : [],
                 draftFormSnippet: draftFormData.slice(0, 160),
-                extraKeys: extra && typeof extra === 'object' ? Object.keys(extra).slice(0, 30) : [],
-                extraSnippet: extra && typeof extra === 'object' ? JSON.stringify(extra).slice(0, 180) : extraRaw.slice(0, 180),
-                keys: Array.from(params.keys()).slice(0, 30),
+                extraKeys:
+                  extra && typeof extra === 'object' ? Object.keys(extra).slice(0, 30) : [],
+                extraSnippet:
+                  extra && typeof extra === 'object'
+                    ? JSON.stringify(extra).slice(0, 180)
+                    : extraRaw.slice(0, 180),
+                keys: Array.from(params.keys()).slice(0, 30)
               })
             );
           } catch {
@@ -307,7 +296,14 @@ async function main() {
           }
         }
         if (u.includes('mp.weixin.qq.com')) return;
-        if (u.includes('publish') || u.includes('submit') || u.includes('commit') || u.includes('save') || u.includes('draft') || u.includes('article')) {
+        if (
+          u.includes('publish') ||
+          u.includes('submit') ||
+          u.includes('commit') ||
+          u.includes('save') ||
+          u.includes('draft') ||
+          u.includes('article')
+        ) {
           console.log('[post][req]', req.method(), u);
         }
       }
@@ -330,19 +326,39 @@ async function main() {
           try {
             const coverState = await p
               .evaluate(() => {
-                const checked = document.querySelector('.article-cover-radio-group input[type="radio"]:checked')?.getAttribute('value') || '';
-                const checkedInner = document.querySelectorAll('.article-cover-radio-group .byte-radio-inner.checked').length;
-                const checkedInputs = Array.from(document.querySelectorAll('.article-cover-radio-group input[type="radio"]'))
+                const checked =
+                  document
+                    .querySelector('.article-cover-radio-group input[type="radio"]:checked')
+                    ?.getAttribute('value') || '';
+                const checkedInner = document.querySelectorAll(
+                  '.article-cover-radio-group .byte-radio-inner.checked'
+                ).length;
+                const checkedInputs = Array.from(
+                  document.querySelectorAll('.article-cover-radio-group input[type="radio"]')
+                )
                   .filter((i) => (i instanceof HTMLInputElement ? i.checked : false))
                   .map((i) => i.getAttribute('value') || '');
                 const checkedLabels = Array.from(document.querySelectorAll('label'))
-                  .filter((l) => (l.querySelector('input') instanceof HTMLInputElement ? l.querySelector('input').checked : false))
-                  .map((l) => String(l.textContent || '').replace(/\s+/g, ' ').trim())
+                  .filter((l) =>
+                    l.querySelector('input') instanceof HTMLInputElement
+                      ? l.querySelector('input').checked
+                      : false
+                  )
+                  .map((l) =>
+                    String(l.textContent || '')
+                      .replace(/\s+/g, ' ')
+                      .trim()
+                  )
                   .filter(Boolean)
                   .slice(0, 12);
                 return { checked, checkedInner, checkedInputs, checkedLabels };
               })
-              .catch(() => ({ checked: '', checkedInner: 0, checkedInputs: [], checkedLabels: [] }));
+              .catch(() => ({
+                checked: '',
+                checkedInner: 0,
+                checkedInputs: [],
+                checkedLabels: []
+              }));
             const data = await res.json();
             console.log(
               '[toutiao][publish][resp]',
@@ -360,12 +376,26 @@ async function main() {
           }
         }
         if (u.includes('mp.weixin.qq.com')) return;
-        if (u.includes('publish') || u.includes('submit') || u.includes('commit') || u.includes('save') || u.includes('draft') || u.includes('article')) {
+        if (
+          u.includes('publish') ||
+          u.includes('submit') ||
+          u.includes('commit') ||
+          u.includes('save') ||
+          u.includes('draft') ||
+          u.includes('article')
+        ) {
           // Try to print response json for publish endpoints when possible.
           if (u.includes('mp.toutiao.com/mp/agw/article/publish')) {
             try {
               const data = await res.json();
-              console.log('[post][resp]', res.request().method(), res.status(), u, 'json:', JSON.stringify(data).slice(0, 500));
+              console.log(
+                '[post][resp]',
+                res.request().method(),
+                res.status(),
+                u,
+                'json:',
+                JSON.stringify(data).slice(0, 500)
+              );
             } catch {
               console.log('[post][resp]', res.request().method(), res.status(), u);
             }
@@ -385,7 +415,14 @@ async function main() {
             const ct = res.headers()['content-type'] || '';
             if (ct.includes('application/json')) {
               const data = await res.json();
-              console.log('[baijiahao][resp]', method, status, u, 'json:', JSON.stringify(data).slice(0, 500));
+              console.log(
+                '[baijiahao][resp]',
+                method,
+                status,
+                u,
+                'json:',
+                JSON.stringify(data).slice(0, 500)
+              );
             } else {
               console.log('[baijiahao][resp]', method, status, u);
             }
@@ -398,7 +435,14 @@ async function main() {
       if (u.includes('article?action=CreateArticle')) {
         try {
           const data = await res.json();
-          console.log('[resp]', res.status(), u, 'json:', data?.code, data?.data?.articleId || data?.data?.id || '');
+          console.log(
+            '[resp]',
+            res.status(),
+            u,
+            'json:',
+            data?.code,
+            data?.data?.articleId || data?.data?.id || ''
+          );
         } catch {
           console.log('[resp]', res.status(), u);
         }
@@ -432,7 +476,9 @@ async function main() {
     console.log('[2/4] 选择 publish 并启动任务…');
     await startOneChannel(page, channelId);
 
-    console.log('[3/4] 等待渠道状态收敛（最多 30 分钟；如出现“等待处理”，请按面板提示手动处理后点“继续”）…');
+    console.log(
+      '[3/4] 等待渠道状态收敛（最多 30 分钟；如出现“等待处理”，请按面板提示手动处理后点“继续”）…'
+    );
     const deadline = Date.now() + 30 * 60_000;
     let finalRow = null;
     let waitingHinted = false;
@@ -444,7 +490,9 @@ async function main() {
         console.log('面板状态：', `${row.name}:${row.badge}${row.stage ? `(${row.stage})` : ''}`);
         if (row.badge === '等待处理' && !waitingHinted) {
           waitingHinted = true;
-          console.log('[等待处理] 请按面板建议在当前页面完成手动步骤（如实名认证/风控/补齐必填项），然后点击面板“继续”。');
+          console.log(
+            '[等待处理] 请按面板建议在当前页面完成手动步骤（如实名认证/风控/补齐必填项），然后点击面板“继续”。'
+          );
         }
         // 等待处理不算终态：让用户完成操作后继续轮询，直到成功或失败
         if (['成功', '失败'].includes(row.badge)) break;
@@ -473,6 +521,8 @@ async function main() {
 
   console.log('\n全部轮次通过：所有渠道（含 woshipm）');
   await context.close();
+  cleanupRuntime();
+  process.removeListener('exit', cleanupRuntime);
 }
 
 main().catch((e) => {

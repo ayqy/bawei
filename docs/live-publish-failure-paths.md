@@ -6,6 +6,8 @@
 
 记录真实站点发布过程中已经验证过的失败路径、低收益路径和稳定成功经验，避免后续在同一类问题上重复消耗。
 
+> 2026-08-23 登录架构更新：本文较早日期中“长期复用专用 profile / 克隆日常 Chrome”的操作建议只保留为历史取证，不再是当前方案。现行实现固定使用“官方 API/OAuth → 中立 AES-256-GCM 最小状态 → Keychain 一次有界恢复 → 人工强验证”，运行时 profile 不再是权威认证源，`BOOTSTRAP_PROFILE=1` 会直接拒绝执行。
+
 ## 2026-08-22 飞书与 OSCHINA 验收恢复
 
 - 防重边界：已经公开、提交审核、明确退回或等待人工验证的同内容保持冻结；修验收逻辑时不得借机再次投稿。
@@ -148,21 +150,21 @@
 - 2026-03-29 本轮把用户真实 `Default` profile 按白名单克隆到独立 CFT 会话后重新审计：`cnblogs` / `baijiahao` / `feishu-docs` 虽然在源 profile 中能查到目标站点相关 cookie，但实际仍分别落到 `signin/login` 页面。
 - 结论是：不要把“cookie 文件里有域名记录”当成登录成功；是否可发文必须以真实编辑页 URL/DOM 为准。
 
-13. **想要“登录一次长期复用”，必须登录到专用发布 profile 本身**
+13. **长期复用必须依赖中立轻量状态，不再依赖专用发布 profile**
 
-- 最稳做法不是把登录态寄希望于日常 Chrome 或 profile 克隆，而是固定一个专用 `CHROME_PROFILE_DIR`，在这份 profile 打开的发布浏览器里完成一次登录，之后所有 `live:open / live:publish` 都复用这同一目录。
-- 脚本现已改为默认 `BOOTSTRAP_PROFILE=0`；即默认不再覆盖目标 profile。只有显式设置 `BOOTSTRAP_PROFILE=1` 时，才会从日常 Chrome 导入一次登录态；如确需再次覆盖，再额外设置 `BOOTSTRAP_PROFILE_REFRESH=1`。
+- CSDN、腾讯云开发者社区、今日头条和少数派只消费经过真实验证的最小 Cookie/localStorage 白名单；其余渠道在没有官方凭据时进入 Keychain 或人工强验证，不允许“全 Cookie 保险导入”。
+- `CHROME_RUNTIME_DIR` 只保存扩展运行环境和本轮页面；旧 `CHROME_PROFILE_DIR` 是兼容别名。`BOOTSTRAP_PROFILE=1` 已改为 fail closed，不再复制日常 Chrome 的 Cookie、密码库、IndexedDB 或 Service Worker 数据。
 
 14. **`LIVE_PUBLISH_REQUIRE_EXISTING_CHROME=1` 必须只复用，不得擅自重启**
 
 - 2026-03-30 已修正并验证：当用户要求复用当前已登录浏览器会话时，`connectOverCDP` 失败会直接报错，不再偷偷重启浏览器。
 - 这条约束很关键；否则即使 profile 没被覆盖，也会打断用户现场和扩展 worker 状态。
 - 2026-04-01 再次踩坑确认：**只要在真实已登录现场误跑了不带 `LIVE_PUBLISH_REQUIRE_EXISTING_CHROME=1` 的 `open/publish`，脚本就可能进入 `forceRestart` 分支，直接替换掉用户当前会话。**
-- 同理，**真测期间不得临时切换到新的 `CHROME_PROFILE_DIR`**；新 profile 天然不带当前登录态，会把“登录丢失”误判成“渠道逻辑失效”。
+- 同理，人工强验证后的本轮真测不得切换 `CDP_PORT` 或 `CHROME_RUNTIME_DIR`；这只是在同一强验证 checkpoint 内保留现场，不代表运行时目录重新成为长期认证源。
 - 执行纪律必须明确为：
   - 真测/回归前，先确认当前 `CDP_PORT` 对应的就是用户正在使用的那份已登录浏览器；
   - 真测期间只允许 `LIVE_PUBLISH_REQUIRE_EXISTING_CHROME=1` 的复用式命令；
-  - 若目的是“打开所有渠道让用户手动登录”，也必须在**同一份长期复用的专用 profile**里操作，后续发布继续复用这同一实例，不能另起一份新 profile。
+  - 若目的是打开渠道完成人工强验证，后续发布必须继续复用同一实例；下一轮仍应优先由中立状态重新取得认证。
 
 15. **正文 fidelity 要纳入所有剩余渠道的固定回归项**
 
@@ -174,9 +176,9 @@
 16. **CFT 的 `live:open` 只打开渠道页，不会自动唤醒微信页面板**
 
 - 2026-03-30 本轮已确认：即使 CFT 进程命令行已经带上 `--load-extension=dist`，如果这次会话里只打开了各渠道编辑页、没有在同一会话里真正进入目标微信公众号文章页，那么 `chrome-extension://.../src/background.js` 的 worker 可能不会出现在 CDP target 列表里，用户也会误以为“测试版浏览器没加载插件”。
-- 修复方式不是覆盖 profile，而是**复用同一份已登录 profile 重启 CFT**，然后在该会话里显式打开/刷新目标微信文章页，让 `wechat-content` 真实注入一次。
+- 修复方式不是覆盖 profile，而是在**当前运行时实例**中显式打开/刷新目标微信文章页，让 `wechat-content` 真实注入一次。
 - 因此做插件 UI 真测时，检查顺序应改成：
-  1.  用固定 `CHROME_PROFILE_DIR` 启动/重启 CFT；
+  1.  用当前 `CHROME_RUNTIME_DIR` 启动 CFT；
   2.  打开目标微信文章页；
   3.  再确认右上角悬浮入口与 `chrome-extension://.../src/background.js` worker 是否出现；
   4.  之后才进入草稿 / 发布真测。

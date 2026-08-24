@@ -6,6 +6,8 @@ import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import { chromium } from 'playwright';
 import sharp from 'sharp';
+import { resolveAndApplyBrowserAuth, summarizeChannelAuth } from './channel-auth-consumer.mjs';
+import { directChromiumArgs } from './channel-network-policy.mjs';
 
 const RUN_ID = new Date().toISOString().replaceAll(':', '-').replaceAll('.', '-');
 const ARTIFACTS_DIR = path.resolve(process.cwd(), 'artifacts/mowen-weixin-publish');
@@ -14,14 +16,27 @@ const IMAGE_DIR = path.join(ARTIFACTS_DIR, 'images');
 const SCREENSHOT_DIR = path.join(ARTIFACTS_DIR, 'screenshots');
 const EXTRACT_PATH = path.join(ARTIFACTS_DIR, `extract-${RUN_ID}.json`);
 
-const USER_DATA_DIR = path.resolve(process.cwd(), process.env.CHROME_PROFILE_DIR || 'artifacts/chrome-cdp-live-profile-v8');
-const KEEP_BROWSER_OPEN = String(process.env.KEEP_BROWSER_OPEN || '1') !== '0';
+const USER_DATA_DIR = path.resolve(
+  process.cwd(),
+  process.env.CHROME_RUNTIME_DIR ||
+    process.env.CHROME_PROFILE_DIR ||
+    'artifacts/chrome-cdp-runtime-profile-v1'
+);
+const KEEP_BROWSER_OPEN =
+  String(process.env.KEEP_BROWSER_OPEN || (process.stdout.isTTY ? '1' : '0')) !== '0';
 const CFT_BINARY = String(process.env.CFT_BINARY || '').trim() || null;
 
 const ARTICLE_URL =
-  String(process.env.ARTICLE_URL || '').trim() || 'https://mp.weixin.qq.com/s/3sSae4T0IeSsfM3dm5fByg';
-const POST_IMAGE_WAIT_MS = Math.max(0, Number.parseInt(String(process.env.POST_IMAGE_WAIT_MS || '5000'), 10) || 5000);
-const IMAGE_RETRIES = Math.max(1, Number.parseInt(String(process.env.IMAGE_RETRIES || '3'), 10) || 3);
+  String(process.env.ARTICLE_URL || '').trim() ||
+  'https://mp.weixin.qq.com/s/3sSae4T0IeSsfM3dm5fByg';
+const POST_IMAGE_WAIT_MS = Math.max(
+  0,
+  Number.parseInt(String(process.env.POST_IMAGE_WAIT_MS || '5000'), 10) || 5000
+);
+const IMAGE_RETRIES = Math.max(
+  1,
+  Number.parseInt(String(process.env.IMAGE_RETRIES || '3'), 10) || 3
+);
 
 const EDITOR_SELECTOR = '.ProseMirror[contenteditable="true"]';
 
@@ -65,15 +80,23 @@ function resolveCftBinary() {
   for (const dirName of chromiumDirs) {
     const base = path.join(cacheRoot, dirName);
     const candidates = [
-      path.join(base, 'chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'),
-      path.join(base, 'chrome-mac/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'),
+      path.join(
+        base,
+        'chrome-mac-x64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'
+      ),
+      path.join(
+        base,
+        'chrome-mac/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing'
+      )
     ];
     for (const candidate of candidates) {
       if (fs.existsSync(candidate)) return candidate;
     }
   }
 
-  throw new Error('未找到 Chrome for Testing 可执行文件，请先执行 `npx playwright install chromium`');
+  throw new Error(
+    '未找到 Chrome for Testing 可执行文件，请先执行 `npx playwright install chromium`'
+  );
 }
 
 async function fetchWeixinArticleHtml(url) {
@@ -89,7 +112,11 @@ async function fetchWeixinArticleHtml(url) {
 }
 
 function sha1Short(input) {
-  return crypto.createHash('sha1').update(String(input || '')).digest('hex').slice(0, 10);
+  return crypto
+    .createHash('sha1')
+    .update(String(input || ''))
+    .digest('hex')
+    .slice(0, 10);
 }
 
 async function downloadImageToPng(url, idx) {
@@ -97,8 +124,8 @@ async function downloadImageToPng(url, idx) {
     redirect: 'follow',
     headers: {
       'user-agent': 'Mozilla/5.0',
-      referer: ARTICLE_URL,
-    },
+      referer: ARTICLE_URL
+    }
   });
   if (!res.ok) throw new Error(`图片下载失败：${res.status} ${res.statusText}`);
   const buf = Buffer.from(await res.arrayBuffer());
@@ -116,7 +143,11 @@ async function copyPngToClipboard(pngPath) {
 
   for (let attempt = 1; attempt <= 3; attempt += 1) {
     execFileSync('osascript', ['-e', script], { stdio: 'ignore' });
-    const info = String(execFileSync('osascript', ['-e', 'clipboard info'], { stdio: ['ignore', 'pipe', 'ignore'] }) || '').trim();
+    const info = String(
+      execFileSync('osascript', ['-e', 'clipboard info'], {
+        stdio: ['ignore', 'pipe', 'ignore']
+      }) || ''
+    ).trim();
     lastInfo = info;
     if (info.includes('PNGf')) return info;
     await new Promise((r) => setTimeout(r, 200));
@@ -227,12 +258,16 @@ async function pasteHtmlFragment(page, html) {
       }
 
       try {
-        const ev = new ClipboardEvent('paste', { bubbles: true, cancelable: true, clipboardData: dt });
+        const ev = new ClipboardEvent('paste', {
+          bubbles: true,
+          cancelable: true,
+          clipboardData: dt
+        });
         root.dispatchEvent(ev);
         dispatched = true;
       } catch {
         const ev = new Event('paste', { bubbles: true, cancelable: true });
-        (ev).clipboardData = dt;
+        ev.clipboardData = dt;
         root.dispatchEvent(ev);
         dispatched = true;
       }
@@ -263,16 +298,29 @@ async function pasteImageFromClipboardAndWait(page, { idx, url, pngPath }) {
     appendLog({ ts: nowIso(), kind: 'paste_image_attempt', idx, attempt, url, pngPath });
     console.log(`[mowen-publish] [img ${idx}] attempt ${attempt}/${IMAGE_RETRIES} 粘贴图片...`);
 
-    const waitPrepare = page.waitForResponse((res) => res.url().includes('/api/file/v1/upload/prepare') && res.status() === 200, {
-      timeout: 120_000,
-    });
-    const waitUpload = page.waitForResponse((res) => res.url().includes('priv-sdn.mowen.cn/') && res.status() === 200, { timeout: 120_000 });
-    const waitDraft = page.waitForResponse((res) => res.url().includes('/api/note/wxa/v1/note/draft') && res.status() === 200, { timeout: 120_000 });
+    const waitPrepare = page.waitForResponse(
+      (res) => res.url().includes('/api/file/v1/upload/prepare') && res.status() === 200,
+      {
+        timeout: 120_000
+      }
+    );
+    const waitUpload = page.waitForResponse(
+      (res) => res.url().includes('priv-sdn.mowen.cn/') && res.status() === 200,
+      { timeout: 120_000 }
+    );
+    const waitDraft = page.waitForResponse(
+      (res) => res.url().includes('/api/note/wxa/v1/note/draft') && res.status() === 200,
+      { timeout: 120_000 }
+    );
 
     await page.keyboard.press('Meta+V');
 
     try {
-      const [prepareRes, uploadRes, draftRes] = await Promise.all([waitPrepare, waitUpload, waitDraft]);
+      const [prepareRes, uploadRes, draftRes] = await Promise.all([
+        waitPrepare,
+        waitUpload,
+        waitDraft
+      ]);
       appendLog({
         ts: nowIso(),
         kind: 'paste_image_ok',
@@ -281,7 +329,7 @@ async function pasteImageFromClipboardAndWait(page, { idx, url, pngPath }) {
         url,
         prepare: { url: prepareRes.url(), status: prepareRes.status() },
         upload: { url: uploadRes.url(), status: uploadRes.status() },
-        draft: { url: draftRes.url(), status: draftRes.status() },
+        draft: { url: draftRes.url(), status: draftRes.status() }
       });
 
       appendLog({ ts: nowIso(), kind: 'post_image_wait', idx, waitMs: POST_IMAGE_WAIT_MS });
@@ -291,9 +339,20 @@ async function pasteImageFromClipboardAndWait(page, { idx, url, pngPath }) {
       await page.waitForTimeout(120);
       return;
     } catch (e) {
-      const screenshotPath = path.join(SCREENSHOT_DIR, `paste-image-failed-${RUN_ID}-${String(idx).padStart(3, '0')}-a${attempt}.png`);
+      const screenshotPath = path.join(
+        SCREENSHOT_DIR,
+        `paste-image-failed-${RUN_ID}-${String(idx).padStart(3, '0')}-a${attempt}.png`
+      );
       await page.screenshot({ path: screenshotPath, fullPage: true }).catch(() => {});
-      appendLog({ ts: nowIso(), kind: 'paste_image_fail', idx, attempt, url, error: String(e || ''), screenshotPath });
+      appendLog({
+        ts: nowIso(),
+        kind: 'paste_image_fail',
+        idx,
+        attempt,
+        url,
+        error: String(e || ''),
+        screenshotPath
+      });
       await page.waitForTimeout(1200);
       continue;
     }
@@ -320,7 +379,10 @@ async function extractWeixinModelInPage(page, html, articleUrl) {
 
     const toImageUrl = (img) => {
       const raw =
-        img.getAttribute('data-src') || img.getAttribute('data-original') || img.getAttribute('src') || '';
+        img.getAttribute('data-src') ||
+        img.getAttribute('data-original') ||
+        img.getAttribute('src') ||
+        '';
       const url = String(raw || '').trim();
       if (!url.startsWith('http')) return '';
       if (url.includes('pic_blank.gif')) return '';
@@ -339,7 +401,9 @@ async function extractWeixinModelInPage(page, html, articleUrl) {
       }
       const cleaned = String(tmp.innerHTML || '').trim();
       if (!cleaned) return;
-      const plain = String(tmp.textContent || tmp.innerText || '').replace(/\s+/g, ' ').trim();
+      const plain = String(tmp.textContent || tmp.innerText || '')
+        .replace(/\s+/g, ' ')
+        .trim();
       const hasBreak = !!tmp.querySelector('br,hr');
       if (!plain && !hasBreak) return;
       tokens.push({ kind: 'html', html: cleaned });
@@ -377,7 +441,12 @@ async function extractWeixinModelInPage(page, html, articleUrl) {
     for (const img of images) {
       cloneBetween(img);
       const url = toImageUrl(img);
-      if (url) tokens.push({ kind: 'image', src: url, alt: (img.getAttribute('alt') || '').trim() || undefined });
+      if (url)
+        tokens.push({
+          kind: 'image',
+          src: url,
+          alt: (img.getAttribute('alt') || '').trim() || undefined
+        });
       moveStartAfter(img);
     }
 
@@ -395,7 +464,9 @@ async function extractWeixinModelInPage(page, html, articleUrl) {
 
     const safe = String(sourceUrl || '').trim();
     if (safe) {
-      pushHtml(`<p><br/></p><p>原文链接：<a href=\"${safe}\" target=\"_blank\" rel=\"noreferrer noopener\">${safe}</a></p>`);
+      pushHtml(
+        `<p><br/></p><p>原文链接：<a href=\"${safe}\" target=\"_blank\" rel=\"noreferrer noopener\">${safe}</a></p>`
+      );
     }
 
     return { ok: true, title, tokens };
@@ -413,10 +484,11 @@ async function assertEditorQuality(page, { title, expectedImages, sourceUrl }) {
       const hasSource = !!(sourceUrl && text.includes(sourceUrl));
       return { firstLine, pCount, imgCount, hasSource, expectedImages };
     },
-    { selector: EDITOR_SELECTOR, title, expectedImages, sourceUrl },
+    { selector: EDITOR_SELECTOR, title, expectedImages, sourceUrl }
   );
 
-  if (String(out.firstLine || '').trim() !== String(title || '').trim()) throw new Error(`标题未单独成行：${out.firstLine}`);
+  if (String(out.firstLine || '').trim() !== String(title || '').trim())
+    throw new Error(`标题未单独成行：${out.firstLine}`);
   if (Number(out.pCount || 0) < 3) throw new Error(`段落数量异常：${out.pCount}`);
   if (expectedImages && Number(out.imgCount || 0) < expectedImages) {
     throw new Error(`图片数量不完整：${out.imgCount}/${expectedImages}`);
@@ -447,8 +519,11 @@ async function main() {
       '--no-first-run',
       '--no-default-browser-check',
       '--no-sandbox',
-    ],
+      ...directChromiumArgs(['mowen'])
+    ]
   });
+  const auth = await resolveAndApplyBrowserAuth(context, ['mowen']);
+  console.log(`[channel-auth] ${JSON.stringify(summarizeChannelAuth(auth.get('mowen')))}`);
 
   try {
     const page = await context.newPage();
@@ -460,10 +535,20 @@ async function main() {
     const tokens = Array.isArray(model.tokens) ? model.tokens : [];
     const expectedImages = tokens.filter((t) => t?.kind === 'image').length;
     fs.writeFileSync(EXTRACT_PATH, JSON.stringify({ title, expectedImages, tokens }, null, 2));
-    appendLog({ ts: nowIso(), kind: 'extract_done', title, expectedImages, tokenCount: tokens.length, extractPath: EXTRACT_PATH });
+    appendLog({
+      ts: nowIso(),
+      kind: 'extract_done',
+      title,
+      expectedImages,
+      tokenCount: tokens.length,
+      extractPath: EXTRACT_PATH
+    });
 
     console.log('[mowen-publish] 打开墨问编辑器并写入内容...');
-    await page.goto('https://note.mowen.cn/editor', { waitUntil: 'domcontentloaded', timeout: 180_000 });
+    await page.goto('https://note.mowen.cn/editor', {
+      waitUntil: 'domcontentloaded',
+      timeout: 180_000
+    });
     await waitForEditorReady(page);
     await clearEditor(page);
 
@@ -490,7 +575,8 @@ async function main() {
         console.log(`[mowen-publish] [img ${idx}/${expectedImages}] 写入系统剪贴板 PNGf...`);
         const clipboardInfo = await copyPngToClipboard(pngPath);
         appendLog({ ts: nowIso(), kind: 'clipboard_info', idx, url, clipboardInfo });
-        if (!clipboardInfo.includes('PNGf')) throw new Error(`剪贴板未检测到 PNGf：${clipboardInfo}`);
+        if (!clipboardInfo.includes('PNGf'))
+          throw new Error(`剪贴板未检测到 PNGf：${clipboardInfo}`);
 
         await pasteImageFromClipboardAndWait(page, { idx, url, pngPath });
         continue;
@@ -510,14 +596,23 @@ async function main() {
     const publishDeadline = Date.now() + 60_000;
     while (Date.now() < publishDeadline) {
       const url = String(page.url() || '');
-      const bodyText = await page.evaluate(() => String(document.body?.innerText || '')).catch(() => '');
-      if (url.includes('/detail/') || bodyText.includes('发布成功') || bodyText.includes('已发布')) break;
+      const bodyText = await page
+        .evaluate(() => String(document.body?.innerText || ''))
+        .catch(() => '');
+      if (url.includes('/detail/') || bodyText.includes('发布成功') || bodyText.includes('已发布'))
+        break;
       await page.waitForTimeout(800);
     }
 
     const publishedScreenshot = path.join(SCREENSHOT_DIR, `published-${RUN_ID}.png`);
     await page.screenshot({ path: publishedScreenshot, fullPage: true }).catch(() => {});
-    appendLog({ ts: nowIso(), kind: 'screenshot', label: 'published', path: publishedScreenshot, url: page.url() });
+    appendLog({
+      ts: nowIso(),
+      kind: 'screenshot',
+      label: 'published',
+      path: publishedScreenshot,
+      url: page.url()
+    });
 
     const verify = await page.evaluate((sourceUrl) => {
       const text = String(document.body?.innerText || '');
@@ -532,7 +627,9 @@ async function main() {
     if (!KEEP_BROWSER_OPEN) {
       await context.close().catch(() => {});
     } else {
-      console.log(`[mowen-publish] KEEP_BROWSER_OPEN=1，保留浏览器打开（profile=${USER_DATA_DIR}）`);
+      console.log(
+        `[mowen-publish] KEEP_BROWSER_OPEN=1，保留浏览器打开（profile=${USER_DATA_DIR}）`
+      );
     }
   }
 }
