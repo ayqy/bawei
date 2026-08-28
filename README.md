@@ -108,7 +108,7 @@ bawei 是一款专为内容同步发布设计的浏览器插件：打开微信�
 - V2 真实站点 E2E（依赖你的真实登录态/可能需要人工处理验证码等）：`npm run e2e:v2`（可选：`npm run e2e:v2 <channelId>`）
 - 真实站点发布默认自行启动轻量运行时浏览器，并在发布前按固定顺序解析认证：官方 API/OAuth（仅限当前动作有官方适配器）→ 加密最小浏览器状态 → Keychain 一次有界密码恢复 → 人工强验证。
   - 默认状态根目录是 `~/Library/Application Support/channel-auth/v1`，可用 `CHANNEL_AUTH_HOME` 指向任何生成同一 v1 契约的目录；Bawei 不 import、也不硬编码 `login` 仓库路径。
-  - CSDN、腾讯云开发者社区、今日头条、少数派只注入已验证的最小 Cookie/localStorage 键；其余渠道没有有效基线时拒绝全量 Cookie 降级。
+  - CSDN、腾讯云开发者社区、今日头条、少数派、飞书文档、墨问只注入已验证的最小 Cookie/localStorage 键；飞书仅使用 `.feishu.cn` 的 `session`，墨问仅使用 `_MWT + _MWTH`，其余渠道没有有效基线时拒绝全量 Cookie 降级。
   - `npm run live:open` 仅用于需要扫码、短信、验证码或风控确认时打开本轮运行时页面；完成后可用 `LIVE_PUBLISH_REQUIRE_EXISTING_CHROME=1 npm run live:publish -- <微信文章URL>` 继续同一现场。
   - `npm run live:publish -- <微信文章URL>` 默认不要求预先启动专用浏览器；可选仅跑单渠道：`LIVE_PUBLISH_CHANNELS=sspai npm run live:publish -- <微信文章URL>`。
   - 如需在当前已登录浏览器上做页面内面板 UI 真测，可显式关闭后台直连并切换动作：

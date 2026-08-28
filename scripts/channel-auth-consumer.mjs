@@ -84,7 +84,12 @@ export const CHANNEL_AUTH_SPECS = Object.freeze({
   },
   mowen: {
     officialKinds: ['api_key'],
-    browserState: { validated: false, cookieRules: [], origins: [] },
+    browserState: {
+      validated: true,
+      cookieRules: [{ domainSuffix: '.mowen.cn', names: ['_MWT', '_MWTH'] }],
+      origins: [],
+      requiredCookieSets: [['_MWT', '_MWTH']]
+    },
     recovery: ['qr', 'sms']
   },
   sspai: {
@@ -114,7 +119,12 @@ export const CHANNEL_AUTH_SPECS = Object.freeze({
   },
   'feishu-docs': {
     officialKinds: ['service_account', 'oauth2'],
-    browserState: { validated: false, cookieRules: [], origins: [] },
+    browserState: {
+      validated: true,
+      cookieRules: [{ domainSuffix: '.feishu.cn', names: ['session'] }],
+      origins: [],
+      requiredCookieSets: [['session']]
+    },
     recovery: ['qr', 'sms']
   },
   cws: {

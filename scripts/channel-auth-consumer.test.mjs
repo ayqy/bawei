@@ -252,6 +252,61 @@ try {
   fs.chmodSync(statePath, 0o600);
 
   writeState(root, {
+    channel: 'feishu-docs',
+    kind: 'browser_state',
+    payload: {
+      cookies: [
+        {
+          name: 'session',
+          value: 'fixture',
+          domain: '.feishu.cn',
+          path: '/',
+          secure: true,
+          httpOnly: true
+        }
+      ],
+      origins: []
+    }
+  });
+  const feishu = resolveChannelAuth('feishu-docs', {
+    root,
+    key: KEY,
+    deviceId: DEVICE_ID,
+    allowBrowserState: true
+  });
+  assert.equal(feishu.status, 'ready');
+  assert.equal(feishu.selected, 'browser_state');
+  assert.deepEqual(feishu.state.payload.cookies.map((cookie) => cookie.name), ['session']);
+
+  writeState(root, {
+    channel: 'mowen',
+    kind: 'browser_state',
+    payload: {
+      cookies: ['_MWT', '_MWTH'].map((name) => ({
+        name,
+        value: 'fixture',
+        domain: '.mowen.cn',
+        path: '/',
+        secure: true,
+        httpOnly: true
+      })),
+      origins: []
+    }
+  });
+  const mowen = resolveChannelAuth('mowen', {
+    root,
+    key: KEY,
+    deviceId: DEVICE_ID,
+    allowBrowserState: true
+  });
+  assert.equal(mowen.status, 'ready');
+  assert.equal(mowen.selected, 'browser_state');
+  assert.deepEqual(
+    mowen.state.payload.cookies.map((cookie) => cookie.name).sort(),
+    ['_MWT', '_MWTH'].sort()
+  );
+
+  writeState(root, {
     channel: 'cws',
     kind: 'oauth2',
     payload: {
